@@ -9,7 +9,6 @@ import traceback
 import googlemaps
 from geopy.geocoders import GoogleV3
 from dotenv import load_dotenv
-import time
 from functools import lru_cache
 
 load_dotenv()
@@ -41,67 +40,21 @@ class GeocodingService:
     
     def _initialize_google_maps_clients(self):
         """Initialize Google Maps API clients with status logging"""
-        print("=" * 50)
-        print("GOOGLE MAPS API INITIALIZATION")
-        print("=" * 50)
-        
         if not self.google_api_key:
-            print("Google Maps API Key: NOT CONFIGURED")
-            print("   To enable address geocoding:")
-            print("   1. Get API key from: https://console.cloud.google.com/")
-            print("   2. Add to .env: GOOGLE_MAPS_API_KEY=your_key_here")
-            print("   3. Restart server")
-            print("   WARNING: Only postal code lookup will work (1,130 Singapore postal codes)")
+            print("Google Maps API: NOT CONFIGURED - Using postal code lookup only")
             self.gmaps = None
             self.geolocator = None
             return
         
-        print(f"API Key: {'*' * (len(self.google_api_key) - 8)}{self.google_api_key[-8:]}")
-        
         try:
-            # Test Google Maps client initialization
             self.gmaps = googlemaps.Client(key=self.google_api_key)
-            print("SUCCESS: googlemaps.Client initialized successfully")
-        except Exception as e:
-            print(f"FAILED: googlemaps.Client initialization - {e}")
-            self.gmaps = None
-        
-        try:
-            # Test Geopy client initialization
             self.geolocator = GoogleV3(api_key=self.google_api_key)
-            print("SUCCESS: GoogleV3 Geocoder initialized successfully")
+            print("Google Maps API: CONFIGURED")
         except Exception as e:
-            print(f"FAILED: GoogleV3 Geocoder initialization - {e}")
+            print(f"Google Maps API: FAILED - {e}")
+            self.gmaps = None
             self.geolocator = None
-        
-        # Test API connection with a simple request
-        self._test_api_connection()
     
-    def _test_api_connection(self):
-        """Test actual API connection and quota"""
-        if not self.geolocator:
-            return
-        
-        print("Testing API connection...")
-        try:
-            # Test with a simple Singapore address
-            test_location = self.geolocator.geocode("Marina Bay Sands, Singapore", timeout=5)
-            if test_location:
-                print("SUCCESS: API Connection SUCCESSFUL")
-                print(f"   Test result: {test_location.latitude:.4f}, {test_location.longitude:.4f}")
-                print("   Google Maps geocoding is READY")
-            else:
-                print("WARNING: API Connection - Connected but no results")
-                print("   Check API key permissions and quotas")
-        except Exception as e:
-            print(f"FAILED: API Connection - {e}")
-            print("   Common issues:")
-            print("   - API key invalid or restricted")
-            print("   - Geocoding API not enabled")
-            print("   - Billing not set up")
-            print("   - Quota exceeded")
-        
-        print("=" * 50)
     
     @lru_cache(maxsize=1)
     def _load_postal_code_lookup(self):
@@ -114,16 +67,10 @@ class GeocodingService:
                 break
         
         if not master_file_path:
-            print("Warning: No postal code master file found. Tried paths:")
-            for i, path in enumerate(POSTAL_CODE_PATHS):
-                if path:
-                    status = "Found" if os.path.exists(path) else "Not found"
-                    print(f"  {i+1}. {path} - {status}")
-            print("Geocoding will rely on Google Maps API only.")
+            print("Postal Code Lookup: NO FILE FOUND - Google Maps API only")
             return {}
         
         try:
-            print(f"Loading postal code data from: {master_file_path}")
             df = pd.read_excel(master_file_path)
             
             # Create dictionary for fast lookup: {postal_code: (lat, lng)}
@@ -142,11 +89,11 @@ class GeocodingService:
                 if lat is not None and lng is not None:
                     lookup[postal_code] = (float(lat), float(lng))
             
-            print(f"Successfully loaded {len(lookup)} postal code mappings")
+            print(f"Postal Code Lookup: {len(lookup)} Singapore postal codes loaded")
             return lookup
             
         except Exception as e:
-            print(f"Error loading postal code lookup from {master_file_path}: {e}")
+            print(f"Postal Code Lookup: FAILED - {e}")
             return {}
     
     def geocode_by_postal_code(self, postal_code):
@@ -176,19 +123,12 @@ class GeocodingService:
         try:
             self.geocode_stats['api_calls'] += 1
             
-            # Enhanced rate limiting for production
-            is_production = os.getenv('FLASK_ENV') == 'production'
-            delay = 0.2 if is_production else 0.1  # Slower in production
-            time.sleep(delay)
-            
             # Clean and format address for Singapore
             address_str = str(address).strip()
             if 'singapore' not in address_str.lower():
                 address_str += ', Singapore'
             
-            # Increased timeout for production reliability
-            timeout = 15 if is_production else 10
-            location = self.geolocator.geocode(address_str, timeout=timeout)
+            location = self.geolocator.geocode(address_str, timeout=10)
             
             if location:
                 return location.latitude, location.longitude
@@ -198,14 +138,6 @@ class GeocodingService:
                 
         except Exception as e:
             self.geocode_stats['failures'] += 1
-            error_msg = f"Geocoding error for address '{address}': {e}"
-            print(error_msg)
-            
-            # Handle specific rate limit errors
-            if "rate limit" in str(e).lower() or "quota" in str(e).lower():
-                print(f"WARNING: Google Maps API rate limit/quota exceeded")
-                time.sleep(1)  # Extra delay on rate limit
-                
             return None, None
     
     def geocode(self, postal_code, address):
@@ -349,7 +281,6 @@ class ExcelTransformer:
             )
             
             # Geocoding: Populate Latitude and Longitude
-            print("Starting geocoding process...")
             latitudes = []
             longitudes = []
             geocoding_methods = []
@@ -362,9 +293,6 @@ class ExcelTransformer:
                 latitudes.append(lat)
                 longitudes.append(lng)
                 geocoding_methods.append(method)
-                
-                if index % 10 == 0:  # Progress indicator
-                    print(f"Geocoded {index + 1}/{len(df_transformed)} records...")
             
             df_transformed['Latitude'] = latitudes
             df_transformed['Longitude'] = longitudes
