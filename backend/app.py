@@ -20,7 +20,15 @@ CORS(app)
 # Configuration
 UPLOAD_FOLDER = 'uploads'
 PROCESSED_FOLDER = 'processed'
-POSTAL_CODE_MASTER_FILE = r'C:\Users\huien\Downloads\Panel Listing - Postal Code - Latitude Longitude Master file.xlsx'
+
+# Postal code master file paths (in order of preference)
+POSTAL_CODE_PATHS = [
+    os.getenv('POSTAL_CODE_MASTER_FILE'),  # Environment variable (highest priority)
+    os.path.join('..', 'data', 'postal_code_master.xlsx'),  # Project data folder
+    r'C:\Users\huien\Downloads\Panel Listing - Postal Code - Latitude Longitude Master file.xlsx',  # Original path
+    'postal_code_master.xlsx',  # Current directory
+]
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 
@@ -35,31 +43,47 @@ class GeocodingService:
     @lru_cache(maxsize=1)
     def _load_postal_code_lookup(self):
         """Load postal code lookup table from master file"""
+        # Try each path in order of preference
+        master_file_path = None
+        for path in POSTAL_CODE_PATHS:
+            if path and os.path.exists(path):
+                master_file_path = path
+                break
+        
+        if not master_file_path:
+            print("Warning: No postal code master file found. Tried paths:")
+            for i, path in enumerate(POSTAL_CODE_PATHS):
+                if path:
+                    status = "Found" if os.path.exists(path) else "Not found"
+                    print(f"  {i+1}. {path} - {status}")
+            print("Geocoding will rely on Google Maps API only.")
+            return {}
+        
         try:
-            if os.path.exists(POSTAL_CODE_MASTER_FILE):
-                df = pd.read_excel(POSTAL_CODE_MASTER_FILE)
-                # Create dictionary for fast lookup: {postal_code: (lat, lng)}
-                lookup = {}
-                for _, row in df.iterrows():
-                    # Handle postal code formatting - convert to 6-digit string with leading zeros
-                    postal_code_raw = row['PostalCode']
-                    if pd.notna(postal_code_raw):
-                        # Convert to int first to remove .0, then format with leading zeros
-                        postal_code = f"{int(float(postal_code_raw)):06d}"
-                    else:
-                        continue
-                    
-                    lat = row['Latitude'] if pd.notna(row['Latitude']) else None
-                    lng = row['Longitude'] if pd.notna(row['Longitude']) else None
-                    if lat is not None and lng is not None:
-                        lookup[postal_code] = (float(lat), float(lng))
-                print(f"Loaded {len(lookup)} postal code mappings from master file")
-                return lookup
-            else:
-                print(f"Warning: Postal code master file not found at {POSTAL_CODE_MASTER_FILE}")
-                return {}
+            print(f"Loading postal code data from: {master_file_path}")
+            df = pd.read_excel(master_file_path)
+            
+            # Create dictionary for fast lookup: {postal_code: (lat, lng)}
+            lookup = {}
+            for _, row in df.iterrows():
+                # Handle postal code formatting - convert to 6-digit string with leading zeros
+                postal_code_raw = row['PostalCode']
+                if pd.notna(postal_code_raw):
+                    # Convert to int first to remove .0, then format with leading zeros
+                    postal_code = f"{int(float(postal_code_raw)):06d}"
+                else:
+                    continue
+                
+                lat = row['Latitude'] if pd.notna(row['Latitude']) else None
+                lng = row['Longitude'] if pd.notna(row['Longitude']) else None
+                if lat is not None and lng is not None:
+                    lookup[postal_code] = (float(lat), float(lng))
+            
+            print(f"Successfully loaded {len(lookup)} postal code mappings")
+            return lookup
+            
         except Exception as e:
-            print(f"Error loading postal code lookup: {e}")
+            print(f"Error loading postal code lookup from {master_file_path}: {e}")
             return {}
     
     def geocode_by_postal_code(self, postal_code):
