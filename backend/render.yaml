@@ -3,7 +3,7 @@ services:
     name: excel-transformer-backend
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
+    startCommand: gunicorn --config gunicorn.conf.py app:app
     plan: free
     envVars:
       - key: FLASK_ENV
