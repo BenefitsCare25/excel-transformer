@@ -17,14 +17,14 @@ app = Flask(__name__)
 CORS(app)
 
 # Configuration
-UPLOAD_FOLDER = 'uploads'
-PROCESSED_FOLDER = 'processed'
+UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'uploads')
+PROCESSED_FOLDER = os.getenv('PROCESSED_FOLDER', 'processed')
 
 # Postal code master file paths (in order of preference)
 POSTAL_CODE_PATHS = [
     os.getenv('POSTAL_CODE_MASTER_FILE'),  # Environment variable (highest priority)
     os.path.join('..', 'data', 'postal_code_master.xlsx'),  # Project data folder
-    r'C:\Users\huien\Downloads\Panel Listing - Postal Code - Latitude Longitude Master file.xlsx',  # Original path
+    os.getenv('POSTAL_CODE_FALLBACK_PATH'),  # Configurable fallback path
     'postal_code_master.xlsx',  # Current directory
 ]
 
@@ -98,26 +98,27 @@ class GeocodingService:
     
     def geocode_by_postal_code(self, postal_code):
         """Get coordinates by postal code lookup"""
-        if not postal_code or postal_code == 'None':
+        if not postal_code or str(postal_code).strip() in ('None', '', 'nan'):
             return None, None
         
         try:
             # Normalize postal code to 6-digit format with leading zeros
-            postal_code_normalized = f"{int(float(str(postal_code).strip())):06d}"
+            postal_code_str = str(postal_code).strip()
+            postal_code_normalized = f"{int(float(postal_code_str)):06d}"
             
             if postal_code_normalized in self.postal_code_lookup:
                 self.geocode_stats['postal_matches'] += 1
                 lat, lng = self.postal_code_lookup[postal_code_normalized]
                 return lat, lng
-        except (ValueError, TypeError):
-            # If postal code format is invalid, continue to return None, None
-            pass
+        except (ValueError, TypeError, AttributeError) as e:
+            # Log invalid postal code format for debugging
+            print(f"Invalid postal code format: {postal_code} - {e}")
         
         return None, None
     
     def geocode_by_address(self, address):
         """Get coordinates by Google Maps API using full address"""
-        if not address or not self.geolocator:
+        if not address or str(address).strip() in ('', 'None', 'nan') or not self.geolocator:
             return None, None
         
         try:
@@ -138,6 +139,7 @@ class GeocodingService:
                 
         except Exception as e:
             self.geocode_stats['failures'] += 1
+            print(f"Address geocoding failed for '{address}': {e}")
             return None, None
     
     def geocode(self, postal_code, address):

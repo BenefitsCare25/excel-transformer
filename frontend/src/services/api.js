@@ -1,12 +1,13 @@
 import axios from 'axios';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const UPLOAD_TIMEOUT = parseInt(process.env.REACT_APP_UPLOAD_TIMEOUT) || 300000; // 5 minutes default
 
 class ApiService {
   constructor() {
     this.api = axios.create({
       baseURL: API_BASE_URL,
-      timeout: 300000, // 5 minutes for large file uploads
+      timeout: UPLOAD_TIMEOUT,
     });
   }
 

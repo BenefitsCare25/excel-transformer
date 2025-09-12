@@ -116,6 +116,43 @@ excel-transformer/
 - Backend health monitoring
 - Processing status tracking
 
+## Deployment
+
+### Render.com Deployment
+
+For production deployment on Render.com:
+
+1. **Backend Deployment**:
+   - Create new Web Service on Render
+   - Connect your repository
+   - Set build command: `pip install -r requirements.txt`
+   - Set start command: `cd backend && gunicorn --config gunicorn.conf.py app:app`
+   - Set environment variables (see backend/.env.example)
+
+2. **Frontend Deployment**:
+   - Create new Static Site on Render
+   - Set build command: `cd frontend && npm install && npm run build`
+   - Set publish directory: `frontend/build`
+   - Set environment variable: `REACT_APP_API_URL=https://your-backend-url.onrender.com`
+
+### Environment Variables
+
+Backend (.env):
+```
+GOOGLE_MAPS_API_KEY=your_api_key_here
+POSTAL_CODE_MASTER_FILE=path/to/postal_code_master.xlsx
+UPLOAD_FOLDER=uploads
+PROCESSED_FOLDER=processed
+FLASK_ENV=production
+PORT=5000
+```
+
+Frontend:
+```
+REACT_APP_API_URL=http://localhost:5000
+REACT_APP_UPLOAD_TIMEOUT=300000
+```
+
 ## Development Notes
 
 - Files are temporarily stored and automatically cleaned up
