@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: excel-transformer-frontend
+    env: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./build
+    plan: free
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
