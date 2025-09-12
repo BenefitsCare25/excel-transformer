@@ -35,10 +35,73 @@ os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 class GeocodingService:
     def __init__(self):
         self.google_api_key = os.getenv('GOOGLE_MAPS_API_KEY')
-        self.gmaps = googlemaps.Client(key=self.google_api_key) if self.google_api_key else None
-        self.geolocator = GoogleV3(api_key=self.google_api_key) if self.google_api_key else None
+        self._initialize_google_maps_clients()
         self.postal_code_lookup = self._load_postal_code_lookup()
         self.geocode_stats = {'postal_matches': 0, 'api_calls': 0, 'failures': 0}
+    
+    def _initialize_google_maps_clients(self):
+        """Initialize Google Maps API clients with status logging"""
+        print("=" * 50)
+        print("GOOGLE MAPS API INITIALIZATION")
+        print("=" * 50)
+        
+        if not self.google_api_key:
+            print("Google Maps API Key: NOT CONFIGURED")
+            print("   To enable address geocoding:")
+            print("   1. Get API key from: https://console.cloud.google.com/")
+            print("   2. Add to .env: GOOGLE_MAPS_API_KEY=your_key_here")
+            print("   3. Restart server")
+            print("   WARNING: Only postal code lookup will work (1,130 Singapore postal codes)")
+            self.gmaps = None
+            self.geolocator = None
+            return
+        
+        print(f"API Key: {'*' * (len(self.google_api_key) - 8)}{self.google_api_key[-8:]}")
+        
+        try:
+            # Test Google Maps client initialization
+            self.gmaps = googlemaps.Client(key=self.google_api_key)
+            print("SUCCESS: googlemaps.Client initialized successfully")
+        except Exception as e:
+            print(f"FAILED: googlemaps.Client initialization - {e}")
+            self.gmaps = None
+        
+        try:
+            # Test Geopy client initialization
+            self.geolocator = GoogleV3(api_key=self.google_api_key)
+            print("SUCCESS: GoogleV3 Geocoder initialized successfully")
+        except Exception as e:
+            print(f"FAILED: GoogleV3 Geocoder initialization - {e}")
+            self.geolocator = None
+        
+        # Test API connection with a simple request
+        self._test_api_connection()
+    
+    def _test_api_connection(self):
+        """Test actual API connection and quota"""
+        if not self.geolocator:
+            return
+        
+        print("Testing API connection...")
+        try:
+            # Test with a simple Singapore address
+            test_location = self.geolocator.geocode("Marina Bay Sands, Singapore", timeout=5)
+            if test_location:
+                print("SUCCESS: API Connection SUCCESSFUL")
+                print(f"   Test result: {test_location.latitude:.4f}, {test_location.longitude:.4f}")
+                print("   Google Maps geocoding is READY")
+            else:
+                print("WARNING: API Connection - Connected but no results")
+                print("   Check API key permissions and quotas")
+        except Exception as e:
+            print(f"FAILED: API Connection - {e}")
+            print("   Common issues:")
+            print("   - API key invalid or restricted")
+            print("   - Geocoding API not enabled")
+            print("   - Billing not set up")
+            print("   - Quota exceeded")
+        
+        print("=" * 50)
     
     @lru_cache(maxsize=1)
     def _load_postal_code_lookup(self):
@@ -378,7 +441,31 @@ def geocode_address():
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
+    """Enhanced health check with API status"""
+    geocoding_service = GeocodingService()
+    
+    # Check postal code lookup status
+    postal_status = len(geocoding_service.postal_code_lookup) > 0
+    
+    # Check Google Maps API status
+    google_api_configured = geocoding_service.google_api_key is not None
+    google_api_working = geocoding_service.geolocator is not None
+    
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'geocoding': {
+            'postal_code_lookup': {
+                'enabled': postal_status,
+                'postal_codes_loaded': len(geocoding_service.postal_code_lookup)
+            },
+            'google_maps_api': {
+                'configured': google_api_configured,
+                'working': google_api_working,
+                'api_key_present': '****' + geocoding_service.google_api_key[-4:] if google_api_configured else None
+            }
+        }
+    })
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
