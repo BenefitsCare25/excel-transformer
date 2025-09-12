@@ -63,10 +63,6 @@ function App() {
           <h1 className="text-4xl font-bold text-gray-800 mb-4">
             Excel Template Transformer
           </h1>
-          <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-            Automatically transform your Excel files to match the desired template format. 
-            Upload your clinic data file and get a standardized template-compliant file instantly.
-          </p>
         </header>
 
         {/* Backend Status Indicator */}
@@ -188,9 +184,6 @@ function App() {
 
         {/* Footer */}
         <footer className="text-center mt-12 py-6 border-t border-gray-200">
-          <p className="text-gray-500 text-sm">
-            Excel Template Transformer v1.0 - Built with React & Flask
-          </p>
         </footer>
       </div>
     </div>
