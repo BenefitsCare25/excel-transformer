@@ -6,6 +6,13 @@ import uuid
 import re
 from datetime import datetime
 import traceback
+import googlemaps
+from geopy.geocoders import GoogleV3
+from dotenv import load_dotenv
+import time
+from functools import lru_cache
+
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
@@ -13,8 +20,111 @@ CORS(app)
 # Configuration
 UPLOAD_FOLDER = 'uploads'
 PROCESSED_FOLDER = 'processed'
+POSTAL_CODE_MASTER_FILE = r'C:\Users\huien\Downloads\Panel Listing - Postal Code - Latitude Longitude Master file.xlsx'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+
+class GeocodingService:
+    def __init__(self):
+        self.google_api_key = os.getenv('GOOGLE_MAPS_API_KEY')
+        self.gmaps = googlemaps.Client(key=self.google_api_key) if self.google_api_key else None
+        self.geolocator = GoogleV3(api_key=self.google_api_key) if self.google_api_key else None
+        self.postal_code_lookup = self._load_postal_code_lookup()
+        self.geocode_stats = {'postal_matches': 0, 'api_calls': 0, 'failures': 0}
+    
+    @lru_cache(maxsize=1)
+    def _load_postal_code_lookup(self):
+        """Load postal code lookup table from master file"""
+        try:
+            if os.path.exists(POSTAL_CODE_MASTER_FILE):
+                df = pd.read_excel(POSTAL_CODE_MASTER_FILE)
+                # Create dictionary for fast lookup: {postal_code: (lat, lng)}
+                lookup = {}
+                for _, row in df.iterrows():
+                    # Handle postal code formatting - convert to 6-digit string with leading zeros
+                    postal_code_raw = row['PostalCode']
+                    if pd.notna(postal_code_raw):
+                        # Convert to int first to remove .0, then format with leading zeros
+                        postal_code = f"{int(float(postal_code_raw)):06d}"
+                    else:
+                        continue
+                    
+                    lat = row['Latitude'] if pd.notna(row['Latitude']) else None
+                    lng = row['Longitude'] if pd.notna(row['Longitude']) else None
+                    if lat is not None and lng is not None:
+                        lookup[postal_code] = (float(lat), float(lng))
+                print(f"Loaded {len(lookup)} postal code mappings from master file")
+                return lookup
+            else:
+                print(f"Warning: Postal code master file not found at {POSTAL_CODE_MASTER_FILE}")
+                return {}
+        except Exception as e:
+            print(f"Error loading postal code lookup: {e}")
+            return {}
+    
+    def geocode_by_postal_code(self, postal_code):
+        """Get coordinates by postal code lookup"""
+        if not postal_code or postal_code == 'None':
+            return None, None
+        
+        try:
+            # Normalize postal code to 6-digit format with leading zeros
+            postal_code_normalized = f"{int(float(str(postal_code).strip())):06d}"
+            
+            if postal_code_normalized in self.postal_code_lookup:
+                self.geocode_stats['postal_matches'] += 1
+                lat, lng = self.postal_code_lookup[postal_code_normalized]
+                return lat, lng
+        except (ValueError, TypeError):
+            # If postal code format is invalid, continue to return None, None
+            pass
+        
+        return None, None
+    
+    def geocode_by_address(self, address):
+        """Get coordinates by Google Maps API using full address"""
+        if not address or not self.geolocator:
+            return None, None
+        
+        try:
+            self.geocode_stats['api_calls'] += 1
+            time.sleep(0.1)  # Rate limiting
+            
+            # Clean and format address for Singapore
+            address_str = str(address).strip()
+            if 'singapore' not in address_str.lower():
+                address_str += ', Singapore'
+            
+            location = self.geolocator.geocode(address_str, timeout=10)
+            
+            if location:
+                return location.latitude, location.longitude
+            else:
+                self.geocode_stats['failures'] += 1
+                return None, None
+                
+        except Exception as e:
+            self.geocode_stats['failures'] += 1
+            print(f"Geocoding error for address '{address}': {e}")
+            return None, None
+    
+    def geocode(self, postal_code, address):
+        """Main geocoding method: try postal code first, then address"""
+        # Try postal code lookup first
+        lat, lng = self.geocode_by_postal_code(postal_code)
+        if lat is not None and lng is not None:
+            return lat, lng, 'postal_code'
+        
+        # Fallback to address geocoding
+        lat, lng = self.geocode_by_address(address)
+        if lat is not None and lng is not None:
+            return lat, lng, 'address'
+        
+        return None, None, 'failed'
+    
+    def get_stats(self):
+        """Get geocoding statistics"""
+        return self.geocode_stats.copy()
 
 class ExcelTransformer:
     @staticmethod
@@ -84,8 +194,11 @@ class ExcelTransformer:
     
     @staticmethod
     def transform_excel(input_path, output_path):
-        """Transform source Excel to target template format"""
+        """Transform source Excel to target template format with geocoding"""
         try:
+            # Initialize geocoding service
+            geocoding_service = GeocodingService()
+            
             # Find the correct header row
             header_row = ExcelTransformer.find_header_row(input_path)
             
@@ -135,18 +248,58 @@ class ExcelTransformer:
                 lambda row: ExcelTransformer.combine_operating_hours(row, 'public_holiday'), axis=1
             )
             
-            # Not available in source data
-            df_transformed['Latitude'] = None
-            df_transformed['Longitude'] = None
-            df_transformed['GoogleMapURL'] = None
+            # Geocoding: Populate Latitude and Longitude
+            print("Starting geocoding process...")
+            latitudes = []
+            longitudes = []
+            geocoding_methods = []
+            
+            for index, row in df_transformed.iterrows():
+                postal_code = row['PostalCode']
+                address = row['Address1']
+                
+                lat, lng, method = geocoding_service.geocode(postal_code, address)
+                latitudes.append(lat)
+                longitudes.append(lng)
+                geocoding_methods.append(method)
+                
+                if index % 10 == 0:  # Progress indicator
+                    print(f"Geocoded {index + 1}/{len(df_transformed)} records...")
+            
+            df_transformed['Latitude'] = latitudes
+            df_transformed['Longitude'] = longitudes
+            
+            # Generate Google Maps URLs for successfully geocoded locations
+            def generate_google_maps_url(lat, lng):
+                if lat is not None and lng is not None:
+                    return f"https://maps.google.com/?q={lat},{lng}"
+                return None
+            
+            df_transformed['GoogleMapURL'] = df_transformed.apply(
+                lambda row: generate_google_maps_url(row['Latitude'], row['Longitude']), axis=1
+            )
             
             # Save transformed file
             df_transformed.to_excel(output_path, index=False)
             
+            # Get geocoding statistics
+            stats = geocoding_service.get_stats()
+            successful_geocodes = sum(1 for lat in latitudes if lat is not None)
+            postal_matches = len([m for m in geocoding_methods if m == 'postal_code'])
+            address_matches = len([m for m in geocoding_methods if m == 'address'])
+            
             return {
                 'success': True,
                 'message': f'Successfully transformed {len(df_transformed)} records',
-                'records_processed': len(df_transformed)
+                'records_processed': len(df_transformed),
+                'geocoding_stats': {
+                    'total_records': len(df_transformed),
+                    'successful_geocodes': successful_geocodes,
+                    'postal_code_matches': postal_matches,
+                    'address_geocodes': address_matches,
+                    'failed_geocodes': len(df_transformed) - successful_geocodes,
+                    'success_rate': f"{(successful_geocodes/len(df_transformed)*100):.1f}%"
+                }
             }
             
         except Exception as e:
@@ -155,6 +308,49 @@ class ExcelTransformer:
                 'message': f'Error transforming file: {str(e)}',
                 'error_details': traceback.format_exc()
             }
+
+@app.route('/geocode', methods=['POST'])
+def geocode_address():
+    """Standalone geocoding endpoint for testing"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        postal_code = data.get('postal_code')
+        address = data.get('address')
+        
+        if not postal_code and not address:
+            return jsonify({'error': 'Either postal_code or address must be provided'}), 400
+        
+        geocoding_service = GeocodingService()
+        lat, lng, method = geocoding_service.geocode(postal_code, address)
+        
+        if lat is not None and lng is not None:
+            google_maps_url = f"https://maps.google.com/?q={lat},{lng}"
+            return jsonify({
+                'success': True,
+                'latitude': lat,
+                'longitude': lng,
+                'method': method,
+                'google_maps_url': google_maps_url,
+                'postal_code': postal_code,
+                'address': address
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Could not geocode the provided postal code or address',
+                'postal_code': postal_code,
+                'address': address
+            }), 404
+            
+    except Exception as e:
+        return jsonify({
+            'error': 'Internal server error',
+            'details': str(e)
+        }), 500
 
 @app.route('/health', methods=['GET'])
 def health_check():
