@@ -10,4 +10,6 @@ services:
         value: production
       - key: FLASK_APP
         value: app.py
+      - key: POSTAL_CODE_MASTER_FILE
+        value: ../data/postal_code_master.xlsx
     healthCheckPath: /health

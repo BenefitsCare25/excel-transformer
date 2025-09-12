@@ -175,14 +175,20 @@ class GeocodingService:
         
         try:
             self.geocode_stats['api_calls'] += 1
-            time.sleep(0.1)  # Rate limiting
+            
+            # Enhanced rate limiting for production
+            is_production = os.getenv('FLASK_ENV') == 'production'
+            delay = 0.2 if is_production else 0.1  # Slower in production
+            time.sleep(delay)
             
             # Clean and format address for Singapore
             address_str = str(address).strip()
             if 'singapore' not in address_str.lower():
                 address_str += ', Singapore'
             
-            location = self.geolocator.geocode(address_str, timeout=10)
+            # Increased timeout for production reliability
+            timeout = 15 if is_production else 10
+            location = self.geolocator.geocode(address_str, timeout=timeout)
             
             if location:
                 return location.latitude, location.longitude
@@ -192,7 +198,14 @@ class GeocodingService:
                 
         except Exception as e:
             self.geocode_stats['failures'] += 1
-            print(f"Geocoding error for address '{address}': {e}")
+            error_msg = f"Geocoding error for address '{address}': {e}"
+            print(error_msg)
+            
+            # Handle specific rate limit errors
+            if "rate limit" in str(e).lower() or "quota" in str(e).lower():
+                print(f"WARNING: Google Maps API rate limit/quota exceeded")
+                time.sleep(1)  # Extra delay on rate limit
+                
             return None, None
     
     def geocode(self, postal_code, address):
