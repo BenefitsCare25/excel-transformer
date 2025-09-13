@@ -1,0 +1,37 @@
+EXCEL PROCESSING REPORT
+==================================================
+
+Input File: C:\Users\huien\Downloads\AIA - Fullerton GP Listing Sep 2025.xlsx
+Processing Date: 2025-09-13 08:29:07
+
+PROCESSING SUMMARY
+--------------------
+Total Panel Sheets: 2
+Total Terminated Clinics: 138
+Regions Found: Singapore, Malaysia
+
+SHEET DETAILS
+---------------
+Sheet: GP (SGP)
+  Region: Singapore
+  Clinics: 560
+  Header Row: 19
+
+Sheet: GP (Msia)
+  Region: Malaysia
+  Clinics: 69
+  Header Row: 18
+
+TERMINATED CLINICS
+--------------------
+• SILKROUTES @SENGKANG CLINIC PTE. LTD (FHG7319)
+• MAJU CLINIC BY SILKROUTES MEDIHEALTH PTE LTD (FHG5274)
+• UNIHEALTH MEDICAL CENTRE (BOON LAY) (FHG7435)
+• SIMS DRIVE MEDICAL CLINIC (FHG0196)
+• OASIS MEDICAL CLINIC (CAMDEN) (FHG7378)
+• THE CLINIQ @ HOUGANG (FHG7215)
+• THE TENTERAM CLINIC (FHG1740)
+• BOSTON MEDICAL PTE LTD (FHG2065)
+• BUKIT MERAH CENTRAL MEDICAL CENTRE (FHG0028)
+• GOODDOCTORS MEDICAL CLINIC (GEYLANG) (FHG5349)
+... and 128 more

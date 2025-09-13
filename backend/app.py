@@ -211,7 +211,7 @@ class ExcelTransformer:
 
     @staticmethod
     def classify_sheets(sheet_names):
-        """Classify sheets into panel sheets and termination sheets"""
+        """Enhanced classification for various sheet types"""
         panel_sheets = []
         termination_sheets = []
 
@@ -220,8 +220,14 @@ class ExcelTransformer:
             # Identify termination sheets
             if any(term in sheet_lower for term in ['terminat', 'remov', 'cancel', 'delist']):
                 termination_sheets.append(sheet)
-            # Identify panel sheets (GP, TCM, dental, etc.)
-            elif any(panel in sheet_lower for panel in ['gp', 'tcm', 'dental', 'clinic', 'panel']):
+            # Enhanced panel sheet identification
+            elif any(panel in sheet_lower for panel in [
+                'gp', 'tcm', 'dental', 'clinic', 'panel',  # Original patterns
+                'sp list', 'sp clinic', 'specialist',      # Specialist patterns
+                'sg', 'my', 'msia', 'malaysia', 'singapore', # Country patterns
+                'blue', 'red', 'flexi', 'aia',            # Plan type patterns
+                'medical', 'health', 'doctor'             # Healthcare patterns
+            ]):
                 panel_sheets.append(sheet)
 
         return panel_sheets, termination_sheets
@@ -272,44 +278,134 @@ class ExcelTransformer:
 
     @staticmethod
     def map_columns(df_columns):
-        """Map available columns to expected template columns"""
+        """Robust column mapping with fuzzy matching and multiple file format support"""
+        import re
+        from difflib import get_close_matches
+
         column_mapping = {}
 
-        # Define column mapping patterns (case-insensitive)
+        # Enhanced column mapping patterns with more variations
         mappings = {
-            'clinic_id': ['ihp clinic id', 'provider code', 'clinic id', 'id'],
-            'clinic_name': ['clinic name', 'name'],
-            'region': ['region'],
-            'area': ['area'],
-            'address': ['address'],
-            'telephone': ['tel no.', 'tel', 'phone', 'telephone'],
-            'remarks': ['remarks', 'comment', 'note'],
-            'mon_fri_am': ['mon - fri (am)', 'monday - friday'],
-            'mon_fri_pm': ['mon - fri (pm)', 'monday - friday (evening)'],
-            'mon_fri_night': ['mon - fri (night)'],
-            'sat_am': ['sat (am)', 'saturday'],
-            'sat_pm': ['sat (pm)'],
-            'sat_night': ['sat (night)'],
-            'sun_am': ['sun (am)', 'sunday'],
-            'sun_pm': ['sun (pm)'],
-            'sun_night': ['sun (night)'],
-            'holiday_am': ['public holiday (am)', 'public holiday'],
-            'holiday_pm': ['public holiday (pm)'],
-            'holiday_night': ['public holiday (night)']
+            'clinic_id': [
+                'ihp clinic id', 'provider code', 'clinic id', 'id', 'clinic code',
+                'provider id', 'clinic identifier', 'code', 'clinic no', 'clinic number'
+            ],
+            'clinic_name': [
+                'clinic name', 'name', 'clinic', 'provider name', 'facility name',
+                'medical center', 'medical centre', 'center name', 'centre name'
+            ],
+            'region': [
+                'region', 'zone', 'district', 'sector', 'territory', 'location',
+                'geographical region', 'geo region', 'state', 'province'
+            ],
+            'area': [
+                'area', 'estate', 'neighbourhood', 'neighborhood', 'locality',
+                'precinct', 'town', 'suburb', 'community', 'district area'
+            ],
+            'address': [
+                'address', 'full address', 'complete address', 'location address',
+                'physical address', 'street address', 'mailing address'
+            ],
+            'telephone': [
+                'tel no.', 'tel', 'phone', 'telephone', 'contact', 'contact no',
+                'contact number', 'phone number', 'tel number', 'mobile', 'contact no.'
+            ],
+            'remarks': [
+                'remarks', 'comment', 'note', 'remark', 'comments', 'notes',
+                'additional info', 'special notes', 'observation', 'memo'
+            ],
+            'operating_hours': [
+                'operating hours', 'hours', 'business hours', 'clinic hours',
+                'opening hours', 'operation hours', 'working hours', 'service hours'
+            ],
+            'mon_fri_am': [
+                'mon - fri (am)', 'monday - friday', 'weekday am', 'mon-fri am',
+                'operating hours\nmon-fri', 'operating hours mon-fri', 'weekdays am'
+            ],
+            'mon_fri_pm': [
+                'mon - fri (pm)', 'monday - friday (evening)', 'weekday pm', 'mon-fri pm', 'weekdays pm'
+            ],
+            'mon_fri_night': [
+                'mon - fri (night)', 'weekday night', 'mon-fri night', 'weekdays night'
+            ],
+            'sat_am': ['sat (am)', 'saturday', 'sat am', 'saturday am'],
+            'sat_pm': ['sat (pm)', 'sat pm', 'saturday pm'],
+            'sat_night': ['sat (night)', 'sat night', 'saturday night'],
+            'sun_am': ['sun (am)', 'sunday', 'sun am', 'sunday am'],
+            'sun_pm': ['sun (pm)', 'sun pm', 'sunday pm'],
+            'sun_night': ['sun (night)', 'sun night', 'sunday night'],
+            'holiday_am': ['public holiday (am)', 'public holiday', 'holiday am', 'ph am'],
+            'holiday_pm': ['public holiday (pm)', 'holiday pm', 'ph pm'],
+            'holiday_night': ['public holiday (night)', 'holiday night', 'ph night'],
+            # Address components for composite address construction
+            'address_blk': ['blk', 'block', 'building no', 'bldg no', 'unit block'],
+            'address_road': ['road name', 'street name', 'street', 'road', 'avenue', 'ave'],
+            'address_unit': ['unit no.', 'unit no', 'unit', '#', 'suite', 'level'],
+            'address_building': ['building name', 'building', 'bldg name', 'complex name'],
+            'postal_code': ['postal code', 'postcode', 'zip code', 'zip', 'postal']
         }
 
-        # Convert all column names to lowercase for comparison, handling NaN values
+        # Convert all column names to lowercase and clean for comparison
         df_cols_lower = {}
+        df_cols_cleaned = {}
         for col in df_columns:
             if pd.notna(col) and isinstance(col, str):
-                df_cols_lower[col.lower().strip()] = col
+                col_clean = col.lower().strip()
+                # Remove extra whitespace and newlines
+                col_clean = re.sub(r'\s+', ' ', col_clean)
+                df_cols_lower[col_clean] = col
+                df_cols_cleaned[col_clean] = col
 
-        # Find best match for each expected column
+        print(f"Available columns (cleaned): {list(df_cols_cleaned.keys())}")
+
+        # Phase 1: Exact pattern matching
         for expected_col, patterns in mappings.items():
             for pattern in patterns:
                 if pattern in df_cols_lower:
                     column_mapping[expected_col] = df_cols_lower[pattern]
+                    print(f"Exact match: {expected_col} -> {pattern} -> {df_cols_lower[pattern]}")
                     break
+
+        # Phase 2: Fuzzy matching for unmapped essential columns
+        essential_columns = ['clinic_name', 'region', 'area', 'telephone']
+        for expected_col in essential_columns:
+            if expected_col not in column_mapping:
+                # Get all patterns for this column
+                all_patterns = mappings.get(expected_col, [])
+
+                # Try fuzzy matching
+                for pattern in all_patterns:
+                    # Find close matches with similarity threshold
+                    close_matches = get_close_matches(
+                        pattern,
+                        list(df_cols_cleaned.keys()),
+                        n=1,
+                        cutoff=0.6
+                    )
+                    if close_matches:
+                        matched_col = df_cols_cleaned[close_matches[0]]
+                        column_mapping[expected_col] = matched_col
+                        print(f"Fuzzy match: {expected_col} -> {pattern} ~= {close_matches[0]} -> {matched_col}")
+                        break
+
+        # Phase 3: Keyword-based matching for remaining columns (with better specificity)
+        remaining_mappings = {
+            'clinic_id': ['clinic id', 'clinic code', 'provider id', 'provider code'],  # More specific patterns
+            'address': ['address', 'location'],
+            'remarks': ['remark', 'comment', 'note'],
+        }
+
+        for expected_col, keywords in remaining_mappings.items():
+            if expected_col not in column_mapping:
+                for col_name in df_cols_cleaned.keys():
+                    # Use more specific matching - keyword must be substantial part of column name
+                    for keyword in keywords:
+                        if keyword in col_name and len(keyword) / len(col_name) > 0.4:  # At least 40% match
+                            column_mapping[expected_col] = df_cols_cleaned[col_name]
+                            print(f"Keyword match: {expected_col} -> {keyword} in {col_name} -> {df_cols_cleaned[col_name]}")
+                            break
+                    if expected_col in column_mapping:
+                        break
 
         return column_mapping
 
@@ -434,7 +530,70 @@ class ExcelTransformer:
             result.append(f"{am}/{pm}/{night}")
 
         return result
-    
+
+    @staticmethod
+    def construct_address(df_source, col_map):
+        """Smart address construction from multiple columns"""
+        addresses = []
+
+        # Define address component priorities
+        address_components = [
+            ('address_blk', 'Blk'),     # Block number
+            ('address_unit', '#'),       # Unit number
+            ('address_road', ''),        # Road name
+            ('address_building', ''),    # Building name
+        ]
+
+        for _, row in df_source.iterrows():
+            address_parts = []
+
+            # Check if we have a complete address column first
+            if 'address' in col_map and pd.notna(row.get(col_map['address'], '')):
+                address_str = str(row[col_map['address']]).strip()
+                if address_str and address_str.lower() not in ['nan', '', 'none']:
+                    addresses.append(address_str)
+                    continue
+
+            # Construct address from components
+            for comp_key, prefix in address_components:
+                if comp_key in col_map:
+                    value = row.get(col_map[comp_key], '')
+                    if pd.notna(value) and str(value).strip() and str(value).lower() not in ['nan', '', 'none']:
+                        value_str = str(value).strip()
+                        if prefix and not value_str.startswith(prefix):
+                            address_parts.append(f"{prefix} {value_str}")
+                        else:
+                            address_parts.append(value_str)
+
+            # Combine parts
+            if address_parts:
+                addresses.append(' '.join(address_parts))
+            else:
+                addresses.append('')
+
+        return addresses
+
+    @staticmethod
+    def smart_column_fallback(df_source, col_map, field_type):
+        """Intelligent fallback for missing critical fields"""
+        if field_type == 'clinic_id':
+            # Try to generate ID from clinic name or use row index
+            if 'clinic_name' in col_map:
+                return [f"AUTO_{i+1:04d}_{str(name).replace(' ', '_').upper()[:10]}"
+                       for i, name in enumerate(df_source[col_map['clinic_name']])]
+            else:
+                return [f"AUTO_{i+1:04d}" for i in range(len(df_source))]
+
+        elif field_type == 'region' and 'area' in col_map:
+            # Use area as region if region is missing
+            return df_source[col_map['area']].fillna('UNKNOWN')
+
+        elif field_type == 'area' and 'region' in col_map:
+            # Use region as area if area is missing
+            return df_source[col_map['region']].fillna('UNKNOWN')
+
+        return [''] * len(df_source)
+
     @staticmethod
     def transform_sheet(input_path, sheet_name, terminated_ids=None):
         """Transform a single sheet to target template format with geocoding"""
@@ -473,14 +632,35 @@ class ExcelTransformer:
                 filtered_count = len(df_source)
                 print(f"Filtered out {initial_count - filtered_count} terminated clinics from sheet '{sheet_name}'")
 
-            # Flexible mappings using column mapping
-            df_transformed['Code'] = df_source[col_map['clinic_id']] if 'clinic_id' in col_map else ''
+            # Robust field mapping with fallbacks
+            # Clinic ID with smart fallback
+            if 'clinic_id' in col_map:
+                df_transformed['Code'] = df_source[col_map['clinic_id']]
+            else:
+                df_transformed['Code'] = ExcelTransformer.smart_column_fallback(df_source, col_map, 'clinic_id')
+                print(f"Generated auto clinic IDs for {len(df_source)} records")
+
+            # Clinic Name (required field)
             df_transformed['Name'] = df_source[col_map['clinic_name']]
-            df_transformed['Zone'] = df_source[col_map['region']] if 'region' in col_map else ''
-            df_transformed['Area'] = df_source[col_map['area']] if 'area' in col_map else ''
-            df_transformed['Specialty'] = None  # Not available in source
-            df_transformed['Doctor'] = None  # Not available in source
-            df_transformed['Address1'] = df_source[col_map['address']] if 'address' in col_map else ''
+
+            # Region with smart fallback
+            if 'region' in col_map:
+                df_transformed['Zone'] = df_source[col_map['region']]
+            else:
+                df_transformed['Zone'] = ExcelTransformer.smart_column_fallback(df_source, col_map, 'region')
+
+            # Area with smart fallback
+            if 'area' in col_map:
+                df_transformed['Area'] = df_source[col_map['area']]
+            else:
+                df_transformed['Area'] = ExcelTransformer.smart_column_fallback(df_source, col_map, 'area')
+
+            # Fields not available in source
+            df_transformed['Specialty'] = None
+            df_transformed['Doctor'] = None
+
+            # Smart address construction
+            df_transformed['Address1'] = ExcelTransformer.construct_address(df_source, col_map)
             df_transformed['Address2'] = None
             df_transformed['Address3'] = None
 
@@ -492,22 +672,32 @@ class ExcelTransformer:
                 else:
                     return None  # Don't extract postal codes for non-Singapore addresses
 
-            if 'address' in col_map:
-                # We need to detect country first before extracting postal codes
-                temp_countries = df_source[col_map['address']].apply(
-                    lambda addr: 'MALAYSIA' if any(indicator in str(addr).lower() for indicator in [
-                        'malaysia', 'johor', 'kuala lumpur', 'selangor', 'penang', 'perak',
-                        'kedah', 'kelantan', 'terengganu', 'pahang', 'negeri sembilan',
-                        'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan',
-                        'johor bahru', 'kl', 'shah alam', 'petaling jaya'
-                    ]) else 'SINGAPORE'
-                )
+            # Enhanced postal code extraction
+            postal_codes = []
+            for address in df_transformed['Address1']:
+                if 'postal_code' in col_map:
+                    # Use dedicated postal code column if available
+                    postal_code_idx = df_transformed['Address1'].tolist().index(address)
+                    postal_codes.append(df_source.iloc[postal_code_idx][col_map['postal_code']])
+                else:
+                    # Extract from address
+                    if pd.notna(address) and str(address).strip():
+                        # Detect country first
+                        country = 'MALAYSIA' if any(indicator in str(address).lower() for indicator in [
+                            'malaysia', 'johor', 'kuala lumpur', 'selangor', 'penang', 'perak',
+                            'kedah', 'kelantan', 'terengganu', 'pahang', 'negeri sembilan',
+                            'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan',
+                            'johor bahru', 'kl', 'shah alam', 'petaling jaya'
+                        ]) else 'SINGAPORE'
 
-                df_transformed['PostalCode'] = df_source[col_map['address']].combine(
-                    temp_countries, extract_postal_code_smart
-                )
-            else:
-                df_transformed['PostalCode'] = None
+                        if country == 'SINGAPORE':
+                            postal_codes.append(ExcelTransformer.extract_postal_code(address))
+                        else:
+                            postal_codes.append(None)
+                    else:
+                        postal_codes.append(None)
+
+            df_transformed['PostalCode'] = postal_codes
 
             # Detect country from address information
             def detect_country(address):

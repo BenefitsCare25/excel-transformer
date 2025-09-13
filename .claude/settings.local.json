@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(PORT=10000 FLASK_ENV=production gunicorn --config gunicorn.conf.py app:app)",
+      "Bash(PORT=10000 FLASK_ENV=production python app.py)",
+      "Bash(curl:*)",
+      "Bash(gh auth:*)",
+      "Bash(git init:*)",
+      "Bash(git config:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(gh repo create:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)",
+      "Bash(find:*)",
+      "Bash(dir:*)",
+      "Bash(chmod:*)",
+      "Bash(FLASK_ENV=production gunicorn --config gunicorn.conf.py enhanced_app:app --check-config)",
+      "Bash(git reset:*)",
+      "Bash(npm start)",
+      "Bash(npm install)",
+      "Bash(git rm:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(copy excel_processor.py excel-transformer )",
+      "Bash(copy output_generator.py excel-transformer )",
+      "Bash(copy integrated_excel_processor.py excel-transformer )",
+      "Bash(copy config.yaml excel-transformer)",
+      "Bash(rd:*)",
+      "Bash(grep:*)",
+      "Read(//c/Users/huien/Desktop/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
