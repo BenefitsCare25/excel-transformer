@@ -508,34 +508,6 @@ class ExcelTransformer:
             return f"{phone_str} - {remarks_str}"
         return phone_str
     
-    @staticmethod
-    def combine_operating_hours(row, day_type):
-        """Combine AM, PM, NIGHT hours for a specific day type"""
-        if day_type == 'weekday':
-            am = row.get('MON - FRI (AM)', 'CLOSED')
-            pm = row.get('MON - FRI (PM)', 'CLOSED')
-            night = row.get('MON - FRI (NIGHT)', 'CLOSED')
-        elif day_type == 'saturday':
-            am = row.get('SAT (AM)', 'CLOSED')
-            pm = row.get('SAT (PM)', 'CLOSED')
-            night = row.get('SAT (NIGHT)', 'CLOSED')
-        elif day_type == 'sunday':
-            am = row.get('SUN (AM)', 'CLOSED')
-            pm = row.get('SUN (PM)', 'CLOSED')
-            night = row.get('SUN (NIGHT)', 'CLOSED')
-        elif day_type == 'public_holiday':
-            am = row.get('PUBLIC HOLIDAY (AM)', 'CLOSED')
-            pm = row.get('PUBLIC HOLIDAY (PM)', 'CLOSED')
-            night = row.get('PUBLIC HOLIDAY (NIGHT)', 'CLOSED')
-        else:
-            return 'CLOSED/CLOSED/CLOSED'
-        
-        # Handle NaN values
-        am = 'CLOSED' if pd.isna(am) else str(am)
-        pm = 'CLOSED' if pd.isna(pm) else str(pm)
-        night = 'CLOSED' if pd.isna(night) else str(night)
-        
-        return f"{am}/{pm}/{night}"
 
     @staticmethod
     def combine_operating_hours_flexible(df_source, col_map, day_type):
@@ -724,12 +696,6 @@ class ExcelTransformer:
             df_transformed['Address3'] = None
 
             # Extract postal codes from address (only for Singapore addresses)
-            def extract_postal_code_smart(address, country):
-                """Extract postal code only for Singapore addresses"""
-                if country == 'SINGAPORE':
-                    return ExcelTransformer.extract_postal_code(address)
-                else:
-                    return None  # Don't extract postal codes for non-Singapore addresses
 
             # Enhanced postal code extraction
             postal_codes = []
