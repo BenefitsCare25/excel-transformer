@@ -63,23 +63,29 @@ The application performs specific data transformations for IHP clinic data:
 
 1. **Phone & Remarks Combination**: `TEL NO. + " - " + REMARKS → PhoneNumber`
 2. **Operating Hours Consolidation**: `AM/PM/NIGHT → "AM/PM/NIGHT"` format
-3. **Postal Code Extraction**: Extract 6-digit codes from Singapore addresses
+3. **Postal Code Extraction**: Extract 6-digit codes from Singapore addresses (handles "S" prefix)
 4. **Field Mapping**: IHP CLINIC ID → Code, CLINIC NAME → Name, etc.
 5. **Geocoding**: Postal code lookup with Google Maps API fallback
+6. **Multi-Sheet Support**: Processes GP, TCM, and specialty clinic sheets
+7. **Empty Row Filtering**: Automatically removes invalid/empty rows from processing
+8. **TCM-Specific Fields**: Extracts physician names and constructs addresses from separate components
 
 ### Data Flow
 1. Frontend uploads Excel file via `/upload` endpoint
-2. Backend detects header row automatically (handles various layouts)
-3. ExcelTransformer processes data with geocoding
-4. Transformed file saved to processed/ directory
-5. Frontend downloads result via `/download/{job_id}` endpoint
+2. Backend detects header row automatically (handles various layouts including TCM)
+3. ExcelTransformer processes each sheet with automatic empty row filtering
+4. Applies sheet-specific column mappings (GP vs TCM vs specialty formats)
+5. Geocoding applied with postal code lookup and API fallback
+6. Transformed files saved to processed/ directory (one per sheet)
+7. Frontend downloads individual files or ZIP archive via `/download/{job_id}` endpoints
 
 ## API Endpoints
 
 - `GET /health` - Backend health check with geocoding service status
-- `POST /upload` - Upload and transform Excel file
-- `GET /download/{job_id}` - Download transformed file
-- `GET /status/{job_id}` - Check processing status
+- `POST /upload` - Upload and transform Excel file (multi-sheet support)
+- `GET /download/{job_id}` - Download all files as ZIP archive
+- `GET /download/{job_id}/{filename}` - Download specific transformed file
+- `GET /status/{job_id}` - Check processing status with per-file details
 - `POST /geocode` - Standalone geocoding endpoint for testing
 
 ## Environment Configuration
@@ -147,9 +153,28 @@ The gunicorn configuration supports containerized deployment with environment-ba
 
 - Backend runs on port 5000 (dev) / 10000 (prod), frontend on port 3000
 - CORS enabled for cross-origin development
-- Automatic header detection handles various Excel layouts
+- Automatic header detection handles various Excel layouts (GP, TCM, specialty formats)
+- Enhanced column mapping with fuzzy matching and TCM-specific patterns
+- Empty row filtering ensures accurate record counts (e.g., TCM: 60 valid from 276 total)
 - Geocoding uses postal code lookup first, Google Maps API as fallback
+- Handles Singapore postal codes with "S" prefix (e.g., "S238869" → "238869")
+- Address construction from separate components for TCM sheets
+- Multi-sheet processing with individual file outputs
 - Files are automatically cleaned up after processing
 - Real-time health monitoring shows backend status in frontend
 - Environment variables loaded from `.env` files in respective directories
 - Production deployment uses Render.com backend URL (configured in `.env.production`)
+
+## Sheet Format Support
+
+### GP/Standard Clinic Sheets
+- Column headers: CLINIC CODE, CLINIC, REGION, AREA, ADDRESS, etc.
+- Single address field with postal code extraction
+- Standard operating hours format
+
+### TCM Sheets
+- Column headers: MASTER CODE, PHYSICIAN - IN - CHARGE, CLINIC, BLK & ROAD NAME, etc.
+- Separate address components (BLK & ROAD NAME + UNIT & BUILDING NAME)
+- Physician/doctor name extraction
+- Enhanced postal code handling
+- Automatic empty row filtering (removes ~216 empty rows from 276 total)

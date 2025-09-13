@@ -701,6 +701,25 @@ class ExcelTransformer:
                 filtered_count = len(df_source)
                 print(f"Filtered out {initial_count - filtered_count} terminated clinics from sheet '{sheet_name}'")
 
+            # Filter out empty/invalid rows - keep only rows with valid clinic data
+            initial_count = len(df_source)
+            if 'clinic_id' in col_map and 'clinic_name' in col_map:
+                # For sheets with both clinic_id and clinic_name, filter by both
+                valid_id_mask = df_source[col_map['clinic_id']].notna() & (df_source[col_map['clinic_id']].astype(str).str.strip() != '')
+                valid_name_mask = df_source[col_map['clinic_name']].notna() & (df_source[col_map['clinic_name']].astype(str).str.strip() != '')
+                valid_mask = valid_id_mask & valid_name_mask
+            elif 'clinic_name' in col_map:
+                # Fallback: filter by clinic_name only
+                valid_mask = df_source[col_map['clinic_name']].notna() & (df_source[col_map['clinic_name']].astype(str).str.strip() != '')
+            else:
+                # Should not happen, but keep all rows if no clinic identifier found
+                valid_mask = pd.Series([True] * len(df_source))
+
+            df_source = df_source[valid_mask]
+            filtered_count = len(df_source)
+            if initial_count != filtered_count:
+                print(f"Filtered out {initial_count - filtered_count} empty/invalid rows from sheet '{sheet_name}', keeping {filtered_count} valid records")
+
             # Robust field mapping with fallbacks
             # Clinic ID with smart fallback
             if 'clinic_id' in col_map:
