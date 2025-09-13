@@ -155,7 +155,7 @@ The gunicorn configuration supports containerized deployment with environment-ba
 - CORS enabled for cross-origin development
 - Automatic header detection handles various Excel layouts (GP, TCM, specialty formats)
 - Enhanced column mapping with fuzzy matching and TCM-specific patterns
-- Empty row filtering ensures accurate record counts (e.g., TCM: 60 valid from 276 total)
+- Empty row filtering ensures accurate record counts by removing null/empty rows
 - Geocoding uses postal code lookup first, Google Maps API as fallback
 - Handles Singapore postal codes with "S" prefix (e.g., "S238869" → "238869")
 - Address construction from separate components for TCM sheets
@@ -177,4 +177,4 @@ The gunicorn configuration supports containerized deployment with environment-ba
 - Separate address components (BLK & ROAD NAME + UNIT & BUILDING NAME)
 - Physician/doctor name extraction
 - Enhanced postal code handling
-- Automatic empty row filtering (removes ~216 empty rows from 276 total)
+- Automatic empty row filtering for clean data processing
