@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import pandas as pd
 import os
+import sys
 import uuid
 import re
 from datetime import datetime
@@ -58,42 +59,74 @@ class GeocodingService:
     
     @lru_cache(maxsize=1)
     def _load_postal_code_lookup(self):
-        """Load postal code lookup table from master file"""
-        # Try each path in order of preference
-        master_file_path = None
-        for path in POSTAL_CODE_PATHS:
-            if path and os.path.exists(path):
-                master_file_path = path
-                break
-        
-        if not master_file_path:
-            print("Postal Code Lookup: NO FILE FOUND - Google Maps API only")
-            return {}
-        
+        """Load postal code lookup table from master file - deployment safe"""
         try:
-            df = pd.read_excel(master_file_path)
-            
+            # Quick check - if we're in a deployment environment (no local files), skip immediately
+            is_deployment = os.getenv('RENDER') or os.getenv('VERCEL') or os.getenv('HEROKU')
+            if is_deployment:
+                print("Postal Code Lookup: DEPLOYMENT MODE - Using Google Maps API only")
+                return {}
+
+            # Try each path in order of preference with fast fail
+            master_file_path = None
+            for path in POSTAL_CODE_PATHS:
+                if path and os.path.exists(path):
+                    # Quick file size check to avoid loading huge files
+                    try:
+                        file_size = os.path.getsize(path)
+                        if file_size > 50 * 1024 * 1024:  # Skip files > 50MB
+                            print(f"Postal Code Lookup: File too large ({file_size/1024/1024:.1f}MB), skipping: {path}")
+                            continue
+                        master_file_path = path
+                        break
+                    except OSError:
+                        continue
+
+            if not master_file_path:
+                print("Postal Code Lookup: NO SUITABLE FILE FOUND - Using Google Maps API only")
+                return {}
+
+            print(f"Loading postal code lookup from: {master_file_path}")
+
+            # Load with chunking for better memory management
+            df = pd.read_excel(master_file_path, dtype={'PostalCode': str})
+
             # Create dictionary for fast lookup: {postal_code: (lat, lng)}
             lookup = {}
+            row_count = 0
             for _, row in df.iterrows():
-                # Handle postal code formatting - convert to 6-digit string with leading zeros
-                postal_code_raw = row['PostalCode']
-                if pd.notna(postal_code_raw):
-                    # Convert to int first to remove .0, then format with leading zeros
-                    postal_code = f"{int(float(postal_code_raw)):06d}"
+                row_count += 1
+                if row_count % 1000 == 0:  # Progress indicator
+                    print(f"Processing row {row_count}...")
+
+                # Handle postal code formatting
+                postal_code_raw = row.get('PostalCode')
+                if pd.notna(postal_code_raw) and postal_code_raw:
+                    try:
+                        # Ensure 6-digit format
+                        if isinstance(postal_code_raw, str):
+                            postal_code = postal_code_raw.strip().zfill(6)
+                        else:
+                            postal_code = f"{int(float(postal_code_raw)):06d}"
+                    except (ValueError, TypeError):
+                        continue
                 else:
                     continue
-                
-                lat = row['Latitude'] if pd.notna(row['Latitude']) else None
-                lng = row['Longitude'] if pd.notna(row['Longitude']) else None
-                if lat is not None and lng is not None:
-                    lookup[postal_code] = (float(lat), float(lng))
-            
-            print(f"Postal Code Lookup: {len(lookup)} Singapore postal codes loaded")
+
+                lat = row.get('Latitude')
+                lng = row.get('Longitude')
+                if pd.notna(lat) and pd.notna(lng):
+                    try:
+                        lookup[postal_code] = (float(lat), float(lng))
+                    except (ValueError, TypeError):
+                        continue
+
+            print(f"Postal Code Lookup: {len(lookup)} Singapore postal codes loaded successfully")
             return lookup
-            
+
         except Exception as e:
             print(f"Postal Code Lookup: FAILED - {e}")
+            print("Continuing without postal code lookup, using Google Maps API only")
             return {}
     
     def geocode_by_postal_code(self, postal_code):
@@ -930,31 +963,62 @@ def geocode_address():
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Enhanced health check with API status"""
-    geocoding_service = GeocodingService()
-    
-    # Check postal code lookup status
-    postal_status = len(geocoding_service.postal_code_lookup) > 0
-    
-    # Check Google Maps API status
-    google_api_configured = geocoding_service.google_api_key is not None
-    google_api_working = geocoding_service.geolocator is not None
-    
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.now().isoformat(),
-        'geocoding': {
-            'postal_code_lookup': {
-                'enabled': postal_status,
-                'postal_codes_loaded': len(geocoding_service.postal_code_lookup)
-            },
-            'google_maps_api': {
-                'configured': google_api_configured,
-                'working': google_api_working,
-                'api_key_present': '****' + geocoding_service.google_api_key[-4:] if google_api_configured else None
+    """Enhanced health check with deployment diagnostics"""
+    try:
+        start_time = datetime.now()
+
+        # Quick health check first
+        health_info = {
+            'status': 'healthy',
+            'timestamp': start_time.isoformat(),
+            'deployment': {
+                'environment': 'deployment' if (os.getenv('RENDER') or os.getenv('VERCEL') or os.getenv('HEROKU')) else 'local',
+                'python_version': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                'flask_env': os.getenv('FLASK_ENV', 'development')
             }
         }
-    })
+
+        # Try geocoding service initialization (with timeout protection)
+        try:
+            geocoding_service = GeocodingService()
+
+            # Check postal code lookup status
+            postal_status = len(geocoding_service.postal_code_lookup) > 0
+
+            # Check Google Maps API status
+            google_api_configured = geocoding_service.google_api_key is not None
+            google_api_working = geocoding_service.geolocator is not None
+
+            health_info['geocoding'] = {
+                'postal_code_lookup': {
+                    'enabled': postal_status,
+                    'postal_codes_loaded': len(geocoding_service.postal_code_lookup)
+                },
+                'google_maps_api': {
+                    'configured': google_api_configured,
+                    'working': google_api_working,
+                    'api_key_present': '****' + geocoding_service.google_api_key[-4:] if google_api_configured else None
+                }
+            }
+
+        except Exception as geocoding_error:
+            health_info['geocoding'] = {
+                'error': str(geocoding_error),
+                'status': 'geocoding_service_failed_but_app_running'
+            }
+
+        # Calculate response time
+        end_time = datetime.now()
+        health_info['response_time_ms'] = int((end_time - start_time).total_seconds() * 1000)
+
+        return jsonify(health_info)
+
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
