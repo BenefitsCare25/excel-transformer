@@ -364,12 +364,15 @@ class ExcelTransformer:
             'sat_am': ['sat (am)', 'saturday', 'sat am', 'saturday am'],
             'sat_pm': ['sat (pm)', 'sat pm', 'saturday pm'],
             'sat_night': ['sat (night)', 'sat night', 'saturday night'],
+            'sat_simple': ['sat'],  # Simple Saturday column
             'sun_am': ['sun (am)', 'sunday', 'sun am', 'sunday am'],
             'sun_pm': ['sun (pm)', 'sun pm', 'sunday pm'],
             'sun_night': ['sun (night)', 'sun night', 'sunday night'],
+            'sun_simple': ['sun'],  # Simple Sunday column
             'holiday_am': ['public holiday (am)', 'public holiday', 'holiday am', 'ph am'],
             'holiday_pm': ['public holiday (pm)', 'holiday pm', 'ph pm'],
             'holiday_night': ['public holiday (night)', 'holiday night', 'ph night'],
+            'holiday_simple': ['holiday'],  # Simple Holiday column
             # Address components for composite address construction
             'address_blk': ['blk', 'block', 'building no', 'bldg no', 'unit block'],
             'address_road': ['road name', 'street name', 'street', 'road', 'avenue', 'ave'],
@@ -536,31 +539,54 @@ class ExcelTransformer:
 
     @staticmethod
     def combine_operating_hours_flexible(df_source, col_map, day_type):
-        """Combine operating hours using flexible column mapping"""
-        # Define column keys for each day type
+        """Smart operating hours combination supporting both complex (AM/PM/NIGHT) and simple formats"""
+
+        # Define potential column keys for each day type
         if day_type == 'weekday':
-            am_key, pm_key, night_key = 'mon_fri_am', 'mon_fri_pm', 'mon_fri_night'
+            complex_keys = ('mon_fri_am', 'mon_fri_pm', 'mon_fri_night')
+            simple_key = 'mon_fri_am'  # Sometimes Mon-Fri is in a single column
         elif day_type == 'saturday':
-            am_key, pm_key, night_key = 'sat_am', 'sat_pm', 'sat_night'
+            complex_keys = ('sat_am', 'sat_pm', 'sat_night')
+            simple_key = 'sat_simple'
         elif day_type == 'sunday':
-            am_key, pm_key, night_key = 'sun_am', 'sun_pm', 'sun_night'
+            complex_keys = ('sun_am', 'sun_pm', 'sun_night')
+            simple_key = 'sun_simple'
         elif day_type == 'public_holiday':
-            am_key, pm_key, night_key = 'holiday_am', 'holiday_pm', 'holiday_night'
+            complex_keys = ('holiday_am', 'holiday_pm', 'holiday_night')
+            simple_key = 'holiday_simple'
         else:
             return ['CLOSED/CLOSED/CLOSED'] * len(df_source)
 
         result = []
         for _, row in df_source.iterrows():
-            am = row.get(col_map.get(am_key, ''), 'CLOSED') if am_key in col_map else 'CLOSED'
-            pm = row.get(col_map.get(pm_key, ''), 'CLOSED') if pm_key in col_map else 'CLOSED'
-            night = row.get(col_map.get(night_key, ''), 'CLOSED') if night_key in col_map else 'CLOSED'
+            # Strategy 1: Try complex format (AM/PM/NIGHT columns)
+            am_key, pm_key, night_key = complex_keys
+            has_complex = any(key in col_map for key in complex_keys)
 
-            # Handle NaN values
-            am = 'CLOSED' if pd.isna(am) else str(am)
-            pm = 'CLOSED' if pd.isna(pm) else str(pm)
-            night = 'CLOSED' if pd.isna(night) else str(night)
+            if has_complex:
+                # Use complex format
+                am = row.get(col_map.get(am_key, ''), 'CLOSED') if am_key in col_map else 'CLOSED'
+                pm = row.get(col_map.get(pm_key, ''), 'CLOSED') if pm_key in col_map else 'CLOSED'
+                night = row.get(col_map.get(night_key, ''), 'CLOSED') if night_key in col_map else 'CLOSED'
 
-            result.append(f"{am}/{pm}/{night}")
+                # Handle NaN values
+                am = 'CLOSED' if pd.isna(am) else str(am)
+                pm = 'CLOSED' if pd.isna(pm) else str(pm)
+                night = 'CLOSED' if pd.isna(night) else str(night)
+
+                result.append(f"{am}/{pm}/{night}")
+
+            elif simple_key in col_map:
+                # Strategy 2: Use simple format (single column with all hours)
+                hours_value = row.get(col_map[simple_key], 'CLOSED')
+                hours_str = 'CLOSED' if pd.isna(hours_value) else str(hours_value)
+
+                # For simple format, put the hours in first position and CLOSED for others
+                result.append(f"{hours_str}/CLOSED/CLOSED")
+
+            else:
+                # Strategy 3: No mapping found, default to CLOSED
+                result.append('CLOSED/CLOSED/CLOSED')
 
         return result
 
