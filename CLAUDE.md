@@ -95,16 +95,34 @@ PORT=5000
 ```
 
 ### Frontend
+Development uses `.env.development`, production uses `.env.production`:
 ```
+# Development
 REACT_APP_API_URL=http://localhost:5000
-REACT_APP_UPLOAD_TIMEOUT=300000
+
+# Production
+REACT_APP_API_URL=https://excel-transformer-backend.onrender.com
 ```
 
 ## Testing
 
-- **Backend**: Run `python test_backend.py` to test all endpoints with sample data
-- **Frontend**: Uses react-scripts test runner
+- **Backend**: Run `python test_backend.py` from project root to test all endpoints with sample data
+- **Frontend**: Uses react-scripts test runner (`npm test` in frontend directory)
 - **Integration**: Backend test creates sample Excel file and tests full upload/download flow
+
+## Production Deployment
+
+### Backend (Gunicorn)
+```bash
+cd backend
+gunicorn --config gunicorn.conf.py app:app
+```
+- Configured for port 10000 in production (configurable via PORT env var)
+- Uses single worker process with 300s timeout for large file processing
+- Process name: 'excel-transformer'
+
+### Docker/Container Setup
+The gunicorn configuration supports containerized deployment with environment-based port configuration.
 
 ## Key Dependencies
 
@@ -114,18 +132,24 @@ REACT_APP_UPLOAD_TIMEOUT=300000
 - openpyxl 3.1.5 (Excel file I/O)
 - googlemaps 4.10.0 (geocoding API)
 - geopy 2.4.1 (geocoding services)
+- flask-cors 4.0.0 (cross-origin requests)
+- gunicorn 21.2.0 (production WSGI server)
+- python-dotenv 1.0.0 (environment variable loading)
 
 ### Frontend
 - React 18.2.0
 - react-dropzone 14.2.3 (file upload)
 - axios 1.6.0 (API calls)
 - Tailwind CSS 3.3.0 (styling)
+- react-scripts 5.0.1 (build tooling)
 
 ## Development Notes
 
-- Backend runs on port 5000, frontend on port 3000
+- Backend runs on port 5000 (dev) / 10000 (prod), frontend on port 3000
 - CORS enabled for cross-origin development
 - Automatic header detection handles various Excel layouts
 - Geocoding uses postal code lookup first, Google Maps API as fallback
 - Files are automatically cleaned up after processing
 - Real-time health monitoring shows backend status in frontend
+- Environment variables loaded from `.env` files in respective directories
+- Production deployment uses Render.com backend URL (configured in `.env.production`)

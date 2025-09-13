@@ -137,6 +137,9 @@ class GeocodingService:
         try:
             # Normalize postal code to 6-digit format with leading zeros
             postal_code_str = str(postal_code).strip()
+            # Handle Singapore postal codes with 'S' prefix
+            if postal_code_str.upper().startswith('S') and len(postal_code_str) > 1:
+                postal_code_str = postal_code_str[1:]  # Remove 'S' prefix
             postal_code_normalized = f"{int(float(postal_code_str)):06d}"
             
             if postal_code_normalized in self.postal_code_lookup:
@@ -226,6 +229,14 @@ class ExcelTransformer:
                 ('no.' in row_text and 'clinic' in row_text and 'name' in row_text),
                 # For termination sheets
                 ('no.' in row_text and 'region' in row_text and 'area' in row_text),
+                # TCM sheet specific patterns
+                ('master code' in row_text and 'clinic' in row_text and 'postal' in row_text),
+                ('master code' in row_text and 'physician' in row_text and 'charge' in row_text),
+                ('master code' in row_text and 'tel' in row_text and len(row_values) >= 8),
+                # General patterns that indicate header rows
+                ('clinic' in row_text and 'postal' in row_text and 'tel' in row_text),
+                ('code' in row_text and 'clinic' in row_text and 'address' in row_text),
+                ('provider' in row_text and 'name' in row_text and len(row_values) >= 5),
                 # Minimum viable header (region + clinic name)
                 ('region' in row_text and 'clinic' in row_text and len(row_values) >= 5)
             ]
@@ -321,7 +332,8 @@ class ExcelTransformer:
         mappings = {
             'clinic_id': [
                 'ihp clinic id', 'provider code', 'clinic id', 'id', 'clinic code',
-                'provider id', 'clinic identifier', 'code', 'clinic no', 'clinic number'
+                'provider id', 'clinic identifier', 'code', 'clinic no', 'clinic number',
+                'master code', 'master id'  # TCM sheet specific
             ],
             'clinic_name': [
                 'clinic name', 'name', 'clinic', 'provider name', 'facility name',
@@ -353,7 +365,8 @@ class ExcelTransformer:
             ],
             'mon_fri_am': [
                 'mon - fri (am)', 'monday - friday', 'weekday am', 'mon-fri am',
-                'operating hours\nmon-fri', 'operating hours mon-fri', 'weekdays am'
+                'operating hours\nmon-fri', 'operating hours mon-fri', 'weekdays am',
+                'operating hours \nmon - fri', 'operating hours mon - fri'  # TCM format
             ],
             'mon_fri_pm': [
                 'mon - fri (pm)', 'monday - friday (evening)', 'weekday pm', 'mon-fri pm', 'weekdays pm'
@@ -374,11 +387,13 @@ class ExcelTransformer:
             'holiday_night': ['public holiday (night)', 'holiday night', 'ph night'],
             'holiday_simple': ['holiday'],  # Simple Holiday column
             # Address components for composite address construction
-            'address_blk': ['blk', 'block', 'building no', 'bldg no', 'unit block'],
-            'address_road': ['road name', 'street name', 'street', 'road', 'avenue', 'ave'],
-            'address_unit': ['unit no.', 'unit no', 'unit', '#', 'suite', 'level'],
-            'address_building': ['building name', 'building', 'bldg name', 'complex name'],
-            'postal_code': ['postal code', 'postcode', 'zip code', 'zip', 'postal']
+            'address_blk': ['blk', 'block', 'building no', 'bldg no', 'unit block', 'blk & road name'],
+            'address_road': ['road name', 'street name', 'street', 'road', 'avenue', 'ave', 'blk & road name'],
+            'address_unit': ['unit no.', 'unit no', 'unit', '#', 'suite', 'level', 'unit & building name'],
+            'address_building': ['building name', 'building', 'bldg name', 'complex name', 'unit & building name'],
+            'postal_code': ['postal code', 'postcode', 'zip code', 'zip', 'postal'],
+            # TCM-specific field for doctor information
+            'doctor_name': ['physician - in - charge', 'physician in charge', 'doctor', 'physician', 'practitioner']
         }
 
         # Convert all column names to lowercase and clean for comparison
@@ -402,21 +417,31 @@ class ExcelTransformer:
                     print(f"Exact match: {expected_col} -> {pattern} -> {df_cols_lower[pattern]}")
                     break
 
-        # Phase 2: Fuzzy matching for unmapped essential columns
-        essential_columns = ['clinic_name', 'region', 'area', 'telephone']
+        # Phase 2: Fuzzy matching for unmapped essential columns (skip region/area for TCM-like sheets)
+        essential_columns = ['clinic_name', 'telephone']
+        # Only add region/area if we have good candidates (avoid false matches)
+        has_region_candidate = any('region' in col.lower() or 'zone' in col.lower() for col in df_cols_cleaned.keys())
+        has_area_candidate = any('area' in col.lower() or 'district' in col.lower() for col in df_cols_cleaned.keys())
+
+        if has_region_candidate:
+            essential_columns.append('region')
+        if has_area_candidate:
+            essential_columns.append('area')
+
         for expected_col in essential_columns:
             if expected_col not in column_mapping:
                 # Get all patterns for this column
                 all_patterns = mappings.get(expected_col, [])
 
-                # Try fuzzy matching
+                # Try fuzzy matching with higher threshold for region/area
+                cutoff = 0.8 if expected_col in ['region', 'area'] else 0.6
                 for pattern in all_patterns:
                     # Find close matches with similarity threshold
                     close_matches = get_close_matches(
                         pattern,
                         list(df_cols_cleaned.keys()),
                         n=1,
-                        cutoff=0.6
+                        cutoff=cutoff
                     )
                     if close_matches:
                         matched_col = df_cols_cleaned[close_matches[0]]
@@ -585,13 +610,20 @@ class ExcelTransformer:
                     addresses.append(address_str)
                     continue
 
-            # Construct address from components
+            # Construct address from components (avoid duplicates)
+            used_columns = set()
             for comp_key, prefix in address_components:
-                if comp_key in col_map:
+                if comp_key in col_map and col_map[comp_key] not in used_columns:
+                    used_columns.add(col_map[comp_key])
                     value = row.get(col_map[comp_key], '')
                     if pd.notna(value) and str(value).strip() and str(value).lower() not in ['nan', '', 'none']:
                         value_str = str(value).strip()
-                        if prefix and not value_str.startswith(prefix):
+                        # For TCM sheets, don't add prefix if the value already contains structural info
+                        if comp_key == 'address_blk' and ('blk' in value_str.lower() or 'block' in value_str.lower()):
+                            address_parts.append(value_str)
+                        elif comp_key == 'address_unit' and ('#' in value_str or 'unit' in value_str.lower()):
+                            address_parts.append(value_str)
+                        elif prefix and not value_str.startswith(prefix):
                             address_parts.append(f"{prefix} {value_str}")
                         else:
                             address_parts.append(value_str)
@@ -615,13 +647,19 @@ class ExcelTransformer:
             else:
                 return [f"AUTO_{i+1:04d}" for i in range(len(df_source))]
 
-        elif field_type == 'region' and 'area' in col_map:
-            # Use area as region if region is missing
-            return df_source[col_map['area']].fillna('UNKNOWN')
+        elif field_type == 'region':
+            # For TCM sheets without region, use 'TCM' as default
+            if 'area' in col_map:
+                return df_source[col_map['area']].fillna('TCM')
+            else:
+                return ['TCM'] * len(df_source)
 
-        elif field_type == 'area' and 'region' in col_map:
-            # Use region as area if area is missing
-            return df_source[col_map['region']].fillna('UNKNOWN')
+        elif field_type == 'area':
+            # For TCM sheets without area, use clinic location or 'SINGAPORE'
+            if 'region' in col_map:
+                return df_source[col_map['region']].fillna('SINGAPORE')
+            else:
+                return ['SINGAPORE'] * len(df_source)
 
         return [''] * len(df_source)
 
@@ -688,7 +726,12 @@ class ExcelTransformer:
 
             # Fields not available in source
             df_transformed['Specialty'] = None
-            df_transformed['Doctor'] = None
+
+            # Doctor field (available in TCM sheets)
+            if 'doctor_name' in col_map:
+                df_transformed['Doctor'] = df_source[col_map['doctor_name']]
+            else:
+                df_transformed['Doctor'] = None
 
             # Smart address construction
             df_transformed['Address1'] = ExcelTransformer.construct_address(df_source, col_map)

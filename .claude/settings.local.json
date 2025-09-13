@@ -31,7 +31,8 @@
       "Bash(copy config.yaml excel-transformer)",
       "Bash(rd:*)",
       "Bash(grep:*)",
-      "Read(//c/Users/huien/Desktop/**)"
+      "Read(//c/Users/huien/Desktop/**)",
+      "Bash(timeout:*)"
     ],
     "deny": [],
     "ask": []
