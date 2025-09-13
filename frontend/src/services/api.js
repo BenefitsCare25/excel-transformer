@@ -41,7 +41,47 @@ class ApiService {
     }
   }
 
-  async downloadFile(jobId) {
+  async downloadFile(jobId, filename = null) {
+    try {
+      // Use specific file endpoint if filename provided, otherwise use legacy endpoint
+      const endpoint = filename ? `/download/${jobId}/${filename}` : `/download/${jobId}`;
+
+      const response = await this.api.get(endpoint, {
+        responseType: 'blob',
+      });
+
+      // Create blob link to download
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+
+      // Get filename from response headers or use default
+      const contentDisposition = response.headers['content-disposition'];
+      let downloadFilename = filename ? `transformed_${filename}` : 'transformed_template.xlsx';
+
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (filenameMatch) {
+          downloadFilename = filenameMatch[1];
+        }
+      }
+
+      link.setAttribute('download', downloadFilename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Download failed',
+      };
+    }
+  }
+
+  async downloadAllFiles(jobId) {
     try {
       const response = await this.api.get(`/download/${jobId}`, {
         responseType: 'blob',
@@ -51,18 +91,18 @@ class ApiService {
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      
+
       // Get filename from response headers or use default
       const contentDisposition = response.headers['content-disposition'];
-      let filename = 'transformed_template.xlsx';
-      
+      let filename = 'transformed_templates.zip';
+
       if (contentDisposition) {
         const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
         if (filenameMatch) {
           filename = filenameMatch[1];
         }
       }
-      
+
       link.setAttribute('download', filename);
       document.body.appendChild(link);
       link.click();

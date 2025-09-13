@@ -40,10 +40,19 @@ function App() {
     }
   };
 
-  const handleDownload = async () => {
+  const handleDownload = async (filename = null) => {
     if (!jobId) return;
 
-    const downloadResult = await apiService.downloadFile(jobId);
+    const downloadResult = await apiService.downloadFile(jobId, filename);
+    if (!downloadResult.success) {
+      alert(`Download failed: ${downloadResult.error}`);
+    }
+  };
+
+  const handleDownloadAll = async () => {
+    if (!jobId) return;
+
+    const downloadResult = await apiService.downloadAllFiles(jobId);
     if (!downloadResult.success) {
       alert(`Download failed: ${downloadResult.error}`);
     }
@@ -107,6 +116,7 @@ function App() {
                 status={processingStatus}
                 result={result}
                 onDownload={handleDownload}
+                onDownloadAll={handleDownloadAll}
                 onReset={handleReset}
               />
             </>
@@ -127,7 +137,7 @@ function App() {
                   </div>
                   <h4 className="font-medium text-gray-800 mb-1">1. Upload</h4>
                   <p className="text-sm text-gray-600">
-                    Upload your Excel file with clinic data
+                    Upload Excel file with multiple sheets (GP, TCM, etc.)
                   </p>
                 </div>
                 <div className="text-center p-4">
@@ -137,9 +147,9 @@ function App() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
                   </div>
-                  <h4 className="font-medium text-gray-800 mb-1">2. Transform</h4>
+                  <h4 className="font-medium text-gray-800 mb-1">2. Process</h4>
                   <p className="text-sm text-gray-600">
-                    Automatic data processing and formatting
+                    Multi-sheet processing with termination filtering
                   </p>
                 </div>
                 <div className="text-center p-4">
@@ -150,7 +160,7 @@ function App() {
                   </div>
                   <h4 className="font-medium text-gray-800 mb-1">3. Download</h4>
                   <p className="text-sm text-gray-600">
-                    Get your transformed template file
+                    Download individual files or all as ZIP
                   </p>
                 </div>
               </div>
@@ -158,24 +168,28 @@ function App() {
 
             <div className="card">
               <h3 className="text-lg font-semibold text-gray-800 mb-3">
-                Transformations Applied
+                Processing Features
               </h3>
               <ul className="space-y-2 text-sm text-gray-700">
                 <li className="flex items-start space-x-2">
-                  <span className="text-green-600 mt-0.5">•</span>
-                  <span><strong>Phone & Remarks:</strong> Combines telephone number with remarks/notes</span>
+                  <span className="text-blue-600 mt-0.5">•</span>
+                  <span><strong>Multi-Sheet Processing:</strong> Automatically detects and processes GP, TCM, and other panel sheets</span>
+                </li>
+                <li className="flex items-start space-x-2">
+                  <span className="text-red-600 mt-0.5">•</span>
+                  <span><strong>Termination Filtering:</strong> Removes terminated clinics from panel listings based on termination sheets</span>
                 </li>
                 <li className="flex items-start space-x-2">
                   <span className="text-green-600 mt-0.5">•</span>
-                  <span><strong>Operating Hours:</strong> Consolidates AM/PM/Night hours into standard format</span>
+                  <span><strong>Data Transformation:</strong> Phone & remarks combination, operating hours consolidation, postal code extraction</span>
                 </li>
                 <li className="flex items-start space-x-2">
-                  <span className="text-green-600 mt-0.5">•</span>
-                  <span><strong>Postal Codes:</strong> Extracts postal codes from Singapore addresses</span>
+                  <span className="text-purple-600 mt-0.5">•</span>
+                  <span><strong>Geocoding:</strong> Automatic latitude/longitude lookup with Google Maps integration</span>
                 </li>
                 <li className="flex items-start space-x-2">
-                  <span className="text-green-600 mt-0.5">•</span>
-                  <span><strong>Field Mapping:</strong> Maps clinic ID, name, region, area to template format</span>
+                  <span className="text-orange-600 mt-0.5">•</span>
+                  <span><strong>Multiple Outputs:</strong> Generates separate Excel files for each processed sheet</span>
                 </li>
               </ul>
             </div>
