@@ -120,23 +120,36 @@ class GeocodingService:
         """Get coordinates by Google Maps API using full address"""
         if not address or str(address).strip() in ('', 'None', 'nan') or not self.geolocator:
             return None, None
-        
+
         try:
             self.geocode_stats['api_calls'] += 1
-            
-            # Clean and format address for Singapore
+
+            # Clean address and detect country
             address_str = str(address).strip()
-            if 'singapore' not in address_str.lower():
-                address_str += ', Singapore'
-            
+            address_lower = address_str.lower()
+
+            # Check if address already contains country information
+            has_singapore = 'singapore' in address_lower
+            has_malaysia = 'malaysia' in address_lower
+
+            # If no country specified, try to detect from context
+            if not has_singapore and not has_malaysia:
+                # Check for Malaysian states/regions in address
+                malaysian_indicators = ['johor', 'kuala lumpur', 'selangor', 'penang', 'perak', 'kedah', 'kelantan', 'terengganu', 'pahang', 'negeri sembilan', 'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan']
+                if any(indicator in address_lower for indicator in malaysian_indicators):
+                    address_str += ', Malaysia'
+                else:
+                    # Default to Singapore for addresses without clear country indicators
+                    address_str += ', Singapore'
+
             location = self.geolocator.geocode(address_str, timeout=10)
-            
+
             if location:
                 return location.latitude, location.longitude
             else:
                 self.geocode_stats['failures'] += 1
                 return None, None
-                
+
         except Exception as e:
             self.geocode_stats['failures'] += 1
             print(f"Address geocoding failed for '{address}': {e}")
@@ -471,15 +484,52 @@ class ExcelTransformer:
             df_transformed['Address2'] = None
             df_transformed['Address3'] = None
 
-            # Extract postal codes from address
+            # Extract postal codes from address (only for Singapore addresses)
+            def extract_postal_code_smart(address, country):
+                """Extract postal code only for Singapore addresses"""
+                if country == 'SINGAPORE':
+                    return ExcelTransformer.extract_postal_code(address)
+                else:
+                    return None  # Don't extract postal codes for non-Singapore addresses
+
             if 'address' in col_map:
-                df_transformed['PostalCode'] = df_source[col_map['address']].apply(
-                    ExcelTransformer.extract_postal_code
+                # We need to detect country first before extracting postal codes
+                temp_countries = df_source[col_map['address']].apply(
+                    lambda addr: 'MALAYSIA' if any(indicator in str(addr).lower() for indicator in [
+                        'malaysia', 'johor', 'kuala lumpur', 'selangor', 'penang', 'perak',
+                        'kedah', 'kelantan', 'terengganu', 'pahang', 'negeri sembilan',
+                        'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan',
+                        'johor bahru', 'kl', 'shah alam', 'petaling jaya'
+                    ]) else 'SINGAPORE'
+                )
+
+                df_transformed['PostalCode'] = df_source[col_map['address']].combine(
+                    temp_countries, extract_postal_code_smart
                 )
             else:
                 df_transformed['PostalCode'] = None
 
-            df_transformed['Country'] = 'SINGAPORE'
+            # Detect country from address information
+            def detect_country(address):
+                if pd.isna(address) or str(address).strip() == '':
+                    return 'SINGAPORE'  # Default
+
+                address_lower = str(address).lower()
+
+                # Check for Malaysian indicators
+                malaysian_indicators = [
+                    'malaysia', 'johor', 'kuala lumpur', 'selangor', 'penang', 'perak',
+                    'kedah', 'kelantan', 'terengganu', 'pahang', 'negeri sembilan',
+                    'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan',
+                    'johor bahru', 'kl', 'shah alam', 'petaling jaya'
+                ]
+
+                if any(indicator in address_lower for indicator in malaysian_indicators):
+                    return 'MALAYSIA'
+                else:
+                    return 'SINGAPORE'
+
+            df_transformed['Country'] = df_transformed['Address1'].apply(detect_country)
 
             # Combine phone and remarks (if available)
             if 'telephone' in col_map and col_map['telephone'] is not None and pd.notna(col_map['telephone']):
