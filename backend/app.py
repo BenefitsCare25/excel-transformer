@@ -378,7 +378,8 @@ class ExcelTransformer:
                 'mon - fri (am)', 'monday - friday', 'weekday am', 'mon-fri am',
                 'operating hours\nmon-fri', 'operating hours mon-fri', 'weekdays am',
                 'operating hours \nmon - fri', 'operating hours mon - fri',  # TCM format
-                'operation hours', 'mon to fri'  # MY GP List format
+                'operation hours', 'mon to fri',  # MY GP List format
+                'mon - fri'  # AIA SP format
             ],
             'mon_fri_pm': [
                 'mon - fri (pm)', 'monday - friday (evening)', 'weekday pm', 'mon-fri pm', 'weekdays pm'
@@ -665,7 +666,9 @@ class ExcelTransformer:
         for _, row in df_source.iterrows():
             # Strategy 1: Try complex format (AM/PM/NIGHT columns)
             am_key, pm_key, night_key = complex_keys
-            has_complex = any(key in col_map for key in complex_keys)
+            # Only use complex format if we have multiple time periods (AM/PM/Night)
+            complex_keys_found = [key for key in complex_keys if key in col_map]
+            has_complex = len(complex_keys_found) > 1
 
             if has_complex:
                 # Use complex format
@@ -680,17 +683,23 @@ class ExcelTransformer:
 
                 result.append(f"{am}/{pm}/{night}")
 
-            elif simple_key in col_map:
-                # Strategy 2: Use simple format (single column with all hours)
-                hours_value = row.get(col_map[simple_key], 'CLOSED')
-                hours_str = 'CLOSED' if pd.isna(hours_value) else str(hours_value)
-
-                # For simple format, put the hours in first position and CLOSED for others
-                result.append(f"{hours_str}/CLOSED/CLOSED")
-
             else:
-                # Strategy 3: No mapping found, default to CLOSED
-                result.append('CLOSED/CLOSED/CLOSED')
+                # Strategy 2: Use simple format - check any available key
+                hours_str = 'CLOSED'
+                found_key = False
+                for key_to_check in [simple_key] + list(complex_keys):
+                    if key_to_check in col_map:
+                        hours_value = row.get(col_map[key_to_check], 'CLOSED')
+                        hours_str = 'CLOSED' if pd.isna(hours_value) else str(hours_value)
+                        found_key = True
+                        break
+
+                if found_key:
+                    # For SP clinic format, use clean hours without /CLOSED/CLOSED suffix
+                    result.append(hours_str)
+                else:
+                    # Strategy 3: No mapping found, default to CLOSED
+                    result.append('CLOSED')
 
         return result
 
@@ -717,18 +726,11 @@ class ExcelTransformer:
                     addresses.append(address_str)
                     continue
 
-            # SP Clinic format: Construct address from Address1, Address2, Address3, Address4
+            # SP Clinic format: Use only Address1 for primary address (Address2/Address3 handled separately)
             if 'address1' in col_map:
-                sp_address_parts = []
-                for addr_num in [1, 2, 3, 4]:
-                    addr_key = f'address{addr_num}'
-                    if addr_key in col_map:
-                        value = row.get(col_map[addr_key], '')
-                        if pd.notna(value) and str(value).strip() and str(value).lower() not in ['nan', '', 'none']:
-                            sp_address_parts.append(str(value).strip())
-
-                if sp_address_parts:
-                    addresses.append(' '.join(sp_address_parts))
+                value = row.get(col_map['address1'], '')
+                if pd.notna(value) and str(value).strip() and str(value).lower() not in ['nan', '', 'none']:
+                    addresses.append(str(value).strip())
                     continue
 
             # Construct address from components (avoid duplicates)
@@ -878,26 +880,39 @@ class ExcelTransformer:
 
             # Smart address construction
             df_transformed['Address1'] = ExcelTransformer.construct_address(df_source, col_map)
-            df_transformed['Address2'] = None
-            df_transformed['Address3'] = None
+
+            # Extract Address2 and Address3 from source data if available
+            if 'address2' in col_map:
+                df_transformed['Address2'] = df_source[col_map['address2']].fillna('')
+            else:
+                df_transformed['Address2'] = None
+
+            if 'address3' in col_map:
+                df_transformed['Address3'] = df_source[col_map['address3']].fillna('')
+            else:
+                df_transformed['Address3'] = None
 
             # Extract postal codes from addresses (supports both Singapore and Malaysia)
 
             # Enhanced postal code extraction
             postal_codes = []
-            for address in df_transformed['Address1']:
+            for index, address in enumerate(df_transformed['Address1']):
                 if 'postal_code' in col_map:
                     # Use dedicated postal code column if available
-                    postal_code_idx = df_transformed['Address1'].tolist().index(address)
-                    postal_codes.append(df_source.iloc[postal_code_idx][col_map['postal_code']])
+                    postal_codes.append(df_source.iloc[index][col_map['postal_code']])
                 else:
-                    # Extract postal code from address for both Singapore and Malaysia
-                    if pd.notna(address) and str(address).strip():
-                        # The extract_postal_code function now handles country detection automatically
+                    # For SP clinic format, check Address4 first (contains "SINGAPORE 247909")
+                    postal_code = None
+                    if 'address4' in col_map:
+                        address4_value = df_source.iloc[index].get(col_map['address4'], '')
+                        if pd.notna(address4_value) and str(address4_value).strip():
+                            postal_code = ExcelTransformer.extract_postal_code(str(address4_value))
+
+                    # Fallback to extracting from combined address
+                    if not postal_code and pd.notna(address) and str(address).strip():
                         postal_code = ExcelTransformer.extract_postal_code(address)
-                        postal_codes.append(postal_code)
-                    else:
-                        postal_codes.append(None)
+
+                    postal_codes.append(postal_code)
 
             df_transformed['PostalCode'] = postal_codes
 

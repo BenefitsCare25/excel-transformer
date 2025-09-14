@@ -34,7 +34,8 @@
       "Read(//c/Users/huien/Desktop/**)",
       "Bash(timeout:*)",
       "Read(//c/Users/huien/Downloads/**)",
-      "Bash(del analyze_excel.py detailed_analysis.py)"
+      "Bash(del analyze_excel.py detailed_analysis.py)",
+      "Bash(del:*)"
     ],
     "deny": [],
     "ask": []
