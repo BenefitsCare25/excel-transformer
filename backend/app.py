@@ -1197,8 +1197,10 @@ def process_single_file_in_batch(file_data, batch_id):
                 'job_id': job_id,
                 'sheets_processed': result['sheets_processed'],
                 'total_records': result['total_records'],
+                'terminated_clinics_filtered': result['terminated_clinics_filtered'],
                 'output_files': result['output_files'],
                 'download_urls': [f'/download/{job_id}/{filename}' for filename in result['output_files']],
+                'results': result['results'],  # Individual sheet results
                 'summary_stats': result['summary_stats']
             }
         else:

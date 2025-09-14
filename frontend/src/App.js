@@ -247,27 +247,93 @@ function App() {
                   <h3 className="text-lg font-semibold text-gray-800 mb-4">
                     Processing Results
                   </h3>
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     {batchResults.map((result, index) => (
-                      <div key={index} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg">
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">{result.fileName}</p>
-                          {result.success ? (
-                            <p className="text-xs text-green-600">
-                              ✓ {result.sheets_processed} sheets processed, {result.total_records} records
-                            </p>
-                          ) : (
-                            <p className="text-xs text-red-600">✗ {result.error}</p>
-                          )}
+                      <div key={index} className="border border-gray-200 rounded-lg overflow-hidden">
+                        {/* File Header */}
+                        <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <h4 className="text-sm font-medium text-gray-900">{result.filename}</h4>
+                              {result.success ? (
+                                <div className="flex items-center space-x-4 mt-1 text-xs text-gray-600">
+                                  <span className="text-green-600">✓ {result.sheets_processed} sheets processed</span>
+                                  <span>{result.total_records} total records</span>
+                                  {result.terminated_clinics_filtered > 0 && (
+                                    <span className="text-orange-600">
+                                      {result.terminated_clinics_filtered} terminated clinics filtered
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-red-600 mt-1">✗ {result.error}</p>
+                              )}
+                            </div>
+                            {result.success && result.job_id && (
+                              <div className="flex space-x-2">
+                                <button
+                                  onClick={() => handleDownloadAll(result.job_id)}
+                                  className="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700"
+                                >
+                                  Download All
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        {result.success && result.job_id && (
-                          <div className="flex space-x-2">
-                            <button
-                              onClick={() => handleDownloadAll(result.job_id)}
-                              className="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700"
-                            >
-                              Download
-                            </button>
+
+                        {/* Individual Sheet Breakdown */}
+                        {result.success && result.results && result.results.length > 0 && (
+                          <div className="p-4">
+                            <h5 className="text-sm font-medium text-gray-800 mb-3">Sheet Breakdown:</h5>
+                            <div className="space-y-2">
+                              {result.results.map((sheetResult, sheetIndex) => (
+                                <div key={sheetIndex} className="flex items-center justify-between bg-white border border-gray-100 rounded p-3">
+                                  <div className="flex-1">
+                                    <div className="flex items-center space-x-2">
+                                      <span className="font-medium text-gray-800">{sheetResult.sheet_name}</span>
+                                      <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+                                        {sheetResult.records_processed} records
+                                      </span>
+                                      {sheetResult.terminated_clinics_filtered > 0 && (
+                                        <span className="px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded">
+                                          -{sheetResult.terminated_clinics_filtered} terminated
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-xs text-gray-600 mt-1 flex items-center space-x-4">
+                                      <div>
+                                        <span className="text-green-600">
+                                          Geocoding: {sheetResult.geocoding_stats.success_rate}
+                                        </span>
+                                        <span className="text-gray-500 ml-1">
+                                          ({sheetResult.geocoding_stats.successful_geocodes}/{sheetResult.geocoding_stats.total_records})
+                                        </span>
+                                      </div>
+                                      {sheetResult.geocoding_stats.postal_code_matches > 0 && (
+                                        <div className="text-blue-600">
+                                          Postal: {sheetResult.geocoding_stats.postal_code_matches}
+                                        </div>
+                                      )}
+                                      {sheetResult.geocoding_stats.address_geocodes > 0 && (
+                                        <div className="text-purple-600">
+                                          Address: {sheetResult.geocoding_stats.address_geocodes}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={() => handleDownload(result.job_id, sheetResult.output_filename)}
+                                    className="px-2 py-1 text-xs font-medium text-blue-600 border border-blue-600 rounded hover:bg-blue-50 ml-3"
+                                  >
+                                    <svg className="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                    </svg>
+                                    Download
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         )}
                       </div>

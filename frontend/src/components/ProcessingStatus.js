@@ -78,15 +78,34 @@ const ProcessingStatus = ({ status, result, onDownload, onDownloadAll, onReset }
                         <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
                           {sheetResult.records_processed} records
                         </span>
+                        {sheetResult.terminated_clinics_filtered > 0 && (
+                          <span className="px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded">
+                            -{sheetResult.terminated_clinics_filtered} terminated
+                          </span>
+                        )}
                       </div>
-                      <div className="text-xs text-gray-600 mt-1 space-y-1">
+                      <div className="text-xs text-gray-600 mt-1 flex items-center space-x-4">
                         <div>
-                          Geocoding: {sheetResult.geocoding_stats.success_rate} success rate
-                          ({sheetResult.geocoding_stats.successful_geocodes} of {sheetResult.geocoding_stats.total_records})
+                          <span className="text-green-600">
+                            Geocoding: {sheetResult.geocoding_stats.success_rate}
+                          </span>
+                          <span className="text-gray-500 ml-1">
+                            ({sheetResult.geocoding_stats.successful_geocodes}/{sheetResult.geocoding_stats.total_records})
+                          </span>
                         </div>
+                        {sheetResult.geocoding_stats.postal_code_matches > 0 && (
+                          <div className="text-blue-600">
+                            Postal: {sheetResult.geocoding_stats.postal_code_matches}
+                          </div>
+                        )}
+                        {sheetResult.geocoding_stats.address_geocodes > 0 && (
+                          <div className="text-purple-600">
+                            Address: {sheetResult.geocoding_stats.address_geocodes}
+                          </div>
+                        )}
                         {sheetResult.terminated_clinics_filtered > 0 && (
                           <div className="text-orange-600">
-                            Terminated items removed: {sheetResult.terminated_clinics_filtered}
+                            -{sheetResult.terminated_clinics_filtered} terminated
                           </div>
                         )}
                       </div>

@@ -71,6 +71,16 @@ Successfully implemented multi-file upload capability allowing users to upload a
 - **Completed**: Green badge - Successfully processed
 - **Error**: Red badge - Processing failed
 
+### Detailed Processing Results
+- **Sheet-level Breakdown**: Individual statistics for each processed sheet
+- **Record Counts**: Total records processed per sheet
+- **Terminated Clinic Filtering**: Shows number of terminated clinics removed per sheet
+- **Geocoding Statistics**:
+  - Success rate and total coverage
+  - Postal code matches (blue badge)
+  - Address-based geocoding (purple badge)
+- **Individual Downloads**: Direct download links for each sheet's output file
+
 ## Technical Specifications
 
 ### Frontend Changes
