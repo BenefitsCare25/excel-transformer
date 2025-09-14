@@ -2,8 +2,10 @@ services:
   - type: web
     name: excel-transformer-backend
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --config gunicorn.conf.py app:app
+    buildCommand: |
+      pip install --upgrade pip
+      pip install --no-cache-dir -r requirements.txt
+    startCommand: gunicorn --config gunicorn.conf.py app:app --check-config
     plan: free
     envVars:
       - key: FLASK_ENV
@@ -12,4 +14,7 @@ services:
         value: app.py
       - key: POSTAL_CODE_MASTER_FILE
         value: ../data/postal_code_master.xlsx
+      - key: PYTHONUNBUFFERED
+        value: "1"
     healthCheckPath: /health
+    autoDeploy: true

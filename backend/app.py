@@ -13,8 +13,14 @@ from dotenv import load_dotenv
 from functools import lru_cache
 import logging
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+try:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    CONCURRENT_SUPPORT = True
+except ImportError:
+    # Fallback for environments without concurrent.futures
+    CONCURRENT_SUPPORT = False
+    import threading
 
 # Configure logging
 logging.basicConfig(
@@ -1278,26 +1284,44 @@ def upload_batch():
         # Create batch job
         batch_processor.create_batch_job(batch_id, len(file_data_list))
 
-        # Process files concurrently
-        with ThreadPoolExecutor(max_workers=min(len(file_data_list), 3)) as executor:  # Limit to 3 concurrent processes
-            # Submit all files for processing
-            future_to_file = {
-                executor.submit(process_single_file_in_batch, file_data, batch_id): file_data['filename']
-                for file_data in file_data_list
-            }
+        # Process files - use concurrent processing if available, otherwise sequential
+        if CONCURRENT_SUPPORT and len(file_data_list) > 1:
+            # Concurrent processing for better performance
+            max_workers = min(len(file_data_list), 2)  # Reduced from 3 to 2 for free tier
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all files for processing
+                future_to_file = {
+                    executor.submit(process_single_file_in_batch, file_data, batch_id): file_data['filename']
+                    for file_data in file_data_list
+                }
 
-            # Collect results as they complete (for immediate response)
+                # Collect results as they complete
+                results = []
+                for future in as_completed(future_to_file):
+                    try:
+                        result = future.result(timeout=300)  # 5 minute timeout per file
+                        results.append(result)
+                    except Exception as e:
+                        filename = future_to_file[future]
+                        error_result = {
+                            'success': False,
+                            'filename': filename,
+                            'error': f'Processing timeout or error: {str(e)}'
+                        }
+                        results.append(error_result)
+                        batch_processor.update_batch_progress(batch_id, error_result)
+        else:
+            # Sequential processing fallback
             results = []
-            for future in as_completed(future_to_file):
+            for file_data in file_data_list:
                 try:
-                    result = future.result(timeout=300)  # 5 minute timeout per file
+                    result = process_single_file_in_batch(file_data, batch_id)
                     results.append(result)
                 except Exception as e:
-                    filename = future_to_file[future]
                     error_result = {
                         'success': False,
-                        'filename': filename,
-                        'error': f'Processing timeout or error: {str(e)}'
+                        'filename': file_data['filename'],
+                        'error': f'Processing error: {str(e)}'
                     }
                     results.append(error_result)
                     batch_processor.update_batch_progress(batch_id, error_result)
@@ -1700,6 +1724,35 @@ def job_status(job_id):
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+def startup_check():
+    """Perform startup checks to ensure all dependencies are available"""
+    try:
+        logger.info("Starting Excel Transformer Backend...")
+        logger.info(f"Python version: {sys.version}")
+        logger.info(f"Flask environment: {os.environ.get('FLASK_ENV', 'development')}")
+        logger.info(f"Concurrent processing: {'enabled' if CONCURRENT_SUPPORT else 'disabled (sequential fallback)'}")
+
+        # Test basic imports
+        import pandas as pd
+        logger.info(f"Pandas version: {pd.__version__}")
+
+        # Test geocoding service initialization (non-blocking)
+        try:
+            geocoding_service = GeocodingService()
+            logger.info("Geocoding service initialized successfully")
+        except Exception as e:
+            logger.warning(f"Geocoding service initialization issue: {e}")
+
+        logger.info("Startup checks completed successfully")
+        return True
+
+    except Exception as e:
+        logger.error(f"Startup check failed: {e}")
+        return False
+
+# Perform startup check
+startup_check()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
