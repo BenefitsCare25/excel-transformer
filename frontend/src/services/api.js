@@ -24,7 +24,8 @@ class ApiService {
           const percentCompleted = Math.round(
             (progressEvent.loaded * 100) / progressEvent.total
           );
-          console.log(`Upload Progress: ${percentCompleted}%`);
+          // Upload progress tracking (can be used for UI progress bars)
+          // TODO: Implement progress callback if needed
         },
       });
 

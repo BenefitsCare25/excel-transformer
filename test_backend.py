@@ -9,7 +9,7 @@ import sys
 def test_backend():
     base_url = "http://localhost:5000"
     
-    print("🧪 Testing Excel Template Transformer Backend")
+    print("Testing Excel Template Transformer Backend")
     print("=" * 50)
     
     # Test 1: Health check
@@ -18,26 +18,40 @@ def test_backend():
         response = requests.get(f"{base_url}/health", timeout=5)
         if response.status_code == 200:
             data = response.json()
-            print(f"   ✅ Health check passed: {data.get('status')}")
-            print(f"   📅 Timestamp: {data.get('timestamp')}")
+            print(f"   OK Health check passed: {data.get('status')}")
+            print(f"   Timestamp: {data.get('timestamp')}")
         else:
-            print(f"   ❌ Health check failed: {response.status_code}")
+            print(f"   FAILED Health check failed: {response.status_code}")
             return False
     except requests.exceptions.ConnectionError:
-        print("   ❌ Cannot connect to backend server")
-        print("   💡 Make sure to run: cd backend && python app.py")
+        print("   FAILED Cannot connect to backend server")
+        print("   NOTE Make sure to run: cd backend && python app.py")
         return False
     except Exception as e:
-        print(f"   ❌ Health check error: {e}")
+        print(f"   ERROR Health check error: {e}")
         return False
     
     # Test 2: Upload endpoint with sample file
     print("\n2. Testing file upload...")
-    test_file_path = "C:/Users/huien/Downloads/To be uploaded.xlsx"
+    # Try common download paths and fallback to current directory
+    possible_paths = [
+        os.path.join(os.path.expanduser("~"), "Downloads", "To be uploaded.xlsx"),
+        os.path.join(".", "To be uploaded.xlsx"),
+        os.path.join("test_data", "sample.xlsx")
+    ]
+
+    test_file_path = None
+    for path in possible_paths:
+        if os.path.exists(path):
+            test_file_path = path
+            break
+
+    if not test_file_path:
+        test_file_path = "test_upload.xlsx"  # Will be created below
     
     if not os.path.exists(test_file_path):
-        print(f"   ⚠️  Test file not found: {test_file_path}")
-        print("   📝 Creating a dummy Excel file for testing...")
+        print(f"   WARNING Test file not found: {test_file_path}")
+        print("   NOTE Creating a dummy Excel file for testing...")
         # Create a simple test file
         import pandas as pd
         test_data = {
@@ -65,20 +79,11 @@ def test_backend():
         # Add dummy data with proper header structure
         df_test = pd.DataFrame(test_data)
         
-        # Create test file with headers like the real file
+        # Create test file with proper sheet structure
         test_file_path = "test_upload.xlsx"
-        with pd.ExcelWriter(test_file_path, engine='openpyxl') as writer:
-            # Add header rows
-            header_data = pd.DataFrame([
-                ["IHP NETWORK INFO"],
-                ["NOTE: Test data"],
-                ["PHPC Scheme info"],
-                [""] * 20,  # Empty row
-                list(test_data.keys())  # Actual headers
-            ])
-            header_data.to_excel(writer, index=False, header=False, startrow=0)
-            df_test.to_excel(writer, index=False, header=False, startrow=5)
-        print(f"   📁 Created test file: {test_file_path}")
+        # Remove default sheet and create proper named sheet
+        df_test.to_excel(test_file_path, sheet_name='GP Panel', index=False, engine='openpyxl')
+        print(f"   CREATED test file: {test_file_path}")
     
     try:
         with open(test_file_path, 'rb') as f:
@@ -87,10 +92,10 @@ def test_backend():
             
         if response.status_code == 200:
             data = response.json()
-            print(f"   ✅ Upload successful!")
-            print(f"   🆔 Job ID: {data.get('job_id')}")
-            print(f"   📊 Records processed: {data.get('records_processed')}")
-            print(f"   📄 Message: {data.get('message')}")
+            print(f"   OK Upload successful!")
+            print(f"   Job ID: {data.get('job_id')}")
+            print(f"   Records processed: {data.get('records_processed')}")
+            print(f"   Message: {data.get('message')}")
             
             job_id = data.get('job_id')
             
@@ -103,44 +108,44 @@ def test_backend():
                 output_path = f"test_output_{job_id}.xlsx"
                 with open(output_path, 'wb') as f:
                     f.write(download_response.content)
-                print(f"   ✅ Download successful!")
-                print(f"   💾 File saved as: {output_path}")
-                print(f"   📏 File size: {len(download_response.content)} bytes")
+                print(f"   OK Download successful!")
+                print(f"   File saved as: {output_path}")
+                print(f"   File size: {len(download_response.content)} bytes")
                 
                 # Quick validation of output file
                 try:
                     import pandas as pd
                     df_result = pd.read_excel(output_path)
-                    print(f"   📋 Output columns: {list(df_result.columns)}")
-                    print(f"   📊 Output shape: {df_result.shape}")
+                    print(f"   Output columns: {list(df_result.columns)}")
+                    print(f"   Output shape: {df_result.shape}")
                     
                     # Check if transformations worked
                     if 'PhoneNumber' in df_result.columns:
                         sample_phone = df_result.iloc[0]['PhoneNumber']
-                        print(f"   📞 Sample PhoneNumber: '{sample_phone}'")
+                        print(f"   Sample PhoneNumber: '{sample_phone}'")
                     
                     if 'PostalCode' in df_result.columns:
                         sample_postal = df_result.iloc[0]['PostalCode']
-                        print(f"   📮 Sample PostalCode: '{sample_postal}'")
+                        print(f"   Sample PostalCode: '{sample_postal}'")
                         
                 except Exception as e:
-                    print(f"   ⚠️  Could not validate output file: {e}")
+                    print(f"   WARNING Could not validate output file: {e}")
                     
             else:
-                print(f"   ❌ Download failed: {download_response.status_code}")
-                print(f"   📄 Response: {download_response.text}")
+                print(f"   FAILED Download failed: {download_response.status_code}")
+                print(f"   Response: {download_response.text}")
                 
         else:
-            print(f"   ❌ Upload failed: {response.status_code}")
-            print(f"   📄 Response: {response.text}")
+            print(f"   FAILED Upload failed: {response.status_code}")
+            print(f"   Response: {response.text}")
             return False
             
     except Exception as e:
-        print(f"   ❌ Upload test error: {e}")
+        print(f"   ERROR Upload test error: {e}")
         return False
     
-    print(f"\n🎉 All tests completed successfully!")
-    print("🚀 Backend is ready for use!")
+    print(f"\nSUCCESS All tests completed successfully!")
+    print("Backend is ready for use!")
     return True
 
 if __name__ == "__main__":

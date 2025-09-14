@@ -11,6 +11,17 @@ import googlemaps
 from geopy.geocoders import GoogleV3
 from dotenv import load_dotenv
 from functools import lru_cache
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -42,7 +53,7 @@ class GeocodingService:
     def _initialize_google_maps_clients(self):
         """Initialize Google Maps API clients with status logging"""
         if not self.google_api_key:
-            print("Google Maps API: NOT CONFIGURED - Using postal code lookup only")
+            logger.info("Google Maps API: NOT CONFIGURED - Using postal code lookup only")
             self.gmaps = None
             self.geolocator = None
             return
@@ -50,9 +61,9 @@ class GeocodingService:
         try:
             self.gmaps = googlemaps.Client(key=self.google_api_key)
             self.geolocator = GoogleV3(api_key=self.google_api_key)
-            print("Google Maps API: CONFIGURED")
+            logger.info("Google Maps API: CONFIGURED")
         except Exception as e:
-            print(f"Google Maps API: FAILED - {e}")
+            logger.error(f"Google Maps API: FAILED - {e}")
             self.gmaps = None
             self.geolocator = None
     
@@ -64,7 +75,7 @@ class GeocodingService:
             # Quick check - if we're in a deployment environment (no local files), skip immediately
             is_deployment = os.getenv('RENDER') or os.getenv('VERCEL') or os.getenv('HEROKU')
             if is_deployment:
-                print("Postal Code Lookup: DEPLOYMENT MODE - Using Google Maps API only")
+                logger.info("Postal Code Lookup: DEPLOYMENT MODE - Using Google Maps API only")
                 return {}
 
             # Try each path in order of preference with fast fail
@@ -75,7 +86,7 @@ class GeocodingService:
                     try:
                         file_size = os.path.getsize(path)
                         if file_size > 50 * 1024 * 1024:  # Skip files > 50MB
-                            print(f"Postal Code Lookup: File too large ({file_size/1024/1024:.1f}MB), skipping: {path}")
+                            logger.warning(f"Postal Code Lookup: File too large ({file_size/1024/1024:.1f}MB), skipping: {path}")
                             continue
                         master_file_path = path
                         break
@@ -83,10 +94,10 @@ class GeocodingService:
                         continue
 
             if not master_file_path:
-                print("Postal Code Lookup: NO SUITABLE FILE FOUND - Using Google Maps API only")
+                logger.warning("Postal Code Lookup: NO SUITABLE FILE FOUND - Using Google Maps API only")
                 return {}
 
-            print(f"Loading postal code lookup from: {master_file_path}")
+            logger.info(f"Loading postal code lookup from: {master_file_path}")
 
             # Load with chunking for better memory management
             df = pd.read_excel(master_file_path, dtype={'PostalCode': str})
@@ -97,7 +108,7 @@ class GeocodingService:
             for _, row in df.iterrows():
                 row_count += 1
                 if row_count % 1000 == 0:  # Progress indicator
-                    print(f"Processing row {row_count}...")
+                    logger.debug(f"Processing row {row_count}...")
 
                 # Handle postal code formatting
                 postal_code_raw = row.get('PostalCode')
@@ -121,12 +132,12 @@ class GeocodingService:
                     except (ValueError, TypeError):
                         continue
 
-            print(f"Postal Code Lookup: {len(lookup)} Singapore postal codes loaded successfully")
+            logger.info(f"Postal Code Lookup: {len(lookup)} Singapore postal codes loaded successfully")
             return lookup
 
         except Exception as e:
-            print(f"Postal Code Lookup: FAILED - {e}")
-            print("Continuing without postal code lookup, using Google Maps API only")
+            logger.error(f"Postal Code Lookup: FAILED - {e}")
+            logger.warning("Continuing without postal code lookup, using Google Maps API only")
             return {}
     
     def geocode_by_postal_code(self, postal_code):
@@ -148,7 +159,7 @@ class GeocodingService:
                 return lat, lng
         except (ValueError, TypeError, AttributeError) as e:
             # Log invalid postal code format for debugging
-            print(f"Invalid postal code format: {postal_code} - {e}")
+            logger.warning(f"Invalid postal code format: {postal_code} - {e}")
         
         return None, None
     
@@ -188,7 +199,7 @@ class GeocodingService:
 
         except Exception as e:
             self.geocode_stats['failures'] += 1
-            print(f"Address geocoding failed for '{address}': {e}")
+            logger.warning(f"Address geocoding failed for '{address}': {e}")
             return None, None
     
     def geocode(self, postal_code, address):
@@ -312,14 +323,14 @@ class ExcelTransformer:
                     # Filter out any 'nan' strings that might have been created
                     clinic_ids = clinic_ids[clinic_ids.str.lower() != 'nan']
                     terminated_ids.update(clinic_ids)
-                    print(f"Extracted {len(clinic_ids)} terminated clinic IDs from sheet '{sheet}'")
+                    logger.info(f"Extracted {len(clinic_ids)} terminated clinic IDs from sheet '{sheet}'")
                 else:
-                    print(f"Warning: Could not find clinic ID column in termination sheet '{sheet}'")
+                    logger.warning(f"Could not find clinic ID column in termination sheet '{sheet}'")
 
             except Exception as e:
-                print(f"Error processing termination sheet '{sheet}': {e}")
+                logger.error(f"Error processing termination sheet '{sheet}': {e}")
 
-        print(f"Total terminated clinic IDs: {len(terminated_ids)}")
+        logger.info(f"Total terminated clinic IDs: {len(terminated_ids)}")
         return terminated_ids
 
     @staticmethod
@@ -429,14 +440,14 @@ class ExcelTransformer:
                 df_cols_cleaned[col_clean] = col
                 df_cols_original[col] = col_clean
 
-        print(f"Available columns (cleaned): {list(df_cols_cleaned.keys())}")
+        logger.debug(f"Available columns (cleaned): {list(df_cols_cleaned.keys())}")
 
         # Phase 1: Exact pattern matching
         for expected_col, patterns in mappings.items():
             for pattern in patterns:
                 if pattern in df_cols_lower:
                     column_mapping[expected_col] = df_cols_lower[pattern]
-                    print(f"Exact match: {expected_col} -> {pattern} -> {df_cols_lower[pattern]}")
+                    logger.debug(f"Exact match: {expected_col} -> {pattern} -> {df_cols_lower[pattern]}")
                     break
 
         # Phase 2: Handle sequential operating hours columns (MY GP List format)
@@ -448,26 +459,26 @@ class ExcelTransformer:
 
             try:
                 operation_hours_idx = col_list.index(operation_hours_col)
-                print(f"Found operation hours at index {operation_hours_idx}: {operation_hours_col}")
+                logger.debug(f"Found operation hours at index {operation_hours_idx}: {operation_hours_col}")
 
                 # Check for sequential unnamed columns
                 if operation_hours_idx + 1 < len(col_list):
                     next_col = col_list[operation_hours_idx + 1]
                     if pd.notna(next_col) and ('unnamed' in str(next_col).lower() or str(next_col).lower().strip() == 'sat'):
                         column_mapping['sat_simple'] = next_col
-                        print(f"Sequential match: sat_simple -> {next_col}")
+                        logger.debug(f"Sequential match: sat_simple -> {next_col}")
 
                 if operation_hours_idx + 2 < len(col_list):
                     next_col = col_list[operation_hours_idx + 2]
                     if pd.notna(next_col) and ('unnamed' in str(next_col).lower() or 'sun' in str(next_col).lower()):
                         column_mapping['sun_simple'] = next_col
-                        print(f"Sequential match: sun_simple -> {next_col}")
+                        logger.debug(f"Sequential match: sun_simple -> {next_col}")
 
                 if operation_hours_idx + 3 < len(col_list):
                     next_col = col_list[operation_hours_idx + 3]
                     if pd.notna(next_col) and ('unnamed' in str(next_col).lower() or 'ph' in str(next_col).lower() or 'holiday' in str(next_col).lower()):
                         column_mapping['holiday_simple'] = next_col
-                        print(f"Sequential match: holiday_simple -> {next_col}")
+                        logger.debug(f"Sequential match: holiday_simple -> {next_col}")
 
             except ValueError:
                 pass  # Column not found in list
@@ -501,7 +512,7 @@ class ExcelTransformer:
                     if close_matches:
                         matched_col = df_cols_cleaned[close_matches[0]]
                         column_mapping[expected_col] = matched_col
-                        print(f"Fuzzy match: {expected_col} -> {pattern} ~= {close_matches[0]} -> {matched_col}")
+                        logger.debug(f"Fuzzy match: {expected_col} -> {pattern} ~= {close_matches[0]} -> {matched_col}")
                         break
 
         # Phase 4: Keyword-based matching for remaining columns (with better specificity)
@@ -518,7 +529,7 @@ class ExcelTransformer:
                     for keyword in keywords:
                         if keyword in col_name and len(keyword) / len(col_name) > 0.4:  # At least 40% match
                             column_mapping[expected_col] = df_cols_cleaned[col_name]
-                            print(f"Keyword match: {expected_col} -> {keyword} in {col_name} -> {df_cols_cleaned[col_name]}")
+                            logger.debug(f"Keyword match: {expected_col} -> {keyword} in {col_name} -> {df_cols_cleaned[col_name]}")
                             break
                     if expected_col in column_mapping:
                         break
@@ -564,7 +575,7 @@ class ExcelTransformer:
                 # Filter out None values
                 inferred_mapping = {k: v for k, v in inferred_mapping.items() if v is not None}
 
-                print(f"Inferred column mapping based on position: {inferred_mapping}")
+                logger.debug(f"Inferred column mapping based on position: {inferred_mapping}")
 
         return inferred_mapping
     
@@ -805,15 +816,15 @@ class ExcelTransformer:
             
             # Map columns flexibly
             col_map = ExcelTransformer.map_columns(df_source.columns)
-            print(f"Column mapping for sheet '{sheet_name}': {col_map}")
+            logger.debug(f"Column mapping for sheet '{sheet_name}': {col_map}")
 
             # If column mapping failed, try to infer from data structure
             if 'clinic_name' not in col_map:
-                print(f"Standard column mapping failed for '{sheet_name}', attempting inference...")
+                logger.info(f"Standard column mapping failed for '{sheet_name}', attempting inference...")
                 inferred_map = ExcelTransformer.infer_columns_from_data(df_source)
                 if 'clinic_name' in inferred_map:
                     col_map.update(inferred_map)
-                    print(f"Successfully inferred columns for sheet '{sheet_name}'")
+                    logger.info(f"Successfully inferred columns for sheet '{sheet_name}'")
                 else:
                     raise ValueError(f"Sheet '{sheet_name}' missing required 'clinic name' column after inference attempt")
 
@@ -822,7 +833,7 @@ class ExcelTransformer:
                 initial_count = len(df_source)
                 df_source = df_source[~df_source[col_map['clinic_id']].astype(str).str.strip().isin(terminated_ids)]
                 filtered_count = len(df_source)
-                print(f"Filtered out {initial_count - filtered_count} terminated clinics from sheet '{sheet_name}'")
+                logger.info(f"Filtered out {initial_count - filtered_count} terminated clinics from sheet '{sheet_name}'")
 
             # Filter out empty/invalid rows - keep only rows with valid clinic data
             initial_count = len(df_source)
@@ -841,7 +852,7 @@ class ExcelTransformer:
             df_source = df_source[valid_mask]
             filtered_count = len(df_source)
             if initial_count != filtered_count:
-                print(f"Filtered out {initial_count - filtered_count} empty/invalid rows from sheet '{sheet_name}', keeping {filtered_count} valid records")
+                logger.info(f"Filtered out {initial_count - filtered_count} empty/invalid rows from sheet '{sheet_name}', keeping {filtered_count} valid records")
 
             # Robust field mapping with fallbacks
             # Clinic ID with smart fallback
@@ -849,7 +860,7 @@ class ExcelTransformer:
                 df_transformed['Code'] = df_source[col_map['clinic_id']]
             else:
                 df_transformed['Code'] = ExcelTransformer.smart_column_fallback(df_source, col_map, 'clinic_id')
-                print(f"Generated auto clinic IDs for {len(df_source)} records")
+                logger.info(f"Generated auto clinic IDs for {len(df_source)} records")
 
             # Clinic Name (required field)
             df_transformed['Name'] = df_source[col_map['clinic_name']]
@@ -1026,8 +1037,8 @@ class ExcelTransformer:
             # Classify sheets
             panel_sheets, termination_sheets = ExcelTransformer.classify_sheets(sheet_names)
 
-            print(f"Detected {len(panel_sheets)} panel sheets: {panel_sheets}")
-            print(f"Detected {len(termination_sheets)} termination sheets: {termination_sheets}")
+            logger.info(f"Detected {len(panel_sheets)} panel sheets: {panel_sheets}")
+            logger.info(f"Detected {len(termination_sheets)} termination sheets: {termination_sheets}")
 
             # Extract terminated clinic IDs
             terminated_ids = ExcelTransformer.extract_terminated_clinic_ids(input_path, termination_sheets)
@@ -1037,7 +1048,7 @@ class ExcelTransformer:
             output_files = []
 
             for sheet in panel_sheets:
-                print(f"Processing sheet: {sheet}")
+                logger.info(f"Processing sheet: {sheet}")
 
                 # Transform the sheet
                 result = ExcelTransformer.transform_sheet(input_path, sheet, terminated_ids)
@@ -1062,9 +1073,9 @@ class ExcelTransformer:
                     results.append(sheet_result)
                     output_files.append(output_filename)
 
-                    print(f"SUCCESS: Processed sheet '{sheet}': {result['records_processed']} records")
+                    logger.info(f"SUCCESS: Processed sheet '{sheet}': {result['records_processed']} records")
                 else:
-                    print(f"FAILED: Could not process sheet '{sheet}': {result['message']}")
+                    logger.error(f"FAILED: Could not process sheet '{sheet}': {result['message']}")
                     return {
                         'success': False,
                         'message': f"Failed to process sheet '{sheet}': {result['message']}",
@@ -1207,6 +1218,7 @@ def health_check():
 @app.route('/upload', methods=['POST'])
 def upload_file():
     try:
+        # Basic request validation
         if 'file' not in request.files:
             return jsonify({'error': 'No file provided'}), 400
 
@@ -1214,8 +1226,27 @@ def upload_file():
         if file.filename == '':
             return jsonify({'error': 'No file selected'}), 400
 
+        # File extension validation
         if not file.filename.lower().endswith(('.xlsx', '.xls')):
             return jsonify({'error': 'Invalid file format. Please upload Excel files only.'}), 400
+
+        # File size validation (50MB limit)
+        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+        if hasattr(file, 'content_length') and file.content_length > MAX_FILE_SIZE:
+            return jsonify({'error': 'File too large. Maximum size is 50MB.'}), 413
+
+        # Content length validation (for chunked requests)
+        if request.content_length and request.content_length > MAX_FILE_SIZE:
+            return jsonify({'error': 'File too large. Maximum size is 50MB.'}), 413
+
+        # Filename validation
+        if len(file.filename) > 255:
+            return jsonify({'error': 'Filename too long. Maximum 255 characters.'}), 400
+
+        # Security: prevent path traversal
+        import re
+        if re.search(r'[<>:"|?*]|\.\.', file.filename):
+            return jsonify({'error': 'Invalid characters in filename.'}), 400
 
         # Generate unique job ID
         job_id = str(uuid.uuid4())
@@ -1224,6 +1255,18 @@ def upload_file():
         input_filename = f"{job_id}_input.xlsx"
         input_path = os.path.join(UPLOAD_FOLDER, input_filename)
         file.save(input_path)
+
+        # Validate file content is actually Excel
+        try:
+            # Quick validation by attempting to read file structure
+            pd.ExcelFile(input_path).sheet_names
+            logger.info(f"File validation passed for job {job_id}: {file.filename}")
+        except Exception as validation_error:
+            # Clean up invalid file
+            if os.path.exists(input_path):
+                os.remove(input_path)
+            logger.warning(f"File validation failed for {file.filename}: {validation_error}")
+            return jsonify({'error': 'Invalid Excel file. File appears to be corrupted or not a valid Excel format.'}), 400
 
         # Transform file with multi-sheet support
         result = ExcelTransformer.transform_excel_multi_sheet(input_path, PROCESSED_FOLDER, job_id)
