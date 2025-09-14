@@ -32,7 +32,9 @@
       "Bash(rd:*)",
       "Bash(grep:*)",
       "Read(//c/Users/huien/Desktop/**)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Read(//c/Users/huien/Downloads/**)",
+      "Bash(del analyze_excel.py detailed_analysis.py)"
     ],
     "deny": [],
     "ask": []
