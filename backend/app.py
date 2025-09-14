@@ -223,6 +223,10 @@ class ExcelTransformer:
             header_patterns = [
                 # Primary pattern: S/N with clinic ID
                 ('s/n' in row_text and 'clinic' in row_text and 'id' in row_text),
+                # MY GP List specific patterns
+                ('s/n' in row_text and 'clinic code' in row_text and 'city' in row_text and 'state' in row_text),
+                ('s/n' in row_text and 'clinic name' in row_text and 'address1' in row_text),
+                ('s/n' in row_text and 'clinic' in row_text and 'tel' in row_text and 'operation' in row_text),
                 # Alternative patterns for different sheet layouts
                 ('s/n' in row_text and 'region' in row_text and 'area' in row_text),
                 ('s/n' in row_text and 'clinic' in row_text and 'name' in row_text),
@@ -230,6 +234,7 @@ class ExcelTransformer:
                 # For termination sheets
                 ('no.' in row_text and 'region' in row_text and 'area' in row_text),
                 # TCM sheet specific patterns
+                ('s/n' in row_text and 'clinic' in row_text and 'postal' in row_text),
                 ('master code' in row_text and 'clinic' in row_text and 'postal' in row_text),
                 ('master code' in row_text and 'physician' in row_text and 'charge' in row_text),
                 ('master code' in row_text and 'tel' in row_text and len(row_values) >= 8),
@@ -237,8 +242,10 @@ class ExcelTransformer:
                 ('clinic' in row_text and 'postal' in row_text and 'tel' in row_text),
                 ('code' in row_text and 'clinic' in row_text and 'address' in row_text),
                 ('provider' in row_text and 'name' in row_text and len(row_values) >= 5),
-                # Minimum viable header (region + clinic name)
-                ('region' in row_text and 'clinic' in row_text and len(row_values) >= 5)
+                # Enhanced minimum viable header patterns
+                ('region' in row_text and 'clinic' in row_text and len(row_values) >= 5),
+                ('city' in row_text and 'clinic' in row_text and 'tel' in row_text),
+                ('state' in row_text and 'clinic name' in row_text and len(row_values) >= 6)
             ]
 
             if any(pattern for pattern in header_patterns):
@@ -341,19 +348,19 @@ class ExcelTransformer:
             ],
             'region': [
                 'region', 'zone', 'district', 'sector', 'territory', 'location',
-                'geographical region', 'geo region', 'state', 'province'
+                'geographical region', 'geo region', 'state', 'province', 'city'  # Added city for MY sheets
             ],
             'area': [
                 'area', 'estate', 'neighbourhood', 'neighborhood', 'locality',
-                'precinct', 'town', 'suburb', 'community', 'district area'
+                'precinct', 'town', 'suburb', 'community', 'district area', 'state'  # Added state for MY sheets
             ],
             'address': [
                 'address', 'full address', 'complete address', 'location address',
-                'physical address', 'street address', 'mailing address'
+                'physical address', 'street address', 'mailing address', 'address1'
             ],
             'telephone': [
                 'tel no.', 'tel', 'phone', 'telephone', 'contact', 'contact no',
-                'contact number', 'phone number', 'tel number', 'mobile', 'contact no.'
+                'contact number', 'phone number', 'tel number', 'mobile', 'contact no.', 'tel no'
             ],
             'remarks': [
                 'remarks', 'comment', 'note', 'remark', 'comments', 'notes',
@@ -366,7 +373,8 @@ class ExcelTransformer:
             'mon_fri_am': [
                 'mon - fri (am)', 'monday - friday', 'weekday am', 'mon-fri am',
                 'operating hours\nmon-fri', 'operating hours mon-fri', 'weekdays am',
-                'operating hours \nmon - fri', 'operating hours mon - fri'  # TCM format
+                'operating hours \nmon - fri', 'operating hours mon - fri',  # TCM format
+                'operation hours', 'mon to fri'  # MY GP List format
             ],
             'mon_fri_pm': [
                 'mon - fri (pm)', 'monday - friday (evening)', 'weekday pm', 'mon-fri pm', 'weekdays pm'
@@ -382,10 +390,10 @@ class ExcelTransformer:
             'sun_pm': ['sun (pm)', 'sun pm', 'sunday pm'],
             'sun_night': ['sun (night)', 'sun night', 'sunday night'],
             'sun_simple': ['sun'],  # Simple Sunday column
-            'holiday_am': ['public holiday (am)', 'public holiday', 'holiday am', 'ph am'],
+            'holiday_am': ['public holiday (am)', 'public holiday', 'holiday am', 'ph am', 'ph'],
             'holiday_pm': ['public holiday (pm)', 'holiday pm', 'ph pm'],
             'holiday_night': ['public holiday (night)', 'holiday night', 'ph night'],
-            'holiday_simple': ['holiday'],  # Simple Holiday column
+            'holiday_simple': ['holiday', 'ph'],  # Simple Holiday column
             # Address components for composite address construction
             'address_blk': ['blk', 'block', 'building no', 'bldg no', 'unit block', 'blk & road name'],
             'address_road': ['road name', 'street name', 'street', 'road', 'avenue', 'ave', 'blk & road name'],
@@ -399,6 +407,8 @@ class ExcelTransformer:
         # Convert all column names to lowercase and clean for comparison
         df_cols_lower = {}
         df_cols_cleaned = {}
+        df_cols_original = {}  # Keep track of original column names
+
         for col in df_columns:
             if pd.notna(col) and isinstance(col, str):
                 col_clean = col.lower().strip()
@@ -406,6 +416,7 @@ class ExcelTransformer:
                 col_clean = re.sub(r'\s+', ' ', col_clean)
                 df_cols_lower[col_clean] = col
                 df_cols_cleaned[col_clean] = col
+                df_cols_original[col] = col_clean
 
         print(f"Available columns (cleaned): {list(df_cols_cleaned.keys())}")
 
@@ -417,11 +428,44 @@ class ExcelTransformer:
                     print(f"Exact match: {expected_col} -> {pattern} -> {df_cols_lower[pattern]}")
                     break
 
-        # Phase 2: Fuzzy matching for unmapped essential columns (skip region/area for TCM-like sheets)
+        # Phase 2: Handle sequential operating hours columns (MY GP List format)
+        # Look for operation hours followed by unnamed columns
+        if 'mon_fri_am' in column_mapping:
+            # Find the index of operation hours column
+            operation_hours_col = column_mapping['mon_fri_am']
+            col_list = list(df_columns)
+
+            try:
+                operation_hours_idx = col_list.index(operation_hours_col)
+                print(f"Found operation hours at index {operation_hours_idx}: {operation_hours_col}")
+
+                # Check for sequential unnamed columns
+                if operation_hours_idx + 1 < len(col_list):
+                    next_col = col_list[operation_hours_idx + 1]
+                    if pd.notna(next_col) and ('unnamed' in str(next_col).lower() or str(next_col).lower().strip() == 'sat'):
+                        column_mapping['sat_simple'] = next_col
+                        print(f"Sequential match: sat_simple -> {next_col}")
+
+                if operation_hours_idx + 2 < len(col_list):
+                    next_col = col_list[operation_hours_idx + 2]
+                    if pd.notna(next_col) and ('unnamed' in str(next_col).lower() or 'sun' in str(next_col).lower()):
+                        column_mapping['sun_simple'] = next_col
+                        print(f"Sequential match: sun_simple -> {next_col}")
+
+                if operation_hours_idx + 3 < len(col_list):
+                    next_col = col_list[operation_hours_idx + 3]
+                    if pd.notna(next_col) and ('unnamed' in str(next_col).lower() or 'ph' in str(next_col).lower() or 'holiday' in str(next_col).lower()):
+                        column_mapping['holiday_simple'] = next_col
+                        print(f"Sequential match: holiday_simple -> {next_col}")
+
+            except ValueError:
+                pass  # Column not found in list
+
+        # Phase 3: Fuzzy matching for unmapped essential columns
         essential_columns = ['clinic_name', 'telephone']
         # Only add region/area if we have good candidates (avoid false matches)
-        has_region_candidate = any('region' in col.lower() or 'zone' in col.lower() for col in df_cols_cleaned.keys())
-        has_area_candidate = any('area' in col.lower() or 'district' in col.lower() for col in df_cols_cleaned.keys())
+        has_region_candidate = any(pattern in col.lower() for col in df_cols_cleaned.keys() for pattern in ['region', 'zone', 'state', 'city'])
+        has_area_candidate = any(pattern in col.lower() for col in df_cols_cleaned.keys() for pattern in ['area', 'district', 'state'])
 
         if has_region_candidate:
             essential_columns.append('region')
@@ -449,10 +493,10 @@ class ExcelTransformer:
                         print(f"Fuzzy match: {expected_col} -> {pattern} ~= {close_matches[0]} -> {matched_col}")
                         break
 
-        # Phase 3: Keyword-based matching for remaining columns (with better specificity)
+        # Phase 4: Keyword-based matching for remaining columns (with better specificity)
         remaining_mappings = {
-            'clinic_id': ['clinic id', 'clinic code', 'provider id', 'provider code'],  # More specific patterns
-            'address': ['address', 'location'],
+            'clinic_id': ['clinic code', 'clinic id', 'provider id', 'provider code'],  # More specific patterns
+            'address': ['address1', 'address', 'location'],
             'remarks': ['remark', 'comment', 'note'],
         }
 
