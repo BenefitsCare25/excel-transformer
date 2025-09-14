@@ -558,14 +558,67 @@ class ExcelTransformer:
         return inferred_mapping
     
     @staticmethod
-    def extract_postal_code(address):
-        """Extract postal code from Singapore address"""
+    def extract_postal_code(address, country=None):
+        """Extract postal code from address based on country format"""
         if pd.isna(address):
             return None
-        
-        # Look for SINGAPORE followed by 6 digits
-        match = re.search(r'SINGAPORE\s+(\d{6})', str(address))
-        return match.group(1) if match else None
+
+        address_str = str(address).strip()
+
+        # Detect country from address if not provided
+        if country is None:
+            address_lower = address_str.lower()
+            malaysian_indicators = [
+                'malaysia', 'johor', 'kuala lumpur', 'selangor', 'penang', 'perak',
+                'kedah', 'kelantan', 'terengganu', 'pahang', 'negeri sembilan',
+                'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan',
+                # Additional Malaysian cities and areas
+                'kulai', 'skudai', 'pasir gudang', 'ulu tiram', 'masai', 'gelang patah',
+                'johor bahru', 'kl', 'shah alam', 'petaling jaya', 'bandar', 'taman'
+            ]
+            # Also check for Malaysian postal code patterns (5 digits vs Singapore's 6)
+            has_5_digit = bool(re.search(r'\b\d{5}\b', address_str))
+            has_6_digit = bool(re.search(r'\b\d{6}\b', address_str))
+
+            is_malaysian = any(indicator in address_lower for indicator in malaysian_indicators)
+            # If we find 5-digit codes but no 6-digit codes, likely Malaysian
+            if has_5_digit and not has_6_digit:
+                is_malaysian = True
+
+            country = 'MALAYSIA' if is_malaysian else 'SINGAPORE'
+
+        if country == 'SINGAPORE':
+            # Singapore: Look for SINGAPORE followed by 6 digits
+            match = re.search(r'SINGAPORE\s+(\d{6})', address_str, re.IGNORECASE)
+            if match:
+                return match.group(1)
+            # Fallback: Look for 6-digit patterns in Singapore addresses
+            matches = re.findall(r'\b(\d{6})\b', address_str)
+            return matches[-1] if matches else None  # Return last 6-digit number found
+
+        elif country == 'MALAYSIA':
+            # Malaysia: Look for 5-digit postal codes in various formats
+            # Use multiple patterns to catch different formats
+            patterns = [
+                # Pattern 1: Standalone 5-digit codes (81300 SKUDAI, JOHOR)
+                r'\b(\d{5})\b',
+                # Pattern 2: City followed by postal code (KULAI 81000)
+                r'\b[A-Za-z\s]+\s+(\d{5})',
+                # Pattern 3: Postal code at end (TAMAN PERLING, 81200)
+                r',\s*(\d{5})\s*$',
+                # Pattern 4: Postal code before end tokens
+                r'(\d{5})(?=\s*(?:$|,|\s+(?:JOHOR|SELANGOR|MALAYSIA)))',
+                # Pattern 5: Any 5-digit sequence (most permissive)
+                r'(\d{5})'
+            ]
+
+            for pattern in patterns:
+                matches = re.findall(pattern, address_str, re.IGNORECASE)
+                if matches:
+                    # Return the first match found
+                    return matches[0]
+
+        return None
     
     @staticmethod
     def combine_phone_remarks(phone, remarks):
@@ -801,7 +854,7 @@ class ExcelTransformer:
             df_transformed['Address2'] = None
             df_transformed['Address3'] = None
 
-            # Extract postal codes from address (only for Singapore addresses)
+            # Extract postal codes from addresses (supports both Singapore and Malaysia)
 
             # Enhanced postal code extraction
             postal_codes = []
@@ -811,20 +864,11 @@ class ExcelTransformer:
                     postal_code_idx = df_transformed['Address1'].tolist().index(address)
                     postal_codes.append(df_source.iloc[postal_code_idx][col_map['postal_code']])
                 else:
-                    # Extract from address
+                    # Extract postal code from address for both Singapore and Malaysia
                     if pd.notna(address) and str(address).strip():
-                        # Detect country first
-                        country = 'MALAYSIA' if any(indicator in str(address).lower() for indicator in [
-                            'malaysia', 'johor', 'kuala lumpur', 'selangor', 'penang', 'perak',
-                            'kedah', 'kelantan', 'terengganu', 'pahang', 'negeri sembilan',
-                            'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan',
-                            'johor bahru', 'kl', 'shah alam', 'petaling jaya'
-                        ]) else 'SINGAPORE'
-
-                        if country == 'SINGAPORE':
-                            postal_codes.append(ExcelTransformer.extract_postal_code(address))
-                        else:
-                            postal_codes.append(None)
+                        # The extract_postal_code function now handles country detection automatically
+                        postal_code = ExcelTransformer.extract_postal_code(address)
+                        postal_codes.append(postal_code)
                     else:
                         postal_codes.append(None)
 
