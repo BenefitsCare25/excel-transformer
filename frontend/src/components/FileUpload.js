@@ -41,13 +41,7 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
       </h2>
       <p className="text-gray-600 mb-6">
         Upload your Excel file to transform it into the desired template format.
-        The system will automatically:
       </p>
-      <ul className="text-sm text-gray-600 mb-6 space-y-1">
-        <li>• Combine telephone & remarks fields</li>
-        <li>• Combine operating hours into consolidated format</li>
-        <li>• Extract postal codes from address details</li>
-      </ul>
       
       <div
         {...getRootProps()}

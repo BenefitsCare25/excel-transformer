@@ -79,9 +79,16 @@ const ProcessingStatus = ({ status, result, onDownload, onDownloadAll, onReset }
                           {sheetResult.records_processed} records
                         </span>
                       </div>
-                      <div className="text-xs text-gray-600 mt-1">
-                        Geocoding: {sheetResult.geocoding_stats.success_rate} success rate
-                        ({sheetResult.geocoding_stats.successful_geocodes} of {sheetResult.geocoding_stats.total_records})
+                      <div className="text-xs text-gray-600 mt-1 space-y-1">
+                        <div>
+                          Geocoding: {sheetResult.geocoding_stats.success_rate} success rate
+                          ({sheetResult.geocoding_stats.successful_geocodes} of {sheetResult.geocoding_stats.total_records})
+                        </div>
+                        {sheetResult.terminated_clinics_filtered > 0 && (
+                          <div className="text-orange-600">
+                            Terminated items removed: {sheetResult.terminated_clinics_filtered}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <button

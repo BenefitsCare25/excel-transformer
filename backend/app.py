@@ -829,11 +829,13 @@ class ExcelTransformer:
                     raise ValueError(f"Sheet '{sheet_name}' missing required 'clinic name' column after inference attempt")
 
             # Filter out terminated clinics if provided
+            terminated_count = 0
             if terminated_ids and 'clinic_id' in col_map:
                 initial_count = len(df_source)
                 df_source = df_source[~df_source[col_map['clinic_id']].astype(str).str.strip().isin(terminated_ids)]
                 filtered_count = len(df_source)
-                logger.info(f"Filtered out {initial_count - filtered_count} terminated clinics from sheet '{sheet_name}'")
+                terminated_count = initial_count - filtered_count
+                logger.info(f"Filtered out {terminated_count} terminated clinics from sheet '{sheet_name}'")
 
             # Filter out empty/invalid rows - keep only rows with valid clinic data
             initial_count = len(df_source)
@@ -1009,6 +1011,7 @@ class ExcelTransformer:
                 'dataframe': df_transformed,
                 'message': f'Successfully transformed {len(df_transformed)} records',
                 'records_processed': len(df_transformed),
+                'terminated_clinics_filtered': terminated_count,
                 'geocoding_stats': {
                     'total_records': len(df_transformed),
                     'successful_geocodes': successful_geocodes,
@@ -1068,6 +1071,7 @@ class ExcelTransformer:
                         'output_filename': output_filename,
                         'output_path': output_path,
                         'records_processed': result['records_processed'],
+                        'terminated_clinics_filtered': result['terminated_clinics_filtered'],
                         'geocoding_stats': result['geocoding_stats']
                     }
                     results.append(sheet_result)
