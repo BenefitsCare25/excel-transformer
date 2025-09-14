@@ -12,6 +12,9 @@ from geopy.geocoders import GoogleV3
 from dotenv import load_dotenv
 from functools import lru_cache
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 # Configure logging
 logging.basicConfig(
@@ -1116,6 +1119,274 @@ class ExcelTransformer:
                 'message': f'Error processing multi-sheet file: {str(e)}',
                 'error_details': traceback.format_exc()
             }
+
+class BatchProcessor:
+    def __init__(self):
+        self.batch_jobs = {}  # Store batch job status
+        self.lock = threading.Lock()
+
+    def create_batch_job(self, batch_id, file_count):
+        """Create a new batch processing job"""
+        with self.lock:
+            self.batch_jobs[batch_id] = {
+                'status': 'processing',
+                'total_files': file_count,
+                'completed_files': 0,
+                'failed_files': 0,
+                'results': [],
+                'created_at': datetime.now().isoformat()
+            }
+
+    def update_batch_progress(self, batch_id, file_result):
+        """Update progress for a batch job"""
+        with self.lock:
+            if batch_id in self.batch_jobs:
+                self.batch_jobs[batch_id]['results'].append(file_result)
+                if file_result.get('success', False):
+                    self.batch_jobs[batch_id]['completed_files'] += 1
+                else:
+                    self.batch_jobs[batch_id]['failed_files'] += 1
+
+                # Check if batch is complete
+                total_processed = self.batch_jobs[batch_id]['completed_files'] + self.batch_jobs[batch_id]['failed_files']
+                if total_processed >= self.batch_jobs[batch_id]['total_files']:
+                    self.batch_jobs[batch_id]['status'] = 'completed'
+
+    def get_batch_status(self, batch_id):
+        """Get status of a batch job"""
+        with self.lock:
+            return self.batch_jobs.get(batch_id, None)
+
+# Global batch processor instance
+batch_processor = BatchProcessor()
+
+def process_single_file_in_batch(file_data, batch_id):
+    """Process a single file as part of a batch job"""
+    try:
+        file_content = file_data['content']
+        original_filename = file_data['filename']
+        job_id = str(uuid.uuid4())
+
+        # Save uploaded file
+        input_filename = f"{job_id}_input.xlsx"
+        input_path = os.path.join(UPLOAD_FOLDER, input_filename)
+
+        with open(input_path, 'wb') as f:
+            f.write(file_content)
+
+        # Validate file content
+        try:
+            pd.ExcelFile(input_path).sheet_names
+            logger.info(f"Batch file validation passed for {original_filename} (job {job_id})")
+        except Exception as validation_error:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+            raise ValueError(f"Invalid Excel file: {original_filename}")
+
+        # Transform file
+        result = ExcelTransformer.transform_excel_multi_sheet(input_path, PROCESSED_FOLDER, job_id)
+
+        # Clean up input file
+        if os.path.exists(input_path):
+            os.remove(input_path)
+
+        if result['success']:
+            file_result = {
+                'success': True,
+                'filename': original_filename,
+                'job_id': job_id,
+                'sheets_processed': result['sheets_processed'],
+                'total_records': result['total_records'],
+                'output_files': result['output_files'],
+                'download_urls': [f'/download/{job_id}/{filename}' for filename in result['output_files']],
+                'summary_stats': result['summary_stats']
+            }
+        else:
+            file_result = {
+                'success': False,
+                'filename': original_filename,
+                'error': result['message'],
+                'details': result.get('error_details', '')
+            }
+
+        # Update batch progress
+        batch_processor.update_batch_progress(batch_id, file_result)
+
+        return file_result
+
+    except Exception as e:
+        error_result = {
+            'success': False,
+            'filename': file_data.get('filename', 'unknown'),
+            'error': str(e),
+            'details': traceback.format_exc()
+        }
+        batch_processor.update_batch_progress(batch_id, error_result)
+        return error_result
+
+@app.route('/upload/batch', methods=['POST'])
+def upload_batch():
+    """Handle batch upload of multiple Excel files"""
+    try:
+        # Check if files are provided
+        if 'files' not in request.files:
+            return jsonify({'error': 'No files provided'}), 400
+
+        files = request.files.getlist('files')
+        if not files or len(files) == 0:
+            return jsonify({'error': 'No files selected'}), 400
+
+        # Validate file count (limit to 10 files per batch)
+        MAX_BATCH_SIZE = 10
+        if len(files) > MAX_BATCH_SIZE:
+            return jsonify({'error': f'Too many files. Maximum {MAX_BATCH_SIZE} files allowed per batch.'}), 400
+
+        # Validate each file
+        file_data_list = []
+        for file in files:
+            if file.filename == '':
+                continue
+
+            if not file.filename.lower().endswith(('.xlsx', '.xls')):
+                return jsonify({'error': f'Invalid file format: {file.filename}. Please upload Excel files only.'}), 400
+
+            # File size validation (50MB limit per file)
+            file.seek(0, 2)  # Seek to end
+            file_size = file.tell()
+            file.seek(0)  # Seek back to beginning
+
+            MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+            if file_size > MAX_FILE_SIZE:
+                return jsonify({'error': f'File too large: {file.filename}. Maximum size is 50MB per file.'}), 413
+
+            # Read file content
+            file_content = file.read()
+            file_data_list.append({
+                'content': file_content,
+                'filename': file.filename,
+                'size': file_size
+            })
+
+        if not file_data_list:
+            return jsonify({'error': 'No valid files provided'}), 400
+
+        # Generate batch ID
+        batch_id = str(uuid.uuid4())
+
+        # Create batch job
+        batch_processor.create_batch_job(batch_id, len(file_data_list))
+
+        # Process files concurrently
+        with ThreadPoolExecutor(max_workers=min(len(file_data_list), 3)) as executor:  # Limit to 3 concurrent processes
+            # Submit all files for processing
+            future_to_file = {
+                executor.submit(process_single_file_in_batch, file_data, batch_id): file_data['filename']
+                for file_data in file_data_list
+            }
+
+            # Collect results as they complete (for immediate response)
+            results = []
+            for future in as_completed(future_to_file):
+                try:
+                    result = future.result(timeout=300)  # 5 minute timeout per file
+                    results.append(result)
+                except Exception as e:
+                    filename = future_to_file[future]
+                    error_result = {
+                        'success': False,
+                        'filename': filename,
+                        'error': f'Processing timeout or error: {str(e)}'
+                    }
+                    results.append(error_result)
+                    batch_processor.update_batch_progress(batch_id, error_result)
+
+        # Get final batch status
+        batch_status = batch_processor.get_batch_status(batch_id)
+
+        successful_files = [r for r in results if r.get('success', False)]
+        failed_files = [r for r in results if not r.get('success', False)]
+
+        return jsonify({
+            'batch_id': batch_id,
+            'message': f'Batch processing completed. {len(successful_files)} files processed successfully, {len(failed_files)} failed.',
+            'total_files': len(file_data_list),
+            'successful_files': len(successful_files),
+            'failed_files': len(failed_files),
+            'results': results,
+            'batch_status': batch_status
+        })
+
+    except Exception as e:
+        logger.error(f"Batch upload error: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error during batch processing',
+            'details': str(e)
+        }), 500
+
+@app.route('/batch/status/<batch_id>', methods=['GET'])
+def get_batch_status(batch_id):
+    """Get status of a batch processing job"""
+    try:
+        status = batch_processor.get_batch_status(batch_id)
+        if not status:
+            return jsonify({'error': 'Batch job not found'}), 404
+
+        return jsonify(status)
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/batch/download/<batch_id>', methods=['GET'])
+def download_batch(batch_id):
+    """Download all files from a batch processing job as ZIP"""
+    try:
+        batch_status = batch_processor.get_batch_status(batch_id)
+        if not batch_status:
+            return jsonify({'error': 'Batch job not found'}), 404
+
+        if batch_status['status'] != 'completed':
+            return jsonify({'error': 'Batch processing not completed yet'}), 400
+
+        # Collect all successful results
+        successful_results = [r for r in batch_status['results'] if r.get('success', False)]
+
+        if not successful_results:
+            return jsonify({'error': 'No successful files to download'}), 404
+
+        import zipfile
+        import tempfile
+        import glob
+
+        # Create temporary zip file
+        temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+
+        with zipfile.ZipFile(temp_zip.name, 'w') as zipf:
+            for result in successful_results:
+                job_id = result['job_id']
+                original_filename = result['filename']
+
+                # Find all files for this job
+                pattern = os.path.join(PROCESSED_FOLDER, f"{job_id}_*.xlsx")
+                matching_files = glob.glob(pattern)
+
+                for file_path in matching_files:
+                    filename = os.path.basename(file_path)
+                    # Create descriptive archive names: originalname_sheetname.xlsx
+                    sheet_part = filename.replace(f"{job_id}_", "").replace(".xlsx", "")
+                    base_name = os.path.splitext(original_filename)[0]
+                    arc_name = f"{base_name}_{sheet_part}.xlsx"
+                    zipf.write(file_path, arc_name)
+
+        return send_file(
+            temp_zip.name,
+            as_attachment=True,
+            download_name=f'batch_{batch_id}_results.zip',
+            mimetype='application/zip'
+        )
+
+    except Exception as e:
+        logger.error(f"Batch download error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/geocode', methods=['POST'])
 def geocode_address():

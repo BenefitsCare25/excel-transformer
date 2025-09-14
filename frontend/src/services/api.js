@@ -21,11 +21,9 @@ class ApiService {
           'Content-Type': 'multipart/form-data',
         },
         onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round(
-            (progressEvent.loaded * 100) / progressEvent.total
-          );
           // Upload progress tracking (can be used for UI progress bars)
           // TODO: Implement progress callback if needed
+          console.log(`Upload progress: ${Math.round((progressEvent.loaded * 100) / progressEvent.total)}%`);
         },
       });
 
@@ -37,6 +35,38 @@ class ApiService {
       return {
         success: false,
         error: error.response?.data?.error || 'Upload failed',
+        details: error.response?.data?.details || error.message,
+      };
+    }
+  }
+
+  async uploadBatch(files) {
+    const formData = new FormData();
+    files.forEach(file => {
+      formData.append('files', file);
+    });
+
+    try {
+      const response = await this.api.post('/upload/batch', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 600000, // 10 minutes for batch processing
+        onUploadProgress: (progressEvent) => {
+          // Batch upload progress tracking
+          // TODO: Implement progress callback if needed
+          console.log(`Batch upload progress: ${Math.round((progressEvent.loaded * 100) / progressEvent.total)}%`);
+        },
+      });
+
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Batch upload failed',
         details: error.response?.data?.details || error.message,
       };
     }
@@ -134,6 +164,58 @@ class ApiService {
     }
   }
 
+  async getBatchStatus(batchId) {
+    try {
+      const response = await this.api.get(`/batch/status/${batchId}`);
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Batch status check failed',
+      };
+    }
+  }
+
+  async downloadBatch(batchId) {
+    try {
+      const response = await this.api.get(`/batch/download/${batchId}`, {
+        responseType: 'blob',
+      });
+
+      // Create blob link to download
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+
+      // Get filename from response headers or use default
+      const contentDisposition = response.headers['content-disposition'];
+      let filename = `batch_${batchId}_results.zip`;
+
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Batch download failed',
+      };
+    }
+  }
+
   async healthCheck() {
     try {
       const response = await this.api.get('/health');
@@ -150,4 +232,5 @@ class ApiService {
   }
 }
 
-export default new ApiService();
+const apiServiceInstance = new ApiService();
+export default apiServiceInstance;

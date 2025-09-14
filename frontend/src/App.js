@@ -7,8 +7,10 @@ import './index.css';
 function App() {
   const [processingStatus, setProcessingStatus] = useState('idle');
   const [result, setResult] = useState(null);
-  const [jobId, setJobId] = useState(null);
   const [backendHealth, setBackendHealth] = useState(null);
+  const [fileQueue, setFileQueue] = useState([]);
+  const [batchResults, setBatchResults] = useState([]);
+  const [batchId, setBatchId] = useState(null);
 
   // Check backend health on component mount
   useEffect(() => {
@@ -20,27 +22,91 @@ function App() {
     checkHealth();
   }, []);
 
-  const handleFileUpload = async (file) => {
+  const handleFileUpload = async (files) => {
+    // Convert file objects to queue items with status tracking
+    const newFileItems = files.map((file, index) => ({
+      id: `${Date.now()}_${index}`,
+      file,
+      status: 'pending',
+      jobId: null,
+      result: null,
+      error: null
+    }));
+
+    setFileQueue(prev => [...prev, ...newFileItems]);
+  };
+
+  const handleProcessFiles = async () => {
+    if (fileQueue.length === 0) return;
+
     setProcessingStatus('processing');
-    setResult(null);
-    setJobId(null);
+    setBatchResults([]);
 
-    const uploadResult = await apiService.uploadFile(file);
+    // Set all files to processing status
+    setFileQueue(prev =>
+      prev.map(item => ({ ...item, status: 'processing' }))
+    );
 
-    if (uploadResult.success) {
+    // Use batch upload API for concurrent processing
+    const files = fileQueue.map(item => item.file);
+    const batchResult = await apiService.uploadBatch(files);
+
+    if (batchResult.success) {
+      const results = batchResult.data.results;
+
+      // Store batch ID for download functionality
+      setBatchId(batchResult.data.batch_id);
+
+      // Update file queue with results
+      setFileQueue(prev =>
+        prev.map((item, index) => {
+          const result = results.find(r => r.filename === item.file.name);
+          if (result) {
+            return {
+              ...item,
+              status: result.success ? 'completed' : 'error',
+              jobId: result.job_id || null,
+              result: result.success ? result : null,
+              error: result.success ? null : result.error
+            };
+          }
+          return { ...item, status: 'error', error: 'Unknown error' };
+        })
+      );
+
+      setBatchResults(results);
       setProcessingStatus('success');
-      setResult(uploadResult.data);
-      setJobId(uploadResult.data.job_id);
     } else {
+      // Handle batch processing failure
+      setFileQueue(prev =>
+        prev.map(item => ({
+          ...item,
+          status: 'error',
+          error: batchResult.error
+        }))
+      );
+
+      setBatchResults([{
+        success: false,
+        fileName: 'Batch Processing',
+        error: batchResult.error
+      }]);
       setProcessingStatus('error');
-      setResult({
-        error: uploadResult.error,
-        details: uploadResult.details,
-      });
     }
   };
 
-  const handleDownload = async (filename = null) => {
+  const handleRemoveFile = (indexToRemove) => {
+    setFileQueue(prev => prev.filter((_, index) => index !== indexToRemove));
+  };
+
+  const handleClearQueue = () => {
+    setFileQueue([]);
+    setBatchResults([]);
+    setBatchId(null);
+    setProcessingStatus('idle');
+  };
+
+  const handleDownload = async (jobId, filename = null) => {
     if (!jobId) return;
 
     const downloadResult = await apiService.downloadFile(jobId, filename);
@@ -49,7 +115,7 @@ function App() {
     }
   };
 
-  const handleDownloadAll = async () => {
+  const handleDownloadAll = async (jobId) => {
     if (!jobId) return;
 
     const downloadResult = await apiService.downloadAllFiles(jobId);
@@ -58,10 +124,31 @@ function App() {
     }
   };
 
+  const handleDownloadAllBatch = async () => {
+    if (batchId) {
+      // Use batch download for all files at once
+      const downloadResult = await apiService.downloadBatch(batchId);
+      if (!downloadResult.success) {
+        alert(`Batch download failed: ${downloadResult.error}`);
+      }
+    } else {
+      // Fallback to individual downloads
+      const completedFiles = fileQueue.filter(item => item.status === 'completed');
+
+      for (const fileItem of completedFiles) {
+        if (fileItem.jobId) {
+          await handleDownloadAll(fileItem.jobId);
+        }
+      }
+    }
+  };
+
   const handleReset = () => {
     setProcessingStatus('idle');
     setResult(null);
-    setJobId(null);
+    setFileQueue([]);
+    setBatchResults([]);
+    setBatchId(null);
   };
 
   return (
@@ -109,16 +196,96 @@ function App() {
               <FileUpload
                 onFileUpload={handleFileUpload}
                 isProcessing={processingStatus === 'processing'}
+                fileQueue={fileQueue}
+                onRemoveFile={handleRemoveFile}
               />
 
-              {/* Processing Status Component */}
-              <ProcessingStatus
-                status={processingStatus}
-                result={result}
-                onDownload={handleDownload}
-                onDownloadAll={handleDownloadAll}
-                onReset={handleReset}
-              />
+              {/* Batch Processing Controls */}
+              {fileQueue.length > 0 && (
+                <div className="mt-6 card">
+                  <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+                    <div className="flex items-center space-x-4">
+                      <span className="text-sm text-gray-600">
+                        {fileQueue.length} file{fileQueue.length > 1 ? 's' : ''} selected
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        ({fileQueue.filter(f => f.status === 'completed').length} completed,{' '}
+                        {fileQueue.filter(f => f.status === 'error').length} failed)
+                      </span>
+                    </div>
+                    <div className="flex space-x-3">
+                      <button
+                        onClick={handleClearQueue}
+                        disabled={processingStatus === 'processing'}
+                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 disabled:opacity-50"
+                      >
+                        Clear All
+                      </button>
+                      <button
+                        onClick={handleProcessFiles}
+                        disabled={processingStatus === 'processing' || fileQueue.every(f => f.status !== 'pending')}
+                        className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                      >
+                        {processingStatus === 'processing' ? 'Processing...' : 'Process Files'}
+                      </button>
+                      {fileQueue.some(f => f.status === 'completed') && (
+                        <button
+                          onClick={handleDownloadAllBatch}
+                          className="px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                        >
+                          Download All
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Batch Results Display */}
+              {batchResults.length > 0 && (
+                <div className="mt-6 card">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4">
+                    Processing Results
+                  </h3>
+                  <div className="space-y-3">
+                    {batchResults.map((result, index) => (
+                      <div key={index} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">{result.fileName}</p>
+                          {result.success ? (
+                            <p className="text-xs text-green-600">
+                              ✓ {result.sheets_processed} sheets processed, {result.total_records} records
+                            </p>
+                          ) : (
+                            <p className="text-xs text-red-600">✗ {result.error}</p>
+                          )}
+                        </div>
+                        {result.success && result.job_id && (
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={() => handleDownloadAll(result.job_id)}
+                              className="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700"
+                            >
+                              Download
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Legacy Processing Status Component for single file compatibility */}
+              {result && !batchResults.length && (
+                <ProcessingStatus
+                  status={processingStatus}
+                  result={result}
+                  onDownload={handleDownload}
+                  onDownloadAll={handleDownloadAll}
+                  onReset={handleReset}
+                />
+              )}
             </>
           )}
 
@@ -137,7 +304,7 @@ function App() {
                   </div>
                   <h4 className="font-medium text-gray-800 mb-1">1. Upload</h4>
                   <p className="text-sm text-gray-600">
-                    Upload Excel file with multiple sheets (GP, TCM, etc.)
+                    Upload multiple Excel files simultaneously for batch processing
                   </p>
                 </div>
                 <div className="text-center p-4">
@@ -149,7 +316,7 @@ function App() {
                   </div>
                   <h4 className="font-medium text-gray-800 mb-1">2. Process</h4>
                   <p className="text-sm text-gray-600">
-                    Multi-sheet processing with termination filtering
+                    Concurrent processing of multiple files with real-time progress
                   </p>
                 </div>
                 <div className="text-center p-4">
@@ -160,7 +327,7 @@ function App() {
                   </div>
                   <h4 className="font-medium text-gray-800 mb-1">3. Download</h4>
                   <p className="text-sm text-gray-600">
-                    Download individual files or all as ZIP
+                    Batch download all results as single ZIP archive
                   </p>
                 </div>
               </div>
@@ -173,23 +340,23 @@ function App() {
               <ul className="space-y-2 text-sm text-gray-700">
                 <li className="flex items-start space-x-2">
                   <span className="text-blue-600 mt-0.5">•</span>
-                  <span><strong>Multi-Sheet Processing:</strong> Automatically detects and processes GP, TCM, and other panel sheets</span>
+                  <span><strong>Batch Upload:</strong> Upload up to 10 Excel files simultaneously for concurrent processing</span>
+                </li>
+                <li className="flex items-start space-x-2">
+                  <span className="text-green-600 mt-0.5">•</span>
+                  <span><strong>Multi-Sheet Processing:</strong> Automatically detects and processes GP, TCM, SP clinic, and other panel sheets</span>
                 </li>
                 <li className="flex items-start space-x-2">
                   <span className="text-red-600 mt-0.5">•</span>
                   <span><strong>Termination Filtering:</strong> Removes terminated clinics from panel listings based on termination sheets</span>
                 </li>
                 <li className="flex items-start space-x-2">
-                  <span className="text-green-600 mt-0.5">•</span>
-                  <span><strong>Data Transformation:</strong> Phone & remarks combination, operating hours consolidation, postal code extraction</span>
-                </li>
-                <li className="flex items-start space-x-2">
                   <span className="text-purple-600 mt-0.5">•</span>
-                  <span><strong>Geocoding:</strong> Automatic latitude/longitude lookup with Google Maps integration</span>
+                  <span><strong>Real-time Progress:</strong> Track processing status for each file with visual progress indicators</span>
                 </li>
                 <li className="flex items-start space-x-2">
                   <span className="text-orange-600 mt-0.5">•</span>
-                  <span><strong>Multiple Outputs:</strong> Generates separate Excel files for each processed sheet</span>
+                  <span><strong>Batch Download:</strong> Download all processed files in a single ZIP archive with organized naming</span>
                 </li>
               </ul>
             </div>
