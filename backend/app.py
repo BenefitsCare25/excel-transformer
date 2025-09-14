@@ -223,6 +223,9 @@ class ExcelTransformer:
             header_patterns = [
                 # Primary pattern: S/N with clinic ID
                 ('s/n' in row_text and 'clinic' in row_text and 'id' in row_text),
+                # SP Clinic specific patterns
+                ('s/n' in row_text and 'specialty' in row_text and 'sp code' in row_text and 'doctor' in row_text),
+                ('s/n' in row_text and 'sp code' in row_text and 'clinic name' in row_text and 'address1' in row_text),
                 # MY GP List specific patterns
                 ('s/n' in row_text and 'clinic code' in row_text and 'city' in row_text and 'state' in row_text),
                 ('s/n' in row_text and 'clinic name' in row_text and 'address1' in row_text),
@@ -340,7 +343,8 @@ class ExcelTransformer:
             'clinic_id': [
                 'ihp clinic id', 'provider code', 'clinic id', 'id', 'clinic code',
                 'provider id', 'clinic identifier', 'code', 'clinic no', 'clinic number',
-                'master code', 'master id'  # TCM sheet specific
+                'master code', 'master id',  # TCM sheet specific
+                'sp code', 'sp id'  # SP clinic specific
             ],
             'clinic_name': [
                 'clinic name', 'name', 'clinic', 'provider name', 'facility name',
@@ -401,7 +405,13 @@ class ExcelTransformer:
             'address_building': ['building name', 'building', 'bldg name', 'complex name', 'unit & building name'],
             'postal_code': ['postal code', 'postcode', 'zip code', 'zip', 'postal'],
             # TCM-specific field for doctor information
-            'doctor_name': ['physician - in - charge', 'physician in charge', 'doctor', 'physician', 'practitioner']
+            'doctor_name': ['physician - in - charge', 'physician in charge', 'doctor', 'physician', 'practitioner'],
+            # SP clinic specific fields
+            'specialty': ['specialty', 'speciality', 'medical specialty', 'specialization', 'department'],
+            'address1': ['address1', 'address 1', 'primary address', 'street address'],
+            'address2': ['address2', 'address 2', 'secondary address', 'unit number'],
+            'address3': ['address3', 'address 3', 'building name', 'complex name'],
+            'address4': ['address4', 'address 4', 'postal address', 'location detail']
         }
 
         # Convert all column names to lowercase and clean for comparison
@@ -707,6 +717,20 @@ class ExcelTransformer:
                     addresses.append(address_str)
                     continue
 
+            # SP Clinic format: Construct address from Address1, Address2, Address3, Address4
+            if 'address1' in col_map:
+                sp_address_parts = []
+                for addr_num in [1, 2, 3, 4]:
+                    addr_key = f'address{addr_num}'
+                    if addr_key in col_map:
+                        value = row.get(col_map[addr_key], '')
+                        if pd.notna(value) and str(value).strip() and str(value).lower() not in ['nan', '', 'none']:
+                            sp_address_parts.append(str(value).strip())
+
+                if sp_address_parts:
+                    addresses.append(' '.join(sp_address_parts))
+                    continue
+
             # Construct address from components (avoid duplicates)
             used_columns = set()
             for comp_key, prefix in address_components:
@@ -840,10 +864,13 @@ class ExcelTransformer:
             else:
                 df_transformed['Area'] = ExcelTransformer.smart_column_fallback(df_source, col_map, 'area')
 
-            # Fields not available in source
-            df_transformed['Specialty'] = None
+            # Specialty field (available in SP clinic sheets)
+            if 'specialty' in col_map:
+                df_transformed['Specialty'] = df_source[col_map['specialty']]
+            else:
+                df_transformed['Specialty'] = None
 
-            # Doctor field (available in TCM sheets)
+            # Doctor field (available in TCM and SP clinic sheets)
             if 'doctor_name' in col_map:
                 df_transformed['Doctor'] = df_source[col_map['doctor_name']]
             else:
