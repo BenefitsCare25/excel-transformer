@@ -399,7 +399,8 @@ class ExcelTransformer:
                 'operating hours\nmon-fri', 'operating hours mon-fri', 'weekdays am',
                 'operating hours \nmon - fri', 'operating hours mon - fri',  # TCM format
                 'operation hours', 'mon to fri',  # MY GP List format
-                'mon - fri'  # AIA SP format
+                'mon - fri',  # AIA SP format
+                'weekdays'  # AIA dental format - direct weekdays column
             ],
             'mon_fri_pm': [
                 'mon - fri (pm)', 'monday - friday (evening)', 'weekday pm', 'mon-fri pm', 'weekdays pm'
@@ -415,7 +416,7 @@ class ExcelTransformer:
             'sun_pm': ['sun (pm)', 'sun pm', 'sunday pm'],
             'sun_night': ['sun (night)', 'sun night', 'sunday night'],
             'sun_simple': ['sun'],  # Simple Sunday column
-            'holiday_am': ['public holiday (am)', 'public holiday', 'holiday am', 'ph am', 'ph'],
+            'holiday_am': ['public holiday (am)', 'public holiday', 'holiday am', 'ph am', 'ph', 'publicday'],
             'holiday_pm': ['public holiday (pm)', 'holiday pm', 'ph pm'],
             'holiday_night': ['public holiday (night)', 'holiday night', 'ph night'],
             'holiday_simple': ['holiday', 'ph'],  # Simple Holiday column
