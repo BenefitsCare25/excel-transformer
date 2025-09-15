@@ -406,7 +406,7 @@ function App() {
               <ul className="space-y-2 text-sm text-gray-700">
                 <li className="flex items-start space-x-2">
                   <span className="text-blue-600 mt-0.5">•</span>
-                  <span><strong>Batch Upload:</strong> Upload up to 10 Excel files simultaneously for concurrent processing</span>
+                  <span><strong>Batch Upload:</strong> Upload up to 3 Excel files simultaneously for concurrent processing</span>
                 </li>
                 <li className="flex items-start space-x-2">
                   <span className="text-green-600 mt-0.5">•</span>
