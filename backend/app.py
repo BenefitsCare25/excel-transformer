@@ -920,12 +920,17 @@ class ExcelTransformer:
             # Enhanced postal code extraction
             postal_codes = []
             for index, address in enumerate(df_transformed['Address1']):
+                postal_code = None
+
+                # Try dedicated postal code column first (if it has valid data)
                 if 'postal_code' in col_map:
-                    # Use dedicated postal code column if available
-                    postal_codes.append(df_source.iloc[index][col_map['postal_code']])
-                else:
+                    postal_col_value = df_source.iloc[index][col_map['postal_code']]
+                    if pd.notna(postal_col_value) and str(postal_col_value).strip() not in ('', 'nan', 'None'):
+                        postal_code = str(postal_col_value).strip()
+
+                # If no valid postal code from dedicated column, extract from address
+                if not postal_code:
                     # For SP clinic format, check Address4 first (contains "SINGAPORE 247909")
-                    postal_code = None
                     if 'address4' in col_map:
                         address4_value = df_source.iloc[index].get(col_map['address4'], '')
                         if pd.notna(address4_value) and str(address4_value).strip():
@@ -935,7 +940,7 @@ class ExcelTransformer:
                     if not postal_code and pd.notna(address) and str(address).strip():
                         postal_code = ExcelTransformer.extract_postal_code(address)
 
-                    postal_codes.append(postal_code)
+                postal_codes.append(postal_code)
 
             df_transformed['PostalCode'] = postal_codes
 

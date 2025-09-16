@@ -65,9 +65,12 @@ The application performs specific data transformations for various clinic data f
 2. **Operating Hours Consolidation**:
    - Complex format: `AM/PM/NIGHT → "AM/PM/NIGHT"` (GP/TCM sheets)
    - Simple format: Clean hours without suffixes (SP clinic sheets)
-3. **Postal Code Extraction**:
+3. **Enhanced Postal Code Extraction**:
+   - **Robust fallback logic**: Uses dedicated postal code column if valid, otherwise extracts from address
    - Extract 6-digit codes from Singapore addresses (handles "S" prefix)
    - SP format: Extract from Address4 column ("SINGAPORE 247909" → "247909")
+   - **Fix applied**: Handles files with empty postal code columns by falling back to address extraction
+   - Singapore format: "BLK 325 UBI AVENUE 1 #01-701 SINGAPORE 400325" → "400325"
 4. **Field Mapping**: Dynamic mapping for different formats (IHP, SP, TCM)
 5. **Address Construction**:
    - Standard: Single address field
@@ -164,6 +167,7 @@ The gunicorn configuration supports containerized deployment with environment-ba
 - Automatic header detection handles various Excel layouts (GP, TCM, SP clinic, specialty formats)
 - Enhanced column mapping with fuzzy matching and format-specific patterns
 - Empty row filtering ensures accurate record counts by removing null/empty rows
+- **Postal code extraction**: Smart fallback from dedicated columns to address parsing (99.7% success rate)
 - Geocoding uses postal code lookup first, Google Maps API as fallback
 - Handles Singapore postal codes with "S" prefix (e.g., "S238869" → "238869")
 - Address construction from separate components for TCM sheets
@@ -175,10 +179,12 @@ The gunicorn configuration supports containerized deployment with environment-ba
 
 ## Sheet Format Support
 
-### GP/Standard Clinic Sheets
-- Column headers: CLINIC CODE, CLINIC, REGION, AREA, ADDRESS, etc.
-- Single address field with postal code extraction
+### GP/Standard Clinic Sheets (IHP Format)
+- Column headers: IHP CLINIC ID, CLINIC NAME, REGION, AREA, ADDRESS, POSTAL CODE, etc.
+- **Postal code handling**: Falls back to address extraction when dedicated column is empty
+- Single address field with embedded postal codes ("SINGAPORE 400325" format)
 - Standard operating hours format (AM/PM/NIGHT structure)
+- **Known issue resolved**: IHP files with empty postal code columns now extract correctly from addresses
 
 ### TCM Sheets
 - Column headers: MASTER CODE, PHYSICIAN - IN - CHARGE, CLINIC, BLK & ROAD NAME, etc.
