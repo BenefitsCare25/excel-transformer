@@ -231,9 +231,50 @@ class GeocodingService:
 
 class ExcelTransformer:
     @staticmethod
+    def safe_read_excel(file_path, sheet_name=None, **kwargs):
+        """Safely read Excel file with fallback for corrupted XML metadata"""
+        try:
+            # First attempt: Normal read
+            return pd.read_excel(file_path, sheet_name=sheet_name, **kwargs)
+        except ValueError as e:
+            if "could not assign names" in str(e) or "invalid XML" in str(e):
+                # Openpyxl XML corruption - monkey patch the problematic function
+                logger.warning(f"Excel file has corrupted metadata (print titles/names), using patched openpyxl")
+                import openpyxl
+                from openpyxl.reader.workbook import WorkbookParser
+
+                # Save original method
+                original_assign_names = WorkbookParser.assign_names
+
+                def patched_assign_names(self):
+                    """Patched version that skips invalid print titles"""
+                    try:
+                        original_assign_names(self)
+                    except ValueError as ve:
+                        if "not a valid print titles definition" in str(ve):
+                            logger.warning(f"Skipping invalid print title: {ve}")
+                            # Continue without assigning this name
+                            pass
+                        else:
+                            raise
+
+                # Apply patch
+                WorkbookParser.assign_names = patched_assign_names
+
+                try:
+                    # Retry with patched openpyxl
+                    result = pd.read_excel(file_path, sheet_name=sheet_name, **kwargs)
+                    return result
+                finally:
+                    # Restore original method
+                    WorkbookParser.assign_names = original_assign_names
+            else:
+                raise
+
+    @staticmethod
     def find_header_row(file_path, sheet_name=None):
         """Find the actual header row by looking for clinic-related keywords"""
-        df_raw = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
+        df_raw = ExcelTransformer.safe_read_excel(file_path, sheet_name=sheet_name, header=None)
 
         for idx, row in df_raw.iterrows():
             row_values = [str(val) for val in row.values if pd.notna(val)]
@@ -315,7 +356,7 @@ class ExcelTransformer:
             try:
                 # Find header row for termination sheet
                 header_row = ExcelTransformer.find_header_row(file_path, sheet)
-                df = pd.read_excel(file_path, sheet_name=sheet, header=header_row)
+                df = ExcelTransformer.safe_read_excel(file_path, sheet_name=sheet, header=header_row)
                 df.columns = df.columns.str.strip()
 
                 # Look for clinic ID column (various possible names)
@@ -816,9 +857,9 @@ class ExcelTransformer:
             
             # Find the correct header row for this sheet
             header_row = ExcelTransformer.find_header_row(input_path, sheet_name)
-            
+
             # Read the source sheet
-            df_source = pd.read_excel(input_path, sheet_name=sheet_name, header=header_row)
+            df_source = ExcelTransformer.safe_read_excel(input_path, sheet_name=sheet_name, header=header_row)
             df_source.columns = df_source.columns.str.strip()
             
             # Create transformed dataframe
@@ -1048,9 +1089,41 @@ class ExcelTransformer:
     def transform_excel_multi_sheet(input_path, output_dir, job_id):
         """Transform Excel file with multiple sheets to multiple output files"""
         try:
-            # Get all sheet names
-            xl_file = pd.ExcelFile(input_path)
-            sheet_names = xl_file.sheet_names
+            # Get all sheet names (with fallback for corrupted XML)
+            try:
+                xl_file = pd.ExcelFile(input_path)
+                sheet_names = xl_file.sheet_names
+            except ValueError as e:
+                if "could not assign names" in str(e) or "invalid XML" in str(e):
+                    logger.warning(f"Excel file has corrupted metadata, using patched openpyxl to read sheet names")
+                    import openpyxl
+                    from openpyxl.reader.workbook import WorkbookParser
+
+                    # Save original method
+                    original_assign_names = WorkbookParser.assign_names
+
+                    def patched_assign_names(self):
+                        """Patched version that skips invalid print titles"""
+                        try:
+                            original_assign_names(self)
+                        except ValueError as ve:
+                            if "not a valid print titles definition" in str(ve):
+                                logger.warning(f"Skipping invalid print title: {ve}")
+                                pass
+                            else:
+                                raise
+
+                    # Apply patch
+                    WorkbookParser.assign_names = patched_assign_names
+
+                    try:
+                        xl_file = pd.ExcelFile(input_path)
+                        sheet_names = xl_file.sheet_names
+                    finally:
+                        # Restore original method
+                        WorkbookParser.assign_names = original_assign_names
+                else:
+                    raise
 
             # Classify sheets
             panel_sheets, termination_sheets = ExcelTransformer.classify_sheets(sheet_names)
