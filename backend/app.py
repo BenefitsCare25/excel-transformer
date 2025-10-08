@@ -1259,9 +1259,43 @@ def process_single_file_in_batch(file_data, batch_id):
         with open(input_path, 'wb') as f:
             f.write(file_content)
 
-        # Validate file content
+        # Validate file content (using safe method that handles corrupted XML)
         try:
-            pd.ExcelFile(input_path).sheet_names
+            # Use the same safe reading approach as transform_excel_multi_sheet
+            try:
+                xl_file = pd.ExcelFile(input_path)
+                sheet_names = xl_file.sheet_names
+            except ValueError as e:
+                if "could not assign names" in str(e) or "invalid XML" in str(e):
+                    logger.warning(f"Batch file has corrupted metadata, using patched validation for {original_filename}")
+                    import openpyxl
+                    from openpyxl.reader.workbook import WorkbookParser
+
+                    # Save original method
+                    original_assign_names = WorkbookParser.assign_names
+
+                    def patched_assign_names(self):
+                        """Patched version that skips invalid print titles"""
+                        try:
+                            original_assign_names(self)
+                        except ValueError as ve:
+                            if "not a valid print titles definition" in str(ve):
+                                logger.warning(f"Skipping invalid print title during validation: {ve}")
+                                pass
+                            else:
+                                raise
+
+                    # Apply patch
+                    WorkbookParser.assign_names = patched_assign_names
+
+                    try:
+                        xl_file = pd.ExcelFile(input_path)
+                        sheet_names = xl_file.sheet_names
+                    finally:
+                        # Restore original method
+                        WorkbookParser.assign_names = original_assign_names
+                else:
+                    raise
             logger.info(f"Batch file validation passed for {original_filename} (job {job_id})")
         except Exception as validation_error:
             if os.path.exists(input_path):
