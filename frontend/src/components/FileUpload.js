@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 
-const FileUpload = ({ onFileUpload, isProcessing, fileQueue = [], onRemoveFile }) => {
+const FileUpload = ({ onFileUpload, isProcessing, fileQueue = [], onRemoveFile, useGoogleMapsApi, onToggleGoogleMapsApi }) => {
   const [isDragActive, setIsDragActive] = useState(false);
 
   const onDrop = useCallback((acceptedFiles, rejectedFiles) => {
@@ -43,7 +43,52 @@ const FileUpload = ({ onFileUpload, isProcessing, fileQueue = [], onRemoveFile }
       <p className="text-gray-600 mb-6">
         Upload one or more Excel files to transform them into the desired template format.
       </p>
-      
+
+      {/* Geocoding Options */}
+      <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+        <div className="flex items-start space-x-3">
+          <div className="flex items-center h-5 mt-0.5">
+            <input
+              id="googleMapsToggle"
+              type="checkbox"
+              checked={useGoogleMapsApi}
+              onChange={(e) => onToggleGoogleMapsApi(e.target.checked)}
+              disabled={isProcessing}
+              className="w-4 h-4 text-blue-600 bg-white border-gray-300 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+          </div>
+          <div className="flex-1">
+            <label htmlFor="googleMapsToggle" className="font-medium text-gray-900 cursor-pointer flex items-center">
+              <span>Use Google Maps API for Geocoding</span>
+              <svg className="w-4 h-4 ml-1.5 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+              </svg>
+            </label>
+            <p className="text-sm text-gray-600 mt-1">
+              {useGoogleMapsApi ? (
+                <>
+                  <span className="text-green-700 font-medium">✓ Enabled:</span> Will use Google Maps API to extract latitude and longitude coordinates when postal code lookup fails. This provides more accurate geocoding but may incur API costs.
+                </>
+              ) : (
+                <>
+                  <span className="text-orange-700 font-medium">○ Disabled:</span> Will use postal code lookup only. Faster processing with no API costs, but some addresses may not be geocoded if postal codes are unavailable.
+                </>
+              )}
+            </p>
+            <div className="mt-2 text-xs text-gray-500 space-y-1">
+              <div className="flex items-start space-x-2">
+                <span className="text-blue-600 mt-0.5">•</span>
+                <span><strong>Postal Code Lookup:</strong> Always enabled for instant, free geocoding</span>
+              </div>
+              <div className="flex items-start space-x-2">
+                <span className="text-blue-600 mt-0.5">•</span>
+                <span><strong>Google Maps API:</strong> Used as fallback when postal code lookup fails (optional)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div
         {...getRootProps()}
         className={`upload-area ${isDragActive || dropzoneIsDragActive ? 'dragover' : ''} ${

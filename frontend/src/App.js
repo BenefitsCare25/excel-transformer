@@ -11,6 +11,7 @@ function App() {
   const [fileQueue, setFileQueue] = useState([]);
   const [batchResults, setBatchResults] = useState([]);
   const [batchId, setBatchId] = useState(null);
+  const [useGoogleMapsApi, setUseGoogleMapsApi] = useState(true); // Default: enabled
 
   // Check backend health on component mount
   useEffect(() => {
@@ -49,7 +50,7 @@ function App() {
 
     // Use batch upload API for concurrent processing
     const files = fileQueue.map(item => item.file);
-    const batchResult = await apiService.uploadBatch(files);
+    const batchResult = await apiService.uploadBatch(files, useGoogleMapsApi);
 
     if (batchResult.success) {
       const results = batchResult.data.results;
@@ -198,6 +199,8 @@ function App() {
                 isProcessing={processingStatus === 'processing'}
                 fileQueue={fileQueue}
                 onRemoveFile={handleRemoveFile}
+                useGoogleMapsApi={useGoogleMapsApi}
+                onToggleGoogleMapsApi={setUseGoogleMapsApi}
               />
 
               {/* Batch Processing Controls */}

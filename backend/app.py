@@ -53,7 +53,8 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 
 class GeocodingService:
-    def __init__(self):
+    def __init__(self, use_google_api=True):
+        self.use_google_api = use_google_api
         self.google_api_key = os.getenv('GOOGLE_MAPS_API_KEY')
         self._initialize_google_maps_clients()
         self.postal_code_lookup = self._load_postal_code_lookup()
@@ -61,16 +62,22 @@ class GeocodingService:
     
     def _initialize_google_maps_clients(self):
         """Initialize Google Maps API clients with status logging"""
+        if not self.use_google_api:
+            logger.info("Google Maps API: DISABLED BY USER - Using postal code lookup only")
+            self.gmaps = None
+            self.geolocator = None
+            return
+
         if not self.google_api_key:
             logger.info("Google Maps API: NOT CONFIGURED - Using postal code lookup only")
             self.gmaps = None
             self.geolocator = None
             return
-        
+
         try:
             self.gmaps = googlemaps.Client(key=self.google_api_key)
             self.geolocator = GoogleV3(api_key=self.google_api_key)
-            logger.info("Google Maps API: CONFIGURED")
+            logger.info("Google Maps API: CONFIGURED AND ENABLED")
         except Exception as e:
             logger.error(f"Google Maps API: FAILED - {e}")
             self.gmaps = None
@@ -212,17 +219,18 @@ class GeocodingService:
             return None, None
     
     def geocode(self, postal_code, address):
-        """Main geocoding method: try postal code first, then address"""
+        """Main geocoding method: try postal code first, then address (if enabled)"""
         # Try postal code lookup first
         lat, lng = self.geocode_by_postal_code(postal_code)
         if lat is not None and lng is not None:
             return lat, lng, 'postal_code'
-        
-        # Fallback to address geocoding
-        lat, lng = self.geocode_by_address(address)
-        if lat is not None and lng is not None:
-            return lat, lng, 'address'
-        
+
+        # Fallback to address geocoding only if use_google_api is enabled
+        if self.use_google_api:
+            lat, lng = self.geocode_by_address(address)
+            if lat is not None and lng is not None:
+                return lat, lng, 'address'
+
         return None, None, 'failed'
     
     def get_stats(self):
@@ -1018,11 +1026,11 @@ class ExcelTransformer:
         return [''] * len(df_source)
 
     @staticmethod
-    def transform_sheet(input_path, sheet_name, terminated_ids=None):
+    def transform_sheet(input_path, sheet_name, terminated_ids=None, use_google_api=True):
         """Transform a single sheet to target template format with geocoding"""
         try:
-            # Initialize geocoding service
-            geocoding_service = GeocodingService()
+            # Initialize geocoding service with user preference
+            geocoding_service = GeocodingService(use_google_api=use_google_api)
 
             # Check if this is Alliance-Tokio Marine format
             import openpyxl
@@ -1330,7 +1338,7 @@ class ExcelTransformer:
             }
 
     @staticmethod
-    def transform_excel_multi_sheet(input_path, output_dir, job_id):
+    def transform_excel_multi_sheet(input_path, output_dir, job_id, use_google_api=True):
         """Transform Excel file with multiple sheets to multiple output files"""
         try:
             # Get all sheet names (with fallback for corrupted XML)
@@ -1385,8 +1393,8 @@ class ExcelTransformer:
             for sheet in panel_sheets:
                 logger.info(f"Processing sheet: {sheet}")
 
-                # Transform the sheet
-                result = ExcelTransformer.transform_sheet(input_path, sheet, terminated_ids)
+                # Transform the sheet with geocoding preference
+                result = ExcelTransformer.transform_sheet(input_path, sheet, terminated_ids, use_google_api)
 
                 if result['success']:
                     df = result['dataframe']
@@ -1551,7 +1559,7 @@ class BatchProcessor:
 # Global batch processor instance
 batch_processor = BatchProcessor()
 
-def process_single_file_in_batch(file_data, batch_id):
+def process_single_file_in_batch(file_data, batch_id, use_google_api=True):
     """Process a single file as part of a batch job"""
     try:
         file_content = file_data['content']
@@ -1608,8 +1616,8 @@ def process_single_file_in_batch(file_data, batch_id):
                 os.remove(input_path)
             raise ValueError(f"Invalid Excel file: {original_filename}")
 
-        # Transform file
-        result = ExcelTransformer.transform_excel_multi_sheet(input_path, PROCESSED_FOLDER, job_id)
+        # Transform file with geocoding preference
+        result = ExcelTransformer.transform_excel_multi_sheet(input_path, PROCESSED_FOLDER, job_id, use_google_api)
 
         # Clean up input file
         if os.path.exists(input_path):
@@ -1663,6 +1671,10 @@ def upload_batch():
         if not files or len(files) == 0:
             return jsonify({'error': 'No files selected'}), 400
 
+        # Extract geocoding preference (default: True)
+        use_google_api = request.form.get('use_google_api', 'true').lower() == 'true'
+        logger.info(f"Batch upload - Google Maps API geocoding: {'ENABLED' if use_google_api else 'DISABLED'}")
+
         # Validate file count (limit to 10 files per batch)
         MAX_BATCH_SIZE = 10
         if len(files) > MAX_BATCH_SIZE:
@@ -1708,9 +1720,9 @@ def upload_batch():
             # Concurrent processing for better performance
             max_workers = min(len(file_data_list), 2)  # Reduced from 3 to 2 for free tier
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all files for processing
+                # Submit all files for processing with geocoding preference
                 future_to_file = {
-                    executor.submit(process_single_file_in_batch, file_data, batch_id): file_data['filename']
+                    executor.submit(process_single_file_in_batch, file_data, batch_id, use_google_api): file_data['filename']
                     for file_data in file_data_list
                 }
 
@@ -1734,7 +1746,7 @@ def upload_batch():
             results = []
             for file_data in file_data_list:
                 try:
-                    result = process_single_file_in_batch(file_data, batch_id)
+                    result = process_single_file_in_batch(file_data, batch_id, use_google_api)
                     results.append(result)
                 except Exception as e:
                     error_result = {
@@ -1968,6 +1980,10 @@ def upload_file():
         if re.search(r'[<>:"|?*]|\.\.', file.filename):
             return jsonify({'error': 'Invalid characters in filename.'}), 400
 
+        # Extract geocoding preference (default: True)
+        use_google_api = request.form.get('use_google_api', 'true').lower() == 'true'
+        logger.info(f"Single upload - Google Maps API geocoding: {'ENABLED' if use_google_api else 'DISABLED'}")
+
         # Generate unique job ID
         job_id = str(uuid.uuid4())
 
@@ -1988,8 +2004,8 @@ def upload_file():
             logger.warning(f"File validation failed for {file.filename}: {validation_error}")
             return jsonify({'error': 'Invalid Excel file. File appears to be corrupted or not a valid Excel format.'}), 400
 
-        # Transform file with multi-sheet support
-        result = ExcelTransformer.transform_excel_multi_sheet(input_path, PROCESSED_FOLDER, job_id)
+        # Transform file with multi-sheet support and geocoding preference
+        result = ExcelTransformer.transform_excel_multi_sheet(input_path, PROCESSED_FOLDER, job_id, use_google_api)
 
         if result['success']:
             # Build download URLs for each output file

@@ -11,9 +11,12 @@ class ApiService {
     });
   }
 
-  async uploadFile(file) {
+  async uploadFile(file, useGoogleMapsApi = true) {
     const formData = new FormData();
     formData.append('file', file);
+
+    // Add geocoding preference to form data
+    formData.append('use_google_api', useGoogleMapsApi ? 'true' : 'false');
 
     try {
       const response = await this.api.post('/upload', formData, {
@@ -22,7 +25,6 @@ class ApiService {
         },
         onUploadProgress: (progressEvent) => {
           // Upload progress tracking (can be used for UI progress bars)
-          // TODO: Implement progress callback if needed
           console.log(`Upload progress: ${Math.round((progressEvent.loaded * 100) / progressEvent.total)}%`);
         },
       });
@@ -40,11 +42,14 @@ class ApiService {
     }
   }
 
-  async uploadBatch(files) {
+  async uploadBatch(files, useGoogleMapsApi = true) {
     const formData = new FormData();
     files.forEach(file => {
       formData.append('files', file);
     });
+
+    // Add geocoding preference to form data
+    formData.append('use_google_api', useGoogleMapsApi ? 'true' : 'false');
 
     try {
       const response = await this.api.post('/upload/batch', formData, {
@@ -54,7 +59,6 @@ class ApiService {
         timeout: 600000, // 10 minutes for batch processing
         onUploadProgress: (progressEvent) => {
           // Batch upload progress tracking
-          // TODO: Implement progress callback if needed
           console.log(`Batch upload progress: ${Math.round((progressEvent.loaded * 100) / progressEvent.total)}%`);
         },
       });
