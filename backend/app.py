@@ -53,12 +53,143 @@ POSTAL_CODE_PATHS = [
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 
+# Global postal code lookup - loaded once at module startup
+_POSTAL_CODE_LOOKUP_CACHE = None
+
+def _load_postal_code_lookup_once():
+    """Load postal code lookup table once at module level - shared across all instances"""
+    global _POSTAL_CODE_LOOKUP_CACHE
+
+    if _POSTAL_CODE_LOOKUP_CACHE is not None:
+        return _POSTAL_CODE_LOOKUP_CACHE
+
+    try:
+        logger.info("=" * 60)
+        logger.info("POSTAL CODE LOOKUP INITIALIZATION")
+        logger.info("=" * 60)
+
+        # Log all paths being checked
+        logger.info(f"Checking {len(POSTAL_CODE_PATHS)} postal code file paths:")
+        for idx, path in enumerate(POSTAL_CODE_PATHS, 1):
+            if path:
+                exists = os.path.exists(path)
+                logger.info(f"  {idx}. {path} - {'EXISTS' if exists else 'NOT FOUND'}")
+            else:
+                logger.info(f"  {idx}. (None/Empty)")
+
+        # Try each path in order of preference with fast fail
+        master_file_path = None
+        for path in POSTAL_CODE_PATHS:
+            if path and os.path.exists(path):
+                # Quick file size check to avoid loading huge files
+                try:
+                    file_size = os.path.getsize(path)
+                    if file_size > 50 * 1024 * 1024:  # Skip files > 50MB
+                        logger.warning(f"Postal Code Lookup: File too large ({file_size/1024/1024:.1f}MB), skipping: {path}")
+                        continue
+                    logger.info(f"Selected postal code file: {path} ({file_size/1024:.1f} KB)")
+                    master_file_path = path
+                    break
+                except OSError as e:
+                    logger.warning(f"Error accessing {path}: {e}")
+                    continue
+
+        if not master_file_path:
+            logger.warning("Postal Code Lookup: NO SUITABLE FILE FOUND - Using Google Maps API only")
+            logger.info("=" * 60)
+            _POSTAL_CODE_LOOKUP_CACHE = {}
+            return _POSTAL_CODE_LOOKUP_CACHE
+
+        logger.info(f"Loading postal code data...")
+
+        # Detect file type and load accordingly
+        file_extension = os.path.splitext(master_file_path)[1].lower()
+        logger.info(f"File format: {file_extension.upper()}")
+
+        if file_extension == '.csv':
+            df = pd.read_csv(master_file_path, dtype={'postal_code': str})
+            postal_col = 'postal_code'
+            lat_col = 'Latitude'
+            lng_col = 'Longitude'
+        else:  # Excel format (.xlsx, .xls)
+            df = pd.read_excel(master_file_path, dtype={'PostalCode': str})
+            postal_col = 'PostalCode'
+            lat_col = 'Latitude'
+            lng_col = 'Longitude'
+
+        total_rows = len(df)
+        logger.info(f"Total rows in file: {total_rows:,}")
+        logger.info(f"Columns: {postal_col}, {lat_col}, {lng_col}")
+
+        # Create dictionary for fast lookup: {postal_code: (lat, lng)}
+        lookup = {}
+        row_count = 0
+        skipped_rows = 0
+        sample_codes = []
+
+        for _, row in df.iterrows():
+            row_count += 1
+            if row_count % 20000 == 0:  # Progress indicator (adjusted for larger files)
+                logger.info(f"Processing row {row_count:,}/{total_rows:,} ({row_count*100//total_rows}%)...")
+
+            # Handle postal code formatting
+            postal_code_raw = row.get(postal_col)
+            if pd.notna(postal_code_raw) and postal_code_raw:
+                try:
+                    # Ensure 6-digit format (handles 5-digit codes by adding leading zero)
+                    if isinstance(postal_code_raw, str):
+                        postal_code = postal_code_raw.strip().zfill(6)
+                    else:
+                        postal_code = f"{int(float(postal_code_raw)):06d}"
+                except (ValueError, TypeError):
+                    skipped_rows += 1
+                    continue
+            else:
+                skipped_rows += 1
+                continue
+
+            lat = row.get(lat_col)
+            lng = row.get(lng_col)
+            if pd.notna(lat) and pd.notna(lng):
+                try:
+                    lookup[postal_code] = (float(lat), float(lng))
+                    # Store first 3 postal codes as samples
+                    if len(sample_codes) < 3:
+                        sample_codes.append((postal_code, lat, lng))
+                except (ValueError, TypeError):
+                    skipped_rows += 1
+                    continue
+            else:
+                skipped_rows += 1
+
+        logger.info("=" * 60)
+        logger.info(f"POSTAL CODE LOADING COMPLETE")
+        logger.info(f"Successfully loaded: {len(lookup):,} postal codes")
+        logger.info(f"Skipped rows: {skipped_rows:,}")
+        logger.info(f"Coverage: {len(lookup)*100//total_rows}% of file rows")
+
+        # Log sample postal codes for verification
+        if sample_codes:
+            logger.info(f"Sample postal codes loaded:")
+            for code, lat, lng in sample_codes:
+                logger.info(f"  {code}: ({lat}, {lng})")
+
+        logger.info("=" * 60)
+        _POSTAL_CODE_LOOKUP_CACHE = lookup
+        return _POSTAL_CODE_LOOKUP_CACHE
+
+    except Exception as e:
+        logger.error(f"Postal Code Lookup: FAILED - {e}")
+        logger.warning("Continuing without postal code lookup, using Google Maps API only")
+        _POSTAL_CODE_LOOKUP_CACHE = {}
+        return _POSTAL_CODE_LOOKUP_CACHE
+
 class GeocodingService:
     def __init__(self, use_google_api=True):
         self.use_google_api = use_google_api
         self.google_api_key = os.getenv('GOOGLE_MAPS_API_KEY')
         self._initialize_google_maps_clients()
-        self.postal_code_lookup = self._load_postal_code_lookup()
+        self.postal_code_lookup = _load_postal_code_lookup_once()  # Use shared global lookup
         self.geocode_stats = {'postal_matches': 0, 'api_calls': 0, 'failures': 0}
     
     def _initialize_google_maps_clients(self):
@@ -83,128 +214,6 @@ class GeocodingService:
             logger.error(f"Google Maps API: FAILED - {e}")
             self.gmaps = None
             self.geolocator = None
-    
-    
-    @lru_cache(maxsize=1)
-    def _load_postal_code_lookup(self):
-        """Load postal code lookup table from master file - works in both local and deployment"""
-        try:
-            logger.info("=" * 60)
-            logger.info("POSTAL CODE LOOKUP INITIALIZATION")
-            logger.info("=" * 60)
-
-            # Log all paths being checked
-            logger.info(f"Checking {len(POSTAL_CODE_PATHS)} postal code file paths:")
-            for idx, path in enumerate(POSTAL_CODE_PATHS, 1):
-                if path:
-                    exists = os.path.exists(path)
-                    logger.info(f"  {idx}. {path} - {'EXISTS' if exists else 'NOT FOUND'}")
-                else:
-                    logger.info(f"  {idx}. (None/Empty)")
-
-            # Try each path in order of preference with fast fail
-            master_file_path = None
-            for path in POSTAL_CODE_PATHS:
-                if path and os.path.exists(path):
-                    # Quick file size check to avoid loading huge files
-                    try:
-                        file_size = os.path.getsize(path)
-                        if file_size > 50 * 1024 * 1024:  # Skip files > 50MB
-                            logger.warning(f"Postal Code Lookup: File too large ({file_size/1024/1024:.1f}MB), skipping: {path}")
-                            continue
-                        logger.info(f"Selected postal code file: {path} ({file_size/1024:.1f} KB)")
-                        master_file_path = path
-                        break
-                    except OSError as e:
-                        logger.warning(f"Error accessing {path}: {e}")
-                        continue
-
-            if not master_file_path:
-                logger.warning("Postal Code Lookup: NO SUITABLE FILE FOUND - Using Google Maps API only")
-                logger.info("=" * 60)
-                return {}
-
-            logger.info(f"Loading postal code data...")
-
-            # Detect file type and load accordingly
-            file_extension = os.path.splitext(master_file_path)[1].lower()
-            logger.info(f"File format: {file_extension.upper()}")
-
-            if file_extension == '.csv':
-                df = pd.read_csv(master_file_path, dtype={'postal_code': str})
-                postal_col = 'postal_code'
-                lat_col = 'Latitude'
-                lng_col = 'Longitude'
-            else:  # Excel format (.xlsx, .xls)
-                df = pd.read_excel(master_file_path, dtype={'PostalCode': str})
-                postal_col = 'PostalCode'
-                lat_col = 'Latitude'
-                lng_col = 'Longitude'
-
-            total_rows = len(df)
-            logger.info(f"Total rows in file: {total_rows:,}")
-            logger.info(f"Columns: {postal_col}, {lat_col}, {lng_col}")
-
-            # Create dictionary for fast lookup: {postal_code: (lat, lng)}
-            lookup = {}
-            row_count = 0
-            skipped_rows = 0
-            sample_codes = []
-
-            for _, row in df.iterrows():
-                row_count += 1
-                if row_count % 20000 == 0:  # Progress indicator (adjusted for larger files)
-                    logger.info(f"Processing row {row_count:,}/{total_rows:,} ({row_count*100//total_rows}%)...")
-
-                # Handle postal code formatting
-                postal_code_raw = row.get(postal_col)
-                if pd.notna(postal_code_raw) and postal_code_raw:
-                    try:
-                        # Ensure 6-digit format (handles 5-digit codes by adding leading zero)
-                        if isinstance(postal_code_raw, str):
-                            postal_code = postal_code_raw.strip().zfill(6)
-                        else:
-                            postal_code = f"{int(float(postal_code_raw)):06d}"
-                    except (ValueError, TypeError):
-                        skipped_rows += 1
-                        continue
-                else:
-                    skipped_rows += 1
-                    continue
-
-                lat = row.get(lat_col)
-                lng = row.get(lng_col)
-                if pd.notna(lat) and pd.notna(lng):
-                    try:
-                        lookup[postal_code] = (float(lat), float(lng))
-                        # Store first 3 postal codes as samples
-                        if len(sample_codes) < 3:
-                            sample_codes.append((postal_code, lat, lng))
-                    except (ValueError, TypeError):
-                        skipped_rows += 1
-                        continue
-                else:
-                    skipped_rows += 1
-
-            logger.info("=" * 60)
-            logger.info(f"POSTAL CODE LOADING COMPLETE")
-            logger.info(f"Successfully loaded: {len(lookup):,} postal codes")
-            logger.info(f"Skipped rows: {skipped_rows:,}")
-            logger.info(f"Coverage: {len(lookup)*100//total_rows}% of file rows")
-
-            # Log sample postal codes for verification
-            if sample_codes:
-                logger.info(f"Sample postal codes loaded:")
-                for code, lat, lng in sample_codes:
-                    logger.info(f"  {code}: ({lat}, {lng})")
-
-            logger.info("=" * 60)
-            return lookup
-
-        except Exception as e:
-            logger.error(f"Postal Code Lookup: FAILED - {e}")
-            logger.warning("Continuing without postal code lookup, using Google Maps API only")
-            return {}
     
     def geocode_by_postal_code(self, postal_code):
         """Get coordinates by postal code lookup"""
