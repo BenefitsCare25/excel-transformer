@@ -231,6 +231,174 @@ class GeocodingService:
 
 class ExcelTransformer:
     @staticmethod
+    def detect_alliance_tokio_format(ws):
+        """
+        Detect Alliance-Tokio Marine format by checking:
+        1. Merged cell K1:N1 (operating hours disclaimer)
+        2. Row 1 has 'POSTAL\\nCODE' or 'POSTAL CODE' header
+        3. Row 2 has 'MON - FRI' sub-header
+        4. ZONE and ESTATE columns present
+        """
+        try:
+            # Check for merged cells pattern
+            has_operating_hours_merge = False
+            for merged_range in ws.merged_cells.ranges:
+                range_str = str(merged_range)
+                if 'K1:N1' in range_str or 'K1' in range_str:
+                    has_operating_hours_merge = True
+                    break
+
+            # Check row 1 headers
+            row1 = [cell.value for cell in ws[1]]
+            has_postal_code = any(
+                'POSTAL' in str(h).upper() for h in row1 if h
+            )
+            has_zone_estate = (
+                any('ZONE' in str(h).upper() for h in row1 if h) and
+                any('ESTATE' in str(h).upper() for h in row1 if h)
+            )
+
+            # Check row 2 sub-headers
+            row2 = [cell.value for cell in ws[2]]
+            has_mon_fri_subheader = any('MON - FRI' in str(h) for h in row2 if h)
+
+            is_alliance_tokio = (
+                has_operating_hours_merge and
+                has_postal_code and
+                has_zone_estate and
+                has_mon_fri_subheader
+            )
+
+            if is_alliance_tokio:
+                logger.info("Detected Alliance-Tokio Marine format (multi-level headers with merged cells)")
+
+            return is_alliance_tokio
+
+        except Exception as e:
+            logger.debug(f"Alliance-Tokio format detection failed: {e}")
+            return False
+
+    @staticmethod
+    def unmerge_and_fill_cells(ws):
+        """
+        Unmerge all cells and fill merged cell values into all cells in the range.
+        This ensures row-by-row reading works correctly.
+        """
+        import openpyxl
+
+        # Get all merged ranges (need to copy list as we'll modify it)
+        merged_ranges = list(ws.merged_cells.ranges)
+
+        logger.info(f"Unmerging {len(merged_ranges)} merged cell ranges")
+
+        for merged_range in merged_ranges:
+            # Get the value from top-left cell
+            top_left = merged_range.start_cell
+            merge_value = top_left.value
+
+            # Unmerge the range
+            ws.unmerge_cells(str(merged_range))
+
+            # Fill the value into all cells that were part of the merge
+            for row in range(merged_range.min_row, merged_range.max_row + 1):
+                for col in range(merged_range.min_col, merged_range.max_col + 1):
+                    ws.cell(row=row, column=col).value = merge_value
+
+        return ws
+
+    @staticmethod
+    def get_alliance_tokio_headers(ws):
+        """
+        Reconstruct headers from unmerged rows 1-2.
+        For most columns: use row 1 value
+        For columns K-N: use row 2 values (MON-FRI, SAT, SUN, PUBLIC HOLIDAYS)
+        """
+        headers = []
+
+        for col_idx in range(1, 16):  # Columns A-O (1-15)
+            if col_idx <= 10 or col_idx == 15:  # Columns A-J and O
+                # Use row 1 value, clean it
+                value = ws.cell(row=1, column=col_idx).value
+                if value:
+                    value = str(value).replace('\n', ' ').replace('\r', ' ').strip()
+                headers.append(value)
+            else:  # Columns K-N (11-14)
+                # Use row 2 sub-headers for operating hours
+                value = ws.cell(row=2, column=col_idx).value
+                if value:
+                    value = str(value).strip()
+                headers.append(value)
+
+        logger.debug(f"Alliance-Tokio headers: {headers}")
+        return headers
+
+    @staticmethod
+    def convert_alliance_hours_to_standard(mon_fri, sat, sun, ph):
+        """
+        Convert Alliance-Tokio operating hours format to standard AM/PM/NIGHT format.
+
+        Alliance format: 4 columns with detailed hours or "Closed"
+        Standard format: "AM hours/PM hours/NIGHT hours" or "CLOSED/CLOSED/CLOSED"
+
+        Strategy: Extract time ranges and categorize into AM/PM/NIGHT slots
+        """
+        def parse_time_slots(hours_str):
+            """Parse hours string into AM/PM/NIGHT slots"""
+            if pd.isna(hours_str) or str(hours_str).strip().upper() in ('CLOSED', '', 'NAN'):
+                return 'CLOSED', 'CLOSED', 'CLOSED'
+
+            hours_str = str(hours_str).strip()
+
+            # Extract all time ranges
+            import re
+            time_pattern = r'(\d{1,2}[:.]\d{2}\s*(?:am|pm))\s*-\s*(\d{1,2}[:.]\d{2}\s*(?:am|pm))'
+            matches = re.findall(time_pattern, hours_str, re.IGNORECASE)
+
+            if not matches:
+                # No parseable times, return as-is for AM slot
+                return hours_str, 'CLOSED', 'CLOSED'
+
+            am_slots = []
+            pm_slots = []
+            night_slots = []
+
+            for start, end in matches:
+                # Parse start time
+                start_clean = start.lower().replace('.', ':')
+
+                # Categorize by start time
+                if 'am' in start_clean or ('12:' in start_clean and 'pm' in start_clean):
+                    # Morning slot (before noon)
+                    am_slots.append(f"{start} - {end}")
+                elif '6' in start_clean.split(':')[0] and 'pm' in start_clean:
+                    # Evening/Night slot (6pm or later)
+                    night_slots.append(f"{start} - {end}")
+                else:
+                    # Afternoon slot
+                    pm_slots.append(f"{start} - {end}")
+
+            # Combine slots
+            am_result = ', '.join(am_slots) if am_slots else 'CLOSED'
+            pm_result = ', '.join(pm_slots) if pm_slots else 'CLOSED'
+            night_result = ', '.join(night_slots) if night_slots else 'CLOSED'
+
+            return am_result, pm_result, night_result
+
+        # Parse each day type
+        mon_fri_am, mon_fri_pm, mon_fri_night = parse_time_slots(mon_fri)
+        sat_am, sat_pm, sat_night = parse_time_slots(sat)
+        sun_am, sun_pm, sun_night = parse_time_slots(sun)
+        ph_am, ph_pm, ph_night = parse_time_slots(ph)
+
+        # Build standard format strings
+        weekday = f"{mon_fri_am}/{mon_fri_pm}/{mon_fri_night}"
+        saturday = f"{sat_am}/{sat_pm}/{sat_night}"
+        sunday = f"{sun_am}/{sun_pm}/{sun_night}"
+        holiday = f"{ph_am}/{ph_pm}/{ph_night}"
+
+        return weekday, saturday, sunday, holiday
+
+    @staticmethod
     def safe_read_excel(file_path, sheet_name=None, **kwargs):
         """Safely read Excel file with fallback for corrupted XML metadata"""
         try:
@@ -341,7 +509,8 @@ class ExcelTransformer:
                 'sp list', 'sp clinic', 'specialist',      # Specialist patterns
                 'sg', 'my', 'msia', 'malaysia', 'singapore', # Country patterns
                 'blue', 'red', 'flexi', 'aia',            # Plan type patterns
-                'medical', 'health', 'doctor'             # Healthcare patterns
+                'medical', 'health', 'doctor',             # Healthcare patterns
+                'alliance', 'tokio', 'marine', 'provider'  # Insurance/Provider patterns
             ]):
                 panel_sheets.append(sheet)
 
@@ -854,13 +1023,45 @@ class ExcelTransformer:
         try:
             # Initialize geocoding service
             geocoding_service = GeocodingService()
-            
-            # Find the correct header row for this sheet
-            header_row = ExcelTransformer.find_header_row(input_path, sheet_name)
 
-            # Read the source sheet
-            df_source = ExcelTransformer.safe_read_excel(input_path, sheet_name=sheet_name, header=header_row)
-            df_source.columns = df_source.columns.str.strip()
+            # Check if this is Alliance-Tokio Marine format
+            import openpyxl
+            wb = openpyxl.load_workbook(input_path)
+            ws = wb[sheet_name]
+
+            is_alliance_tokio = ExcelTransformer.detect_alliance_tokio_format(ws)
+
+            if is_alliance_tokio:
+                logger.info(f"Processing Alliance-Tokio Marine format for sheet: {sheet_name}")
+
+                # Unmerge cells and fill values
+                ws = ExcelTransformer.unmerge_and_fill_cells(ws)
+
+                # Save to temporary file
+                import tempfile
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+                wb.save(temp_file.name)
+                temp_file.close()
+
+                # Read with pandas (data starts at row 3, after headers at rows 1-2)
+                df_source = pd.read_excel(temp_file.name, sheet_name=sheet_name, header=None, skiprows=2)
+
+                # Set column names from reconstructed headers
+                headers = ExcelTransformer.get_alliance_tokio_headers(ws)
+                df_source.columns = headers[:len(df_source.columns)]
+
+                # Clean up temp file
+                import os
+                os.unlink(temp_file.name)
+
+                header_row = None  # Already handled
+            else:
+                # Standard format - find the correct header row
+                header_row = ExcelTransformer.find_header_row(input_path, sheet_name)
+
+                # Read the source sheet
+                df_source = ExcelTransformer.safe_read_excel(input_path, sheet_name=sheet_name, header=header_row)
+                df_source.columns = df_source.columns.str.strip()
             
             # Create transformed dataframe
             df_transformed = pd.DataFrame()
@@ -878,6 +1079,19 @@ class ExcelTransformer:
                     logger.info(f"Successfully inferred columns for sheet '{sheet_name}'")
                 else:
                     raise ValueError(f"Sheet '{sheet_name}' missing required 'clinic name' column after inference attempt")
+
+            # Filter out metadata rows for Alliance-Tokio format
+            if is_alliance_tokio:
+                initial_count = len(df_source)
+                # Filter out rows where ZONE contains metadata keywords
+                metadata_keywords = ['Legend:', 'Remarks', '24 Hours', 'Newly joined', 'JB Clinics', 'clinic']
+                zone_col = 'ZONE'
+                if zone_col in df_source.columns:
+                    metadata_mask = df_source[zone_col].astype(str).str.contains('|'.join(metadata_keywords), case=False, na=False)
+                    df_source = df_source[~metadata_mask]
+                    filtered_metadata = initial_count - len(df_source)
+                    if filtered_metadata > 0:
+                        logger.info(f"Filtered out {filtered_metadata} metadata rows from Alliance-Tokio sheet")
 
             # Filter out terminated clinics if provided
             terminated_count = 0
@@ -1019,12 +1233,42 @@ class ExcelTransformer:
                     df_transformed['PhoneNumber'] = df_source[col_map['telephone']].astype(str)
             else:
                 df_transformed['PhoneNumber'] = ''
-            
-            # Operating hours (flexible mapping)
-            df_transformed['MonToFri'] = ExcelTransformer.combine_operating_hours_flexible(df_source, col_map, 'weekday')
-            df_transformed['Saturday'] = ExcelTransformer.combine_operating_hours_flexible(df_source, col_map, 'saturday')
-            df_transformed['Sunday'] = ExcelTransformer.combine_operating_hours_flexible(df_source, col_map, 'sunday')
-            df_transformed['PublicHoliday'] = ExcelTransformer.combine_operating_hours_flexible(df_source, col_map, 'public_holiday')
+
+            # Operating hours handling
+            if is_alliance_tokio:
+                # Alliance-Tokio format: Convert 4-column format to AM/PM/NIGHT
+                logger.info("Converting Alliance-Tokio operating hours to standard AM/PM/NIGHT format")
+
+                weekdays = []
+                saturdays = []
+                sundays = []
+                holidays = []
+
+                for _, row in df_source.iterrows():
+                    mon_fri = row.get('MON - FRI', '')
+                    sat = row.get('SAT', '')
+                    sun = row.get('SUN', '')
+                    ph = row.get('PUBLIC HOLIDAYS', '')
+
+                    wd, sat_result, sun_result, hol_result = ExcelTransformer.convert_alliance_hours_to_standard(
+                        mon_fri, sat, sun, ph
+                    )
+
+                    weekdays.append(wd)
+                    saturdays.append(sat_result)
+                    sundays.append(sun_result)
+                    holidays.append(hol_result)
+
+                df_transformed['MonToFri'] = weekdays
+                df_transformed['Saturday'] = saturdays
+                df_transformed['Sunday'] = sundays
+                df_transformed['PublicHoliday'] = holidays
+            else:
+                # Standard format: flexible mapping
+                df_transformed['MonToFri'] = ExcelTransformer.combine_operating_hours_flexible(df_source, col_map, 'weekday')
+                df_transformed['Saturday'] = ExcelTransformer.combine_operating_hours_flexible(df_source, col_map, 'saturday')
+                df_transformed['Sunday'] = ExcelTransformer.combine_operating_hours_flexible(df_source, col_map, 'sunday')
+                df_transformed['PublicHoliday'] = ExcelTransformer.combine_operating_hours_flexible(df_source, col_map, 'public_holiday')
             
             # Geocoding: Populate Latitude and Longitude
             latitudes = []
@@ -1145,27 +1389,89 @@ class ExcelTransformer:
                 result = ExcelTransformer.transform_sheet(input_path, sheet, terminated_ids)
 
                 if result['success']:
-                    # Generate output filename
-                    sanitized_name = ExcelTransformer.sanitize_filename(sheet)
-                    output_filename = f"{job_id}_{sanitized_name}.xlsx"
-                    output_path = os.path.join(output_dir, output_filename)
+                    df = result['dataframe']
 
-                    # Save the transformed dataframe
-                    result['dataframe'].to_excel(output_path, index=False)
+                    # Check if this sheet has mixed Singapore/Malaysia data
+                    has_country_column = 'Country' in df.columns
+                    has_mixed_countries = False
 
-                    # Store result info
-                    sheet_result = {
-                        'sheet_name': sheet,
-                        'output_filename': output_filename,
-                        'output_path': output_path,
-                        'records_processed': result['records_processed'],
-                        'terminated_clinics_filtered': result['terminated_clinics_filtered'],
-                        'geocoding_stats': result['geocoding_stats']
-                    }
-                    results.append(sheet_result)
-                    output_files.append(output_filename)
+                    if has_country_column:
+                        countries = df['Country'].unique()
+                        has_mixed_countries = len([c for c in countries if c in ['SINGAPORE', 'MALAYSIA']]) > 1
+                        logger.info(f"Sheet '{sheet}' countries detected: {list(countries)}")
 
-                    logger.info(f"SUCCESS: Processed sheet '{sheet}': {result['records_processed']} records")
+                    if has_mixed_countries:
+                        # Separate Singapore and Malaysia clinics
+                        df_sg = df[df['Country'] == 'SINGAPORE'].copy()
+                        df_my = df[df['Country'] == 'MALAYSIA'].copy()
+
+                        logger.info(f"Separating sheet '{sheet}': {len(df_sg)} Singapore clinics, {len(df_my)} Malaysia clinics")
+
+                        # Save Singapore file
+                        if len(df_sg) > 0:
+                            sanitized_name = ExcelTransformer.sanitize_filename(sheet)
+                            sg_filename = f"{job_id}_{sanitized_name}_Singapore.xlsx"
+                            sg_path = os.path.join(output_dir, sg_filename)
+                            df_sg.to_excel(sg_path, index=False)
+
+                            results.append({
+                                'sheet_name': f"{sheet} (Singapore)",
+                                'output_filename': sg_filename,
+                                'output_path': sg_path,
+                                'records_processed': len(df_sg),
+                                'terminated_clinics_filtered': result['terminated_clinics_filtered'],
+                                'geocoding_stats': {
+                                    'total_records': len(df_sg),
+                                    'successful_geocodes': df_sg['Latitude'].notna().sum(),
+                                    'success_rate': f"{(df_sg['Latitude'].notna().sum()/len(df_sg)*100):.1f}%"
+                                }
+                            })
+                            output_files.append(sg_filename)
+
+                        # Save Malaysia file
+                        if len(df_my) > 0:
+                            sanitized_name = ExcelTransformer.sanitize_filename(sheet)
+                            my_filename = f"{job_id}_{sanitized_name}_Malaysia.xlsx"
+                            my_path = os.path.join(output_dir, my_filename)
+                            df_my.to_excel(my_path, index=False)
+
+                            results.append({
+                                'sheet_name': f"{sheet} (Malaysia)",
+                                'output_filename': my_filename,
+                                'output_path': my_path,
+                                'records_processed': len(df_my),
+                                'terminated_clinics_filtered': 0,
+                                'geocoding_stats': {
+                                    'total_records': len(df_my),
+                                    'successful_geocodes': df_my['Latitude'].notna().sum(),
+                                    'success_rate': f"{(df_my['Latitude'].notna().sum()/len(df_my)*100):.1f}%"
+                                }
+                            })
+                            output_files.append(my_filename)
+
+                        logger.info(f"SUCCESS: Separated sheet '{sheet}' into Singapore ({len(df_sg)} records) and Malaysia ({len(df_my)} records)")
+                    else:
+                        # Single country or no country column - save as one file
+                        sanitized_name = ExcelTransformer.sanitize_filename(sheet)
+                        output_filename = f"{job_id}_{sanitized_name}.xlsx"
+                        output_path = os.path.join(output_dir, output_filename)
+
+                        # Save the transformed dataframe
+                        df.to_excel(output_path, index=False)
+
+                        # Store result info
+                        sheet_result = {
+                            'sheet_name': sheet,
+                            'output_filename': output_filename,
+                            'output_path': output_path,
+                            'records_processed': result['records_processed'],
+                            'terminated_clinics_filtered': result['terminated_clinics_filtered'],
+                            'geocoding_stats': result['geocoding_stats']
+                        }
+                        results.append(sheet_result)
+                        output_files.append(output_filename)
+
+                        logger.info(f"SUCCESS: Processed sheet '{sheet}': {result['records_processed']} records")
                 else:
                     logger.error(f"FAILED: Could not process sheet '{sheet}': {result['message']}")
                     return {
