@@ -13,7 +13,7 @@ services:
       - key: FLASK_APP
         value: app.py
       - key: POSTAL_CODE_MASTER_FILE
-        value: ../data/postal_code_master.xlsx
+        value: ../data/SG_postal.csv
       - key: PYTHONUNBUFFERED
         value: "1"
     healthCheckPath: /health

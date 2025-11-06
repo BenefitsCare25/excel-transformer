@@ -44,7 +44,8 @@ PROCESSED_FOLDER = os.getenv('PROCESSED_FOLDER', 'processed')
 # Postal code master file paths (in order of preference)
 POSTAL_CODE_PATHS = [
     os.getenv('POSTAL_CODE_MASTER_FILE'),  # Environment variable (highest priority)
-    os.path.join('..', 'data', 'postal_code_master.xlsx'),  # Project data folder
+    os.path.join('..', 'data', 'SG_postal.csv'),  # Full SG postal codes CSV (121K+ codes)
+    os.path.join('..', 'data', 'postal_code_master.xlsx'),  # Project data folder (fallback)
     os.getenv('POSTAL_CODE_FALLBACK_PATH'),  # Configurable fallback path
     'postal_code_master.xlsx',  # Current directory
 ]
@@ -86,13 +87,20 @@ class GeocodingService:
     
     @lru_cache(maxsize=1)
     def _load_postal_code_lookup(self):
-        """Load postal code lookup table from master file - deployment safe"""
+        """Load postal code lookup table from master file - works in both local and deployment"""
         try:
-            # Quick check - if we're in a deployment environment (no local files), skip immediately
-            is_deployment = os.getenv('RENDER') or os.getenv('VERCEL') or os.getenv('HEROKU')
-            if is_deployment:
-                logger.info("Postal Code Lookup: DEPLOYMENT MODE - Using Google Maps API only")
-                return {}
+            logger.info("=" * 60)
+            logger.info("POSTAL CODE LOOKUP INITIALIZATION")
+            logger.info("=" * 60)
+
+            # Log all paths being checked
+            logger.info(f"Checking {len(POSTAL_CODE_PATHS)} postal code file paths:")
+            for idx, path in enumerate(POSTAL_CODE_PATHS, 1):
+                if path:
+                    exists = os.path.exists(path)
+                    logger.info(f"  {idx}. {path} - {'EXISTS' if exists else 'NOT FOUND'}")
+                else:
+                    logger.info(f"  {idx}. (None/Empty)")
 
             # Try each path in order of preference with fast fail
             master_file_path = None
@@ -104,51 +112,93 @@ class GeocodingService:
                         if file_size > 50 * 1024 * 1024:  # Skip files > 50MB
                             logger.warning(f"Postal Code Lookup: File too large ({file_size/1024/1024:.1f}MB), skipping: {path}")
                             continue
+                        logger.info(f"Selected postal code file: {path} ({file_size/1024:.1f} KB)")
                         master_file_path = path
                         break
-                    except OSError:
+                    except OSError as e:
+                        logger.warning(f"Error accessing {path}: {e}")
                         continue
 
             if not master_file_path:
                 logger.warning("Postal Code Lookup: NO SUITABLE FILE FOUND - Using Google Maps API only")
+                logger.info("=" * 60)
                 return {}
 
-            logger.info(f"Loading postal code lookup from: {master_file_path}")
+            logger.info(f"Loading postal code data...")
 
-            # Load with chunking for better memory management
-            df = pd.read_excel(master_file_path, dtype={'PostalCode': str})
+            # Detect file type and load accordingly
+            file_extension = os.path.splitext(master_file_path)[1].lower()
+            logger.info(f"File format: {file_extension.upper()}")
+
+            if file_extension == '.csv':
+                df = pd.read_csv(master_file_path, dtype={'postal_code': str})
+                postal_col = 'postal_code'
+                lat_col = 'Latitude'
+                lng_col = 'Longitude'
+            else:  # Excel format (.xlsx, .xls)
+                df = pd.read_excel(master_file_path, dtype={'PostalCode': str})
+                postal_col = 'PostalCode'
+                lat_col = 'Latitude'
+                lng_col = 'Longitude'
+
+            total_rows = len(df)
+            logger.info(f"Total rows in file: {total_rows:,}")
+            logger.info(f"Columns: {postal_col}, {lat_col}, {lng_col}")
 
             # Create dictionary for fast lookup: {postal_code: (lat, lng)}
             lookup = {}
             row_count = 0
+            skipped_rows = 0
+            sample_codes = []
+
             for _, row in df.iterrows():
                 row_count += 1
-                if row_count % 1000 == 0:  # Progress indicator
-                    logger.debug(f"Processing row {row_count}...")
+                if row_count % 20000 == 0:  # Progress indicator (adjusted for larger files)
+                    logger.info(f"Processing row {row_count:,}/{total_rows:,} ({row_count*100//total_rows}%)...")
 
                 # Handle postal code formatting
-                postal_code_raw = row.get('PostalCode')
+                postal_code_raw = row.get(postal_col)
                 if pd.notna(postal_code_raw) and postal_code_raw:
                     try:
-                        # Ensure 6-digit format
+                        # Ensure 6-digit format (handles 5-digit codes by adding leading zero)
                         if isinstance(postal_code_raw, str):
                             postal_code = postal_code_raw.strip().zfill(6)
                         else:
                             postal_code = f"{int(float(postal_code_raw)):06d}"
                     except (ValueError, TypeError):
+                        skipped_rows += 1
                         continue
                 else:
+                    skipped_rows += 1
                     continue
 
-                lat = row.get('Latitude')
-                lng = row.get('Longitude')
+                lat = row.get(lat_col)
+                lng = row.get(lng_col)
                 if pd.notna(lat) and pd.notna(lng):
                     try:
                         lookup[postal_code] = (float(lat), float(lng))
+                        # Store first 3 postal codes as samples
+                        if len(sample_codes) < 3:
+                            sample_codes.append((postal_code, lat, lng))
                     except (ValueError, TypeError):
+                        skipped_rows += 1
                         continue
+                else:
+                    skipped_rows += 1
 
-            logger.info(f"Postal Code Lookup: {len(lookup)} Singapore postal codes loaded successfully")
+            logger.info("=" * 60)
+            logger.info(f"POSTAL CODE LOADING COMPLETE")
+            logger.info(f"Successfully loaded: {len(lookup):,} postal codes")
+            logger.info(f"Skipped rows: {skipped_rows:,}")
+            logger.info(f"Coverage: {len(lookup)*100//total_rows}% of file rows")
+
+            # Log sample postal codes for verification
+            if sample_codes:
+                logger.info(f"Sample postal codes loaded:")
+                for code, lat, lng in sample_codes:
+                    logger.info(f"  {code}: ({lat}, {lng})")
+
+            logger.info("=" * 60)
             return lookup
 
         except Exception as e:
@@ -1179,17 +1229,28 @@ class ExcelTransformer:
                 df_transformed['Address3'] = None
 
             # Extract postal codes from addresses (supports both Singapore and Malaysia)
+            logger.info("=" * 60)
+            logger.info("POSTAL CODE EXTRACTION STARTED")
+            logger.info(f"Total records: {len(df_transformed)}")
+            logger.info(f"Postal code column mapped: {'postal_code' in col_map}")
+            if 'postal_code' in col_map:
+                logger.info(f"  Source column: {col_map['postal_code']}")
+            logger.info("=" * 60)
 
             # Enhanced postal code extraction
             postal_codes = []
+            extraction_methods = {'dedicated_column': 0, 'address4': 0, 'address1': 0, 'failed': 0}
+
             for index, address in enumerate(df_transformed['Address1']):
                 postal_code = None
+                extraction_method = None
 
                 # Try dedicated postal code column first (if it has valid data)
                 if 'postal_code' in col_map:
                     postal_col_value = df_source.iloc[index][col_map['postal_code']]
                     if pd.notna(postal_col_value) and str(postal_col_value).strip() not in ('', 'nan', 'None'):
                         postal_code = str(postal_col_value).strip()
+                        extraction_method = 'dedicated_column'
 
                 # If no valid postal code from dedicated column, extract from address
                 if not postal_code:
@@ -1198,14 +1259,35 @@ class ExcelTransformer:
                         address4_value = df_source.iloc[index].get(col_map['address4'], '')
                         if pd.notna(address4_value) and str(address4_value).strip():
                             postal_code = ExcelTransformer.extract_postal_code(str(address4_value))
+                            if postal_code:
+                                extraction_method = 'address4'
 
                     # Fallback to extracting from combined address
                     if not postal_code and pd.notna(address) and str(address).strip():
                         postal_code = ExcelTransformer.extract_postal_code(address)
+                        if postal_code:
+                            extraction_method = 'address1'
+
+                if extraction_method:
+                    extraction_methods[extraction_method] += 1
+                else:
+                    extraction_methods['failed'] += 1
 
                 postal_codes.append(postal_code)
 
             df_transformed['PostalCode'] = postal_codes
+
+            # Log extraction results
+            logger.info("=" * 60)
+            logger.info("POSTAL CODE EXTRACTION COMPLETE")
+            logger.info(f"Extraction results:")
+            logger.info(f"  From dedicated column: {extraction_methods['dedicated_column']}")
+            logger.info(f"  From Address4 field: {extraction_methods['address4']}")
+            logger.info(f"  From Address1 field: {extraction_methods['address1']}")
+            logger.info(f"  Failed extractions: {extraction_methods['failed']}")
+            total_extracted = extraction_methods['dedicated_column'] + extraction_methods['address4'] + extraction_methods['address1']
+            logger.info(f"Success rate: {(total_extracted/len(df_transformed)*100):.1f}%" if len(df_transformed) > 0 else "N/A")
+            logger.info("=" * 60)
 
             # Detect country from address information
             def detect_country(address):
@@ -1279,19 +1361,38 @@ class ExcelTransformer:
                 df_transformed['PublicHoliday'] = ExcelTransformer.combine_operating_hours_flexible(df_source, col_map, 'public_holiday')
             
             # Geocoding: Populate Latitude and Longitude
+            logger.info("=" * 60)
+            logger.info(f"GEOCODING PROCESS STARTED - Sheet: {sheet_name}")
+            logger.info(f"Total records to geocode: {len(df_transformed)}")
+            logger.info("=" * 60)
+
             latitudes = []
             longitudes = []
             geocoding_methods = []
-            
+
+            # Log sample of postal codes being processed
+            sample_size = min(3, len(df_transformed))
+            if sample_size > 0:
+                logger.info(f"Sample postal codes extracted:")
+                for i in range(sample_size):
+                    postal = df_transformed.iloc[i]['PostalCode']
+                    addr = df_transformed.iloc[i]['Address1']
+                    logger.info(f"  Row {i+1}: PostalCode='{postal}', Address='{addr[:50]}...' " if len(str(addr)) > 50 else f"  Row {i+1}: PostalCode='{postal}', Address='{addr}'")
+
             for index, row in df_transformed.iterrows():
                 postal_code = row['PostalCode']
                 address = row['Address1']
-                
+
                 lat, lng, method = geocoding_service.geocode(postal_code, address)
                 latitudes.append(lat)
                 longitudes.append(lng)
                 geocoding_methods.append(method)
-            
+
+                # Log progress every 50 records
+                if (index + 1) % 50 == 0:
+                    success_count = sum(1 for l in latitudes if l is not None)
+                    logger.info(f"Geocoding progress: {index + 1}/{len(df_transformed)} records ({success_count} successful)")
+
             df_transformed['Latitude'] = latitudes
             df_transformed['Longitude'] = longitudes
             
@@ -1313,7 +1414,31 @@ class ExcelTransformer:
             successful_geocodes = sum(1 for lat in latitudes if lat is not None)
             postal_matches = len([m for m in geocoding_methods if m == 'postal_code'])
             address_matches = len([m for m in geocoding_methods if m == 'address'])
-            
+            failed_geocodes = len(df_transformed) - successful_geocodes
+            success_rate = (successful_geocodes/len(df_transformed)*100) if len(df_transformed) > 0 else 0
+
+            # Log final geocoding statistics
+            logger.info("=" * 60)
+            logger.info(f"GEOCODING COMPLETE - Sheet: {sheet_name}")
+            logger.info(f"Total records processed: {len(df_transformed)}")
+            logger.info(f"Successful geocodes: {successful_geocodes} ({success_rate:.1f}%)")
+            logger.info(f"  - Via postal code lookup: {postal_matches}")
+            logger.info(f"  - Via Google Maps API: {address_matches}")
+            logger.info(f"Failed geocodes: {failed_geocodes}")
+
+            if failed_geocodes > 0:
+                # Log sample of failed postal codes for debugging
+                failed_samples = []
+                for idx, (lat, postal, addr) in enumerate(zip(latitudes, df_transformed['PostalCode'], df_transformed['Address1'])):
+                    if lat is None and len(failed_samples) < 3:
+                        failed_samples.append((postal, str(addr)[:40]))
+                if failed_samples:
+                    logger.warning(f"Sample failed postal codes:")
+                    for postal, addr in failed_samples:
+                        logger.warning(f"  PostalCode='{postal}', Address='{addr}...'")
+
+            logger.info("=" * 60)
+
             return {
                 'success': True,
                 'dataframe': df_transformed,
@@ -1325,8 +1450,8 @@ class ExcelTransformer:
                     'successful_geocodes': successful_geocodes,
                     'postal_code_matches': postal_matches,
                     'address_geocodes': address_matches,
-                    'failed_geocodes': len(df_transformed) - successful_geocodes,
-                    'success_rate': f"{(successful_geocodes/len(df_transformed)*100):.1f}%"
+                    'failed_geocodes': failed_geocodes,
+                    'success_rate': f"{success_rate:.1f}%"
                 }
             }
             
