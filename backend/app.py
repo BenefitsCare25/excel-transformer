@@ -1430,7 +1430,7 @@ class ExcelTransformer:
                                 'terminated_clinics_filtered': result['terminated_clinics_filtered'],
                                 'geocoding_stats': {
                                     'total_records': len(df_sg),
-                                    'successful_geocodes': df_sg['Latitude'].notna().sum(),
+                                    'successful_geocodes': int(df_sg['Latitude'].notna().sum()),
                                     'success_rate': f"{(df_sg['Latitude'].notna().sum()/len(df_sg)*100):.1f}%"
                                 }
                             })
@@ -1451,7 +1451,7 @@ class ExcelTransformer:
                                 'terminated_clinics_filtered': 0,
                                 'geocoding_stats': {
                                     'total_records': len(df_my),
-                                    'successful_geocodes': df_my['Latitude'].notna().sum(),
+                                    'successful_geocodes': int(df_my['Latitude'].notna().sum()),
                                     'success_rate': f"{(df_my['Latitude'].notna().sum()/len(df_my)*100):.1f}%"
                                 }
                             })
