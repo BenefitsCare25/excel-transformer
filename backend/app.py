@@ -675,6 +675,7 @@ class ExcelTransformer:
                 'mon - fri (am)', 'monday - friday', 'weekday am', 'mon-fri am',
                 'operating hours\nmon-fri', 'operating hours mon-fri', 'weekdays am',
                 'operating hours \nmon - fri', 'operating hours mon - fri',  # TCM format
+                'operating hours (monday - friday)',  # Income/Adept format
                 'operation hours', 'mon to fri',  # MY GP List format
                 'mon - fri',  # AIA SP format
                 'weekdays'  # AIA dental format - direct weekdays column
@@ -688,15 +689,15 @@ class ExcelTransformer:
             'sat_am': ['sat (am)', 'saturday', 'sat am', 'saturday am'],
             'sat_pm': ['sat (pm)', 'sat pm', 'saturday pm'],
             'sat_night': ['sat (night)', 'sat night', 'saturday night'],
-            'sat_simple': ['sat'],  # Simple Saturday column
+            'sat_simple': ['sat', 'operating hours (saturday)'],  # Simple Saturday column + Income format
             'sun_am': ['sun (am)', 'sunday', 'sun am', 'sunday am'],
             'sun_pm': ['sun (pm)', 'sun pm', 'sunday pm'],
             'sun_night': ['sun (night)', 'sun night', 'sunday night'],
-            'sun_simple': ['sun'],  # Simple Sunday column
+            'sun_simple': ['sun', 'operating hours (sunday)'],  # Simple Sunday column + Income format
             'holiday_am': ['public holiday (am)', 'public holiday', 'holiday am', 'ph am', 'ph', 'publicday'],
             'holiday_pm': ['public holiday (pm)', 'holiday pm', 'ph pm'],
             'holiday_night': ['public holiday (night)', 'holiday night', 'ph night'],
-            'holiday_simple': ['holiday', 'ph'],  # Simple Holiday column
+            'holiday_simple': ['holiday', 'ph', 'operating hours (holiday(s))', 'operating hours (holidays)'],  # Simple Holiday column + Income format
             # Address components for composite address construction
             'address_blk': ['blk', 'block', 'building no', 'bldg no', 'unit block', 'blk & road name'],
             'address_road': ['road name', 'street name', 'street', 'road', 'avenue', 'ave', 'blk & road name'],
