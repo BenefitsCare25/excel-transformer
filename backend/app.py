@@ -1549,6 +1549,10 @@ class ExcelTransformer:
 
                         logger.info(f"Separating sheet '{sheet}': {len(df_sg)} Singapore clinics, {len(df_my)} Malaysia clinics")
 
+                        # Determine display name - if sheet already contains country name, use it as-is
+                        sheet_upper = sheet.upper()
+                        base_sheet_name = sheet
+
                         # Save Singapore file
                         if len(df_sg) > 0:
                             sanitized_name = ExcelTransformer.sanitize_filename(sheet)
@@ -1556,8 +1560,11 @@ class ExcelTransformer:
                             sg_path = os.path.join(output_dir, sg_filename)
                             df_sg.to_excel(sg_path, index=False)
 
+                            # Only append country suffix if sheet name doesn't already contain it
+                            sg_display_name = "SINGAPORE" if sheet_upper == "SINGAPORE" else f"{sheet} (Singapore)"
+
                             results.append({
-                                'sheet_name': f"{sheet} (Singapore)",
+                                'sheet_name': sg_display_name,
                                 'output_filename': sg_filename,
                                 'output_path': sg_path,
                                 'records_processed': len(df_sg),
@@ -1577,8 +1584,11 @@ class ExcelTransformer:
                             my_path = os.path.join(output_dir, my_filename)
                             df_my.to_excel(my_path, index=False)
 
+                            # Only append country suffix if sheet name doesn't already contain it
+                            my_display_name = "MALAYSIA" if sheet_upper == "MALAYSIA" else f"{sheet} (Malaysia)"
+
                             results.append({
-                                'sheet_name': f"{sheet} (Malaysia)",
+                                'sheet_name': my_display_name,
                                 'output_filename': my_filename,
                                 'output_path': my_path,
                                 'records_processed': len(df_my),
