@@ -1305,20 +1305,49 @@ class ExcelTransformer:
 
                 address_lower = str(address).lower()
 
-                # Check for Malaysian indicators
-                malaysian_indicators = [
-                    'malaysia', 'johor', 'kuala lumpur', 'selangor', 'penang', 'perak',
-                    'kedah', 'kelantan', 'terengganu', 'pahang', 'negeri sembilan',
-                    'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan',
-                    'johor bahru', 'kl', 'shah alam', 'petaling jaya'
+                # Check for Malaysian indicators using word boundaries
+                # Multi-word phrases (check first to avoid partial matches)
+                multi_word_indicators = [
+                    'kuala lumpur', 'johor bahru', 'negeri sembilan',
+                    'shah alam', 'petaling jaya'
                 ]
 
-                if any(indicator in address_lower for indicator in malaysian_indicators):
-                    return 'MALAYSIA'
-                else:
-                    return 'SINGAPORE'
+                for indicator in multi_word_indicators:
+                    if indicator in address_lower:
+                        return 'MALAYSIA'
 
-            df_transformed['Country'] = df_transformed['Address1'].apply(detect_country)
+                # Single word indicators (use word boundaries to avoid false positives)
+                import re
+                single_word_indicators = [
+                    'malaysia', 'johor', 'selangor', 'penang', 'perak',
+                    'kedah', 'kelantan', 'terengganu', 'pahang',
+                    'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan'
+                ]
+
+                for indicator in single_word_indicators:
+                    # Use word boundary regex to match whole words only
+                    if re.search(r'\b' + re.escape(indicator) + r'\b', address_lower):
+                        return 'MALAYSIA'
+
+                # Special case: "kl" should only match as standalone abbreviation
+                # Check for "kl" with word boundaries OR preceded/followed by comma, space, or end
+                if re.search(r'\bkl\b', address_lower):
+                    return 'MALAYSIA'
+
+                return 'SINGAPORE'
+
+            # Detect country from combined address fields (Address1, Address2, Address3, PostalCode)
+            def detect_country_from_row(row):
+                # Combine all address-related fields to check for country indicators
+                combined_address = ' '.join([
+                    str(row.get('Address1', '')),
+                    str(row.get('Address2', '')),
+                    str(row.get('Address3', '')),
+                    str(row.get('PostalCode', ''))
+                ])
+                return detect_country(combined_address)
+
+            df_transformed['Country'] = df_transformed.apply(detect_country_from_row, axis=1)
 
             # Combine phone and remarks (if available)
             if 'telephone' in col_map and col_map['telephone'] is not None and pd.notna(col_map['telephone']):
@@ -1549,9 +1578,9 @@ class ExcelTransformer:
 
                         logger.info(f"Separating sheet '{sheet}': {len(df_sg)} Singapore clinics, {len(df_my)} Malaysia clinics")
 
-                        # Determine display name - if sheet already contains country name, use it as-is
+                        # For mixed country sheets, use clean country names as display names
+                        # This prevents "SINGAPORE (Malaysia)" or "MALAYSIA (Singapore)" confusion
                         sheet_upper = sheet.upper()
-                        base_sheet_name = sheet
 
                         # Save Singapore file
                         if len(df_sg) > 0:
@@ -1560,8 +1589,8 @@ class ExcelTransformer:
                             sg_path = os.path.join(output_dir, sg_filename)
                             df_sg.to_excel(sg_path, index=False)
 
-                            # Only append country suffix if sheet name doesn't already contain it
-                            sg_display_name = "SINGAPORE" if sheet_upper == "SINGAPORE" else f"{sheet} (Singapore)"
+                            # Use "SINGAPORE" for Singapore data, regardless of original sheet name
+                            sg_display_name = "SINGAPORE"
 
                             results.append({
                                 'sheet_name': sg_display_name,
@@ -1584,8 +1613,8 @@ class ExcelTransformer:
                             my_path = os.path.join(output_dir, my_filename)
                             df_my.to_excel(my_path, index=False)
 
-                            # Only append country suffix if sheet name doesn't already contain it
-                            my_display_name = "MALAYSIA" if sheet_upper == "MALAYSIA" else f"{sheet} (Malaysia)"
+                            # Use "MALAYSIA" for Malaysia data, regardless of original sheet name
+                            my_display_name = "MALAYSIA"
 
                             results.append({
                                 'sheet_name': my_display_name,
