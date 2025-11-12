@@ -1310,7 +1310,8 @@ class ExcelTransformer:
                 # Multi-word phrases (check first to avoid partial matches)
                 multi_word_indicators = [
                     'kuala lumpur', 'johor bahru', 'negeri sembilan',
-                    'shah alam', 'petaling jaya'
+                    'shah alam', 'petaling jaya', 'johor darul', 'iskandar puteri',
+                    'taman daya', 'bandar indahpura', 'ulu tiram'
                 ]
 
                 for indicator in multi_word_indicators:
@@ -1322,7 +1323,10 @@ class ExcelTransformer:
                 single_word_indicators = [
                     'malaysia', 'johor', 'selangor', 'penang', 'perak',
                     'kedah', 'kelantan', 'terengganu', 'pahang',
-                    'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan'
+                    'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan',
+                    # Additional Johor cities/towns
+                    'kulai', 'skudai', 'senai', 'pasir gudang', 'pontian',
+                    'batu pahat', 'muar', 'segamat', 'kluang', 'kota tinggi'
                 ]
 
                 for indicator in single_word_indicators:
@@ -1337,10 +1341,14 @@ class ExcelTransformer:
 
                 return 'SINGAPORE'
 
-            # Detect country from combined address fields (Address1, Address2, Address3, PostalCode)
+            # Detect country from combined address fields (Address1, Address2, Address3, PostalCode, Zone, Region, Area)
             def detect_country_from_row(row):
-                # Combine all address-related fields to check for country indicators
+                # Combine all address-related fields AND region/zone/area to check for country indicators
+                # This catches cases where "JOHOR" is in Zone/Region but not in the address itself
                 combined_address = ' '.join([
+                    str(row.get('Zone', '')),
+                    str(row.get('Region', '')),
+                    str(row.get('Area', '')),
                     str(row.get('Address1', '')),
                     str(row.get('Address2', '')),
                     str(row.get('Address3', '')),
