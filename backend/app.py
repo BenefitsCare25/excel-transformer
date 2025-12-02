@@ -1892,6 +1892,7 @@ class ExcelTransformer:
             # Calculate summary statistics
             total_records = sum(r['records_processed'] for r in results)
             total_geocodes = sum(r['geocoding_stats']['successful_geocodes'] for r in results)
+            total_terminated = sum(r.get('terminated_clinics_filtered', 0) for r in results)
 
             # Aggregate all filtered provider codes from all sheets
             all_filtered_codes = []
@@ -1905,7 +1906,7 @@ class ExcelTransformer:
                 'message': f'Successfully processed {len(results)} sheets with {total_records} total records',
                 'sheets_processed': len(results),
                 'total_records': total_records,
-                'terminated_clinics_filtered': len(terminated_ids),
+                'terminated_clinics_filtered': total_terminated,
                 'filtered_provider_codes': unique_filtered_codes,
                 'output_files': output_files,
                 'results': results,
