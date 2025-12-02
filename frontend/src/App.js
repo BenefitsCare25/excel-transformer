@@ -285,6 +285,29 @@ function App() {
                           </div>
                         </div>
 
+                        {/* Filtered Provider Codes */}
+                        {result.success && result.filtered_provider_codes && result.filtered_provider_codes.length > 0 && (
+                          <div className="bg-orange-50 border-t border-orange-200 px-4 py-3">
+                            <h5 className="text-sm font-medium text-orange-800 mb-2">Removed Provider Codes</h5>
+                            <p className="text-xs text-orange-700 mb-2">
+                              The following provider codes were removed from the panel listing:
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {result.filtered_provider_codes.map((code, codeIndex) => (
+                                <span
+                                  key={codeIndex}
+                                  className="px-2 py-1 bg-orange-100 text-orange-800 text-xs font-mono rounded border border-orange-300"
+                                >
+                                  {code}
+                                </span>
+                              ))}
+                            </div>
+                            <p className="text-xs text-orange-600 mt-2">
+                              Total removed: {result.filtered_provider_codes.length}
+                            </p>
+                          </div>
+                        )}
+
                         {/* Individual Sheet Breakdown */}
                         {result.success && result.results && result.results.length > 0 && (
                           <div className="p-4">
