@@ -878,24 +878,31 @@ class ExcelTransformer:
         # Detect country from address if not provided
         if country is None:
             address_lower = address_str.lower()
-            malaysian_indicators = [
-                'malaysia', 'johor', 'kuala lumpur', 'selangor', 'penang', 'perak',
-                'kedah', 'kelantan', 'terengganu', 'pahang', 'negeri sembilan',
-                'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan',
-                # Additional Malaysian cities and areas
-                'kulai', 'skudai', 'pasir gudang', 'ulu tiram', 'masai', 'gelang patah',
-                'johor bahru', 'kl', 'shah alam', 'petaling jaya', 'bandar', 'taman'
-            ]
-            # Also check for Malaysian postal code patterns (5 digits vs Singapore's 6)
-            has_5_digit = bool(re.search(r'\b\d{5}\b', address_str))
-            has_6_digit = bool(re.search(r'\b\d{6}\b', address_str))
 
-            is_malaysian = any(indicator in address_lower for indicator in malaysian_indicators)
-            # If we find 5-digit codes but no 6-digit codes, likely Malaysian
-            if has_5_digit and not has_6_digit:
-                is_malaysian = True
+            # PRIORITY 1: Check for explicit "SINGAPORE" keyword first
+            # This prevents false positives like "Penang Road, Singapore" being detected as Malaysia
+            if 'singapore' in address_lower:
+                country = 'SINGAPORE'
+            else:
+                # PRIORITY 2: Check for Malaysian indicators
+                malaysian_indicators = [
+                    'malaysia', 'johor', 'kuala lumpur', 'selangor', 'penang', 'perak',
+                    'kedah', 'kelantan', 'terengganu', 'pahang', 'negeri sembilan',
+                    'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan',
+                    # Additional Malaysian cities and areas
+                    'kulai', 'skudai', 'pasir gudang', 'ulu tiram', 'masai', 'gelang patah',
+                    'johor bahru', 'kl', 'shah alam', 'petaling jaya', 'bandar', 'taman'
+                ]
+                # Also check for Malaysian postal code patterns (5 digits vs Singapore's 6)
+                has_5_digit = bool(re.search(r'\b\d{5}\b', address_str))
+                has_6_digit = bool(re.search(r'\b\d{6}\b', address_str))
 
-            country = 'MALAYSIA' if is_malaysian else 'SINGAPORE'
+                is_malaysian = any(indicator in address_lower for indicator in malaysian_indicators)
+                # If we find 5-digit codes but no 6-digit codes, likely Malaysian
+                if has_5_digit and not has_6_digit:
+                    is_malaysian = True
+
+                country = 'MALAYSIA' if is_malaysian else 'SINGAPORE'
 
         if country == 'SINGAPORE':
             # Singapore: Look for SINGAPORE followed by 6 digits
@@ -1306,7 +1313,12 @@ class ExcelTransformer:
 
                 address_lower = str(address).lower()
 
-                # Check for Malaysian indicators using word boundaries
+                # PRIORITY 1: Check for explicit "SINGAPORE" keyword first
+                # This prevents false positives like "Penang Road, Singapore" being detected as Malaysia
+                if 'singapore' in address_lower:
+                    return 'SINGAPORE'
+
+                # PRIORITY 2: Check for Malaysian indicators using word boundaries
                 # Multi-word phrases (check first to avoid partial matches)
                 multi_word_indicators = [
                     'kuala lumpur', 'johor bahru', 'negeri sembilan',
