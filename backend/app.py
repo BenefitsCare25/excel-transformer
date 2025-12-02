@@ -1247,11 +1247,18 @@ class ExcelTransformer:
             geocoding_service = GeocodingService(use_google_api=use_google_api)
 
             # Check if this is Alliance-Tokio Marine format
+            # Note: Only .xlsx files support Alliance-Tokio format (uses merged cells)
             import openpyxl
-            wb = openpyxl.load_workbook(input_path)
-            ws = wb[sheet_name]
+            file_extension = os.path.splitext(input_path)[1].lower()
 
-            is_alliance_tokio = ExcelTransformer.detect_alliance_tokio_format(ws)
+            if file_extension == '.xlsx':
+                # Only check for Alliance-Tokio format in .xlsx files
+                wb = openpyxl.load_workbook(input_path)
+                ws = wb[sheet_name]
+                is_alliance_tokio = ExcelTransformer.detect_alliance_tokio_format(ws)
+            else:
+                # Legacy .xls files don't support Alliance-Tokio merged cell format
+                is_alliance_tokio = False
 
             if is_alliance_tokio:
                 logger.info(f"Processing Alliance-Tokio Marine format for sheet: {sheet_name}")
@@ -1273,7 +1280,6 @@ class ExcelTransformer:
                 df_source.columns = headers[:len(df_source.columns)]
 
                 # Clean up temp file
-                import os
                 os.unlink(temp_file.name)
 
                 header_row = None  # Already handled
@@ -1458,7 +1464,7 @@ class ExcelTransformer:
                 terminated_mask = []
                 for idx, row in df_transformed.iterrows():
                     # Normalize provider code and postal code for consistent matching
-                    provider_code = ExcelTransformer.normalize_code(df_source.iloc[idx][clinic_id_col])
+                    provider_code = ExcelTransformer.normalize_code(df_source.loc[idx][clinic_id_col])
                     postal_code = ExcelTransformer.normalize_code(row['PostalCode'])
 
                     is_terminated = False
@@ -1963,8 +1969,9 @@ def process_single_file_in_batch(file_data, batch_id, use_google_api=True):
         original_filename = file_data['filename']
         job_id = str(uuid.uuid4())
 
-        # Save uploaded file
-        input_filename = f"{job_id}_input.xlsx"
+        # Save uploaded file with original extension
+        original_ext = os.path.splitext(original_filename)[1] or '.xlsx'  # Default to .xlsx if no extension
+        input_filename = f"{job_id}_input{original_ext}"
         input_path = os.path.join(UPLOAD_FOLDER, input_filename)
 
         with open(input_path, 'wb') as f:
@@ -2386,8 +2393,9 @@ def upload_file():
         # Generate unique job ID
         job_id = str(uuid.uuid4())
 
-        # Save uploaded file
-        input_filename = f"{job_id}_input.xlsx"
+        # Save uploaded file with original extension
+        original_ext = os.path.splitext(file.filename)[1] or '.xlsx'  # Default to .xlsx if no extension
+        input_filename = f"{job_id}_input{original_ext}"
         input_path = os.path.join(UPLOAD_FOLDER, input_filename)
         file.save(input_path)
 
