@@ -309,14 +309,28 @@ class GeocodingService:
             return None, None
     
     def geocode(self, postal_code, address, country=None):
-        """Main geocoding method: try postal code first, then address (if enabled)
+        """Main geocoding method: country-aware geocoding strategy
 
         Args:
             postal_code: Postal code to lookup
             address: Full address string
             country: Optional country code ('SINGAPORE' or 'MALAYSIA') for region bias
+
+        Strategy:
+            - SINGAPORE: Try postal code lookup first, then Google Maps API fallback
+            - MALAYSIA: Only use Google Maps API (postal code lookup is Singapore-only)
+            - No country specified: Try postal code lookup, then API fallback
         """
-        # Try postal code lookup first
+        # MALAYSIA: Skip postal code lookup (Singapore-only), use Google Maps API only
+        if country == 'MALAYSIA':
+            if self.use_google_api:
+                lat, lng = self.geocode_by_address(address, country=country)
+                if lat is not None and lng is not None:
+                    return lat, lng, 'address'
+            # If API disabled or geocoding failed, return None for Malaysia
+            return None, None, 'failed'
+
+        # SINGAPORE or unspecified country: Try postal code lookup first
         lat, lng = self.geocode_by_postal_code(postal_code)
         if lat is not None and lng is not None:
             return lat, lng, 'postal_code'
@@ -622,6 +636,34 @@ class ExcelTransformer:
         return panel_sheets, termination_sheets
 
     @staticmethod
+    def normalize_code(value):
+        """Normalize provider code or postal code by removing unnecessary decimal points
+
+        Excel often stores numbers as floats (e.g., 40088.0, 518180.0)
+        This function converts them to clean strings without decimals (e.g., "40088", "518180")
+        """
+        if value is None or pd.isna(value):
+            return None
+
+        value_str = str(value).strip()
+
+        if value_str.lower() == 'nan' or value_str == '':
+            return None
+
+        # Remove .0 suffix if present (e.g., "40088.0" -> "40088")
+        if '.' in value_str:
+            try:
+                # Try to convert to float then int to remove decimal
+                float_val = float(value_str)
+                # Check if it's a whole number
+                if float_val == int(float_val):
+                    return str(int(float_val))
+            except (ValueError, OverflowError):
+                pass
+
+        return value_str
+
+    @staticmethod
     def extract_terminated_clinic_ids(file_path, termination_sheets):
         """Extract clinic IDs and postal codes from termination sheets
 
@@ -644,12 +686,17 @@ class ExcelTransformer:
                 if not id_columns:
                     id_columns = [col for col in df.columns if 'code' in col.lower()]
 
-                # Look for postal code column
+                # Look for postal code column (various naming patterns)
                 postal_columns = [col for col in df.columns if 'postal' in col.lower() and 'code' in col.lower()]
                 if not postal_columns:
                     postal_columns = [col for col in df.columns if 'post' in col.lower() and 'code' in col.lower()]
                 if not postal_columns:
                     postal_columns = [col for col in df.columns if col.lower() == 'postalcode']
+                if not postal_columns:
+                    # Match standalone "POSTAL" or "POST" column
+                    postal_columns = [col for col in df.columns if col.lower().strip() == 'postal']
+                if not postal_columns:
+                    postal_columns = [col for col in df.columns if col.lower().strip() == 'post']
 
                 if id_columns and postal_columns:
                     # Both provider code and postal code found - use dual matching
@@ -657,26 +704,58 @@ class ExcelTransformer:
                     postal_col = postal_columns[0]
 
                     for _, row in df.iterrows():
-                        provider_code = str(row[id_col]).strip() if pd.notna(row[id_col]) else None
-                        postal_code = str(row[postal_col]).strip() if pd.notna(row[postal_col]) else None
+                        # Normalize both provider code and postal code
+                        provider_code = ExcelTransformer.normalize_code(row[id_col])
+                        postal_code = ExcelTransformer.normalize_code(row[postal_col])
 
                         # Only add if both values are valid
-                        if provider_code and postal_code and provider_code.lower() != 'nan' and postal_code.lower() != 'nan':
+                        if provider_code and postal_code:
                             terminated_entries.add((provider_code, postal_code))
 
                     logger.info(f"Extracted {len(terminated_entries)} terminated entries (provider code + postal code) from sheet '{sheet}'")
 
                 elif id_columns:
-                    # Only provider code found - fallback to single parameter matching
-                    logger.warning(f"Postal code column not found in termination sheet '{sheet}' - using provider code only")
-                    clinic_ids = df[id_columns[0]].dropna()
-                    clinic_ids = clinic_ids.astype(str).str.strip()
-                    # Filter out any 'nan' strings that might have been created
-                    clinic_ids = clinic_ids[clinic_ids.str.lower() != 'nan']
-                    # Add with None as postal code to indicate single-parameter matching
-                    for clinic_id in clinic_ids:
-                        terminated_entries.add((clinic_id, None))
-                    logger.info(f"Extracted {len(clinic_ids)} terminated clinic IDs from sheet '{sheet}' (provider code only)")
+                    # Postal code column not found - try to extract from address columns
+                    logger.warning(f"Postal code column not found in termination sheet '{sheet}' - attempting extraction from address columns")
+
+                    # Look for address columns
+                    address_columns = [col for col in df.columns if 'address' in col.lower()]
+
+                    extracted_count = 0
+                    provider_only_count = 0
+
+                    for _, row in df.iterrows():
+                        provider_code = ExcelTransformer.normalize_code(row[id_columns[0]])
+                        if not provider_code:
+                            continue
+
+                        # Try to extract postal code from address columns
+                        postal_code = None
+                        if address_columns:
+                            # Combine all address columns
+                            address_parts = [str(row[col]) for col in address_columns if pd.notna(row[col])]
+                            combined_address = ' '.join(address_parts)
+
+                            # Extract postal code from combined address
+                            postal_code = ExcelTransformer.extract_postal_code(combined_address)
+                            if postal_code:
+                                postal_code = ExcelTransformer.normalize_code(postal_code)
+
+                        if postal_code:
+                            # Successfully extracted postal code - use dual matching
+                            terminated_entries.add((provider_code, postal_code))
+                            extracted_count += 1
+                        else:
+                            # No postal code found - fallback to provider code only
+                            terminated_entries.add((provider_code, None))
+                            provider_only_count += 1
+
+                    if extracted_count > 0:
+                        logger.info(f"Extracted {extracted_count} terminated entries with postal codes from address columns")
+                    if provider_only_count > 0:
+                        logger.info(f"Extracted {provider_only_count} terminated entries with provider code only (no postal code found)")
+
+                    logger.info(f"Total from sheet '{sheet}': {extracted_count + provider_only_count} entries ({extracted_count} with postal, {provider_only_count} without)")
                 else:
                     logger.warning(f"Could not find clinic ID column in termination sheet '{sheet}'")
 
@@ -1378,8 +1457,9 @@ class ExcelTransformer:
                 # Create termination matching mask
                 terminated_mask = []
                 for idx, row in df_transformed.iterrows():
-                    provider_code = str(df_source.iloc[idx][clinic_id_col]).strip() if pd.notna(df_source.iloc[idx][clinic_id_col]) else None
-                    postal_code = str(row['PostalCode']).strip() if pd.notna(row['PostalCode']) else None
+                    # Normalize provider code and postal code for consistent matching
+                    provider_code = ExcelTransformer.normalize_code(df_source.iloc[idx][clinic_id_col])
+                    postal_code = ExcelTransformer.normalize_code(row['PostalCode'])
 
                     is_terminated = False
                     if provider_code and postal_code:
