@@ -678,7 +678,8 @@ class ExcelTransformer:
                 'operating hours (monday - friday)',  # Income/Adept format
                 'operation hours', 'mon to fri',  # MY GP List format
                 'mon - fri',  # AIA SP format
-                'weekdays'  # AIA dental format - direct weekdays column
+                'weekdays',  # AIA dental format - direct weekdays column
+                'operating hour monday - friday'  # Singlife format - direct text extraction (cleaned with spaces)
             ],
             'mon_fri_pm': [
                 'mon - fri (pm)', 'monday - friday (evening)', 'weekday pm', 'mon-fri pm', 'weekdays pm'
@@ -1170,12 +1171,22 @@ class ExcelTransformer:
 
             # Filter out terminated clinics if provided
             terminated_count = 0
+            filtered_provider_codes = []
             if terminated_ids and 'clinic_id' in col_map:
                 initial_count = len(df_source)
-                df_source = df_source[~df_source[col_map['clinic_id']].astype(str).str.strip().isin(terminated_ids)]
+                # Track which provider codes are being filtered
+                clinic_id_col = col_map['clinic_id']
+                terminated_mask = df_source[clinic_id_col].astype(str).str.strip().isin(terminated_ids)
+                filtered_provider_codes = df_source[terminated_mask][clinic_id_col].astype(str).str.strip().unique().tolist()
+
+                # Apply filter
+                df_source = df_source[~terminated_mask]
                 filtered_count = len(df_source)
                 terminated_count = initial_count - filtered_count
                 logger.info(f"Filtered out {terminated_count} terminated clinics from sheet '{sheet_name}'")
+                if filtered_provider_codes:
+                    logger.info(f"Filtered provider codes: {', '.join(filtered_provider_codes[:10])}" +
+                               (f" ... and {len(filtered_provider_codes)-10} more" if len(filtered_provider_codes) > 10 else ""))
 
             # Filter out empty/invalid rows - keep only rows with valid clinic data
             initial_count = len(df_source)
@@ -1504,6 +1515,7 @@ class ExcelTransformer:
                 'message': f'Successfully transformed {len(df_transformed)} records',
                 'records_processed': len(df_transformed),
                 'terminated_clinics_filtered': terminated_count,
+                'filtered_provider_codes': filtered_provider_codes,
                 'geocoding_stats': {
                     'total_records': len(df_transformed),
                     'successful_geocodes': successful_geocodes,
@@ -1619,6 +1631,7 @@ class ExcelTransformer:
                                 'output_path': sg_path,
                                 'records_processed': len(df_sg),
                                 'terminated_clinics_filtered': result['terminated_clinics_filtered'],
+                                'filtered_provider_codes': result.get('filtered_provider_codes', []),
                                 'geocoding_stats': {
                                     'total_records': len(df_sg),
                                     'successful_geocodes': int(df_sg['Latitude'].notna().sum()),
@@ -1643,6 +1656,7 @@ class ExcelTransformer:
                                 'output_path': my_path,
                                 'records_processed': len(df_my),
                                 'terminated_clinics_filtered': 0,
+                                'filtered_provider_codes': [],
                                 'geocoding_stats': {
                                     'total_records': len(df_my),
                                     'successful_geocodes': int(df_my['Latitude'].notna().sum()),
@@ -1668,6 +1682,7 @@ class ExcelTransformer:
                             'output_path': output_path,
                             'records_processed': result['records_processed'],
                             'terminated_clinics_filtered': result['terminated_clinics_filtered'],
+                            'filtered_provider_codes': result.get('filtered_provider_codes', []),
                             'geocoding_stats': result['geocoding_stats']
                         }
                         results.append(sheet_result)
@@ -1692,12 +1707,20 @@ class ExcelTransformer:
             total_records = sum(r['records_processed'] for r in results)
             total_geocodes = sum(r['geocoding_stats']['successful_geocodes'] for r in results)
 
+            # Aggregate all filtered provider codes from all sheets
+            all_filtered_codes = []
+            for r in results:
+                all_filtered_codes.extend(r.get('filtered_provider_codes', []))
+            # Remove duplicates while preserving order
+            unique_filtered_codes = list(dict.fromkeys(all_filtered_codes))
+
             return {
                 'success': True,
                 'message': f'Successfully processed {len(results)} sheets with {total_records} total records',
                 'sheets_processed': len(results),
                 'total_records': total_records,
                 'terminated_clinics_filtered': len(terminated_ids),
+                'filtered_provider_codes': unique_filtered_codes,
                 'output_files': output_files,
                 'results': results,
                 'summary_stats': {

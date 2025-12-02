@@ -65,6 +65,29 @@ const ProcessingStatus = ({ status, result, onDownload, onDownloadAll, onReset }
             </p>
           </div>
 
+          {/* Filtered Provider Codes */}
+          {result.filtered_provider_codes && result.filtered_provider_codes.length > 0 && (
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 space-y-2">
+              <h4 className="font-medium text-orange-800">Removed Provider Codes</h4>
+              <p className="text-sm text-orange-700">
+                The following provider codes were removed from the panel listing:
+              </p>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {result.filtered_provider_codes.map((code, index) => (
+                  <span
+                    key={index}
+                    className="px-2 py-1 bg-orange-100 text-orange-800 text-xs font-mono rounded border border-orange-300"
+                  >
+                    {code}
+                  </span>
+                ))}
+              </div>
+              <p className="text-xs text-orange-600 mt-2">
+                Total removed: {result.filtered_provider_codes.length}
+              </p>
+            </div>
+          )}
+
           {/* Individual Sheet Results */}
           {hasResults && (
             <div className="space-y-3">
