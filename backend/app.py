@@ -238,8 +238,13 @@ class GeocodingService:
         
         return None, None
     
-    def geocode_by_address(self, address):
-        """Get coordinates by Google Maps API using full address"""
+    def geocode_by_address(self, address, country=None):
+        """Get coordinates by Google Maps API using full address
+
+        Args:
+            address: The address to geocode
+            country: Optional country code ('SINGAPORE' or 'MALAYSIA') to force region bias
+        """
         if not address or str(address).strip() in ('', 'None', 'nan') or not self.geolocator:
             return None, None
 
@@ -250,21 +255,47 @@ class GeocodingService:
             address_str = str(address).strip()
             address_lower = address_str.lower()
 
-            # Check if address already contains country information
-            has_singapore = 'singapore' in address_lower
-            has_malaysia = 'malaysia' in address_lower
+            # Determine region parameter for API call
+            region = None
 
-            # If no country specified, try to detect from context
-            if not has_singapore and not has_malaysia:
-                # Check for Malaysian states/regions in address
-                malaysian_indicators = ['johor', 'kuala lumpur', 'selangor', 'penang', 'perak', 'kedah', 'kelantan', 'terengganu', 'pahang', 'negeri sembilan', 'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan']
-                if any(indicator in address_lower for indicator in malaysian_indicators):
-                    address_str += ', Malaysia'
-                else:
-                    # Default to Singapore for addresses without clear country indicators
-                    address_str += ', Singapore'
+            # PRIORITY: Use explicitly provided country parameter
+            if country:
+                if country == 'MALAYSIA':
+                    region = 'my'  # Force Malaysia region bias
+                    # Ensure Malaysia is in the address string
+                    if 'malaysia' not in address_lower:
+                        address_str += ', Malaysia'
+                elif country == 'SINGAPORE':
+                    region = 'sg'  # Force Singapore region bias
+                    if 'singapore' not in address_lower:
+                        address_str += ', Singapore'
+            else:
+                # Fallback: Detect from address text
+                has_singapore = 'singapore' in address_lower
+                has_malaysia = 'malaysia' in address_lower
 
-            location = self.geolocator.geocode(address_str, timeout=10)
+                # If no country specified, try to detect from context
+                if not has_singapore and not has_malaysia:
+                    # Check for Malaysian states/regions in address
+                    malaysian_indicators = ['johor', 'kuala lumpur', 'selangor', 'penang', 'perak', 'kedah', 'kelantan', 'terengganu', 'pahang', 'negeri sembilan', 'melaka', 'sabah', 'sarawak', 'perlis', 'putrajaya', 'labuan']
+                    if any(indicator in address_lower for indicator in malaysian_indicators):
+                        address_str += ', Malaysia'
+                        region = 'my'
+                    else:
+                        # Default to Singapore for addresses without clear country indicators
+                        address_str += ', Singapore'
+                        region = 'sg'
+                elif has_malaysia:
+                    region = 'my'
+                elif has_singapore:
+                    region = 'sg'
+
+            # Call geocoder with region parameter if available
+            if region:
+                location = self.geolocator.geocode(address_str, timeout=10, region=region)
+                logger.debug(f"Geocoding with region bias: {region.upper()} for address: {address_str}")
+            else:
+                location = self.geolocator.geocode(address_str, timeout=10)
 
             if location:
                 return location.latitude, location.longitude
@@ -277,8 +308,14 @@ class GeocodingService:
             logger.warning(f"Address geocoding failed for '{address}': {e}")
             return None, None
     
-    def geocode(self, postal_code, address):
-        """Main geocoding method: try postal code first, then address (if enabled)"""
+    def geocode(self, postal_code, address, country=None):
+        """Main geocoding method: try postal code first, then address (if enabled)
+
+        Args:
+            postal_code: Postal code to lookup
+            address: Full address string
+            country: Optional country code ('SINGAPORE' or 'MALAYSIA') for region bias
+        """
         # Try postal code lookup first
         lat, lng = self.geocode_by_postal_code(postal_code)
         if lat is not None and lng is not None:
@@ -286,7 +323,8 @@ class GeocodingService:
 
         # Fallback to address geocoding only if use_google_api is enabled
         if self.use_google_api:
-            lat, lng = self.geocode_by_address(address)
+            # Pass country parameter to force region bias (especially important for Malaysia)
+            lat, lng = self.geocode_by_address(address, country=country)
             if lat is not None and lng is not None:
                 return lat, lng, 'address'
 
@@ -585,8 +623,12 @@ class ExcelTransformer:
 
     @staticmethod
     def extract_terminated_clinic_ids(file_path, termination_sheets):
-        """Extract clinic IDs from termination sheets"""
-        terminated_ids = set()
+        """Extract clinic IDs and postal codes from termination sheets
+
+        Returns a set of tuples: {(provider_code, postal_code), ...}
+        This ensures termination only occurs when BOTH provider code AND postal code match
+        """
+        terminated_entries = set()
 
         for sheet in termination_sheets:
             try:
@@ -595,29 +637,54 @@ class ExcelTransformer:
                 df = ExcelTransformer.safe_read_excel(file_path, sheet_name=sheet, header=header_row)
                 df.columns = df.columns.str.strip()
 
-                # Look for clinic ID column (various possible names)
+                # Look for clinic ID/provider code column (various possible names)
                 id_columns = [col for col in df.columns if 'clinic' in col.lower() and 'id' in col.lower()]
                 if not id_columns:
                     id_columns = [col for col in df.columns if 'provider' in col.lower() and ('code' in col.lower() or 'id' in col.lower())]
                 if not id_columns:
                     id_columns = [col for col in df.columns if 'code' in col.lower()]
 
-                if id_columns:
-                    # Convert to string and handle any NaN/None values
+                # Look for postal code column
+                postal_columns = [col for col in df.columns if 'postal' in col.lower() and 'code' in col.lower()]
+                if not postal_columns:
+                    postal_columns = [col for col in df.columns if 'post' in col.lower() and 'code' in col.lower()]
+                if not postal_columns:
+                    postal_columns = [col for col in df.columns if col.lower() == 'postalcode']
+
+                if id_columns and postal_columns:
+                    # Both provider code and postal code found - use dual matching
+                    id_col = id_columns[0]
+                    postal_col = postal_columns[0]
+
+                    for _, row in df.iterrows():
+                        provider_code = str(row[id_col]).strip() if pd.notna(row[id_col]) else None
+                        postal_code = str(row[postal_col]).strip() if pd.notna(row[postal_col]) else None
+
+                        # Only add if both values are valid
+                        if provider_code and postal_code and provider_code.lower() != 'nan' and postal_code.lower() != 'nan':
+                            terminated_entries.add((provider_code, postal_code))
+
+                    logger.info(f"Extracted {len(terminated_entries)} terminated entries (provider code + postal code) from sheet '{sheet}'")
+
+                elif id_columns:
+                    # Only provider code found - fallback to single parameter matching
+                    logger.warning(f"Postal code column not found in termination sheet '{sheet}' - using provider code only")
                     clinic_ids = df[id_columns[0]].dropna()
                     clinic_ids = clinic_ids.astype(str).str.strip()
                     # Filter out any 'nan' strings that might have been created
                     clinic_ids = clinic_ids[clinic_ids.str.lower() != 'nan']
-                    terminated_ids.update(clinic_ids)
-                    logger.info(f"Extracted {len(clinic_ids)} terminated clinic IDs from sheet '{sheet}'")
+                    # Add with None as postal code to indicate single-parameter matching
+                    for clinic_id in clinic_ids:
+                        terminated_entries.add((clinic_id, None))
+                    logger.info(f"Extracted {len(clinic_ids)} terminated clinic IDs from sheet '{sheet}' (provider code only)")
                 else:
                     logger.warning(f"Could not find clinic ID column in termination sheet '{sheet}'")
 
             except Exception as e:
                 logger.error(f"Error processing termination sheet '{sheet}': {e}")
 
-        logger.info(f"Total terminated clinic IDs: {len(terminated_ids)}")
-        return terminated_ids
+        logger.info(f"Total terminated entries: {len(terminated_entries)}")
+        return terminated_entries
 
     @staticmethod
     def sanitize_filename(name):
@@ -1169,24 +1236,10 @@ class ExcelTransformer:
                     if filtered_metadata > 0:
                         logger.info(f"Filtered out {filtered_metadata} metadata rows from Alliance-Tokio sheet")
 
-            # Filter out terminated clinics if provided
+            # NOTE: Termination filtering will be done AFTER postal code extraction
+            # This ensures we can match both provider code AND postal code
             terminated_count = 0
             filtered_provider_codes = []
-            if terminated_ids and 'clinic_id' in col_map:
-                initial_count = len(df_source)
-                # Track which provider codes are being filtered
-                clinic_id_col = col_map['clinic_id']
-                terminated_mask = df_source[clinic_id_col].astype(str).str.strip().isin(terminated_ids)
-                filtered_provider_codes = df_source[terminated_mask][clinic_id_col].astype(str).str.strip().unique().tolist()
-
-                # Apply filter
-                df_source = df_source[~terminated_mask]
-                filtered_count = len(df_source)
-                terminated_count = initial_count - filtered_count
-                logger.info(f"Filtered out {terminated_count} terminated clinics from sheet '{sheet_name}'")
-                if filtered_provider_codes:
-                    logger.info(f"Filtered provider codes: {', '.join(filtered_provider_codes[:10])}" +
-                               (f" ... and {len(filtered_provider_codes)-10} more" if len(filtered_provider_codes) > 10 else ""))
 
             # Filter out empty/invalid rows - keep only rows with valid clinic data
             initial_count = len(df_source)
@@ -1316,6 +1369,51 @@ class ExcelTransformer:
             total_extracted = extraction_methods['dedicated_column'] + extraction_methods['address4'] + extraction_methods['address1']
             logger.info(f"Success rate: {(total_extracted/len(df_transformed)*100):.1f}%" if len(df_transformed) > 0 else "N/A")
             logger.info("=" * 60)
+
+            # Filter out terminated clinics using dual-parameter matching (provider code + postal code)
+            if terminated_ids and 'clinic_id' in col_map:
+                initial_count = len(df_transformed)
+                clinic_id_col = col_map['clinic_id']
+
+                # Create termination matching mask
+                terminated_mask = []
+                for idx, row in df_transformed.iterrows():
+                    provider_code = str(df_source.iloc[idx][clinic_id_col]).strip() if pd.notna(df_source.iloc[idx][clinic_id_col]) else None
+                    postal_code = str(row['PostalCode']).strip() if pd.notna(row['PostalCode']) else None
+
+                    is_terminated = False
+                    if provider_code and postal_code:
+                        # Check for exact match (provider_code, postal_code)
+                        if (provider_code, postal_code) in terminated_ids:
+                            is_terminated = True
+                            if provider_code not in filtered_provider_codes:
+                                filtered_provider_codes.append(provider_code)
+                        # Check for fallback single-parameter match (provider_code, None)
+                        elif (provider_code, None) in terminated_ids:
+                            is_terminated = True
+                            if provider_code not in filtered_provider_codes:
+                                filtered_provider_codes.append(provider_code)
+
+                    terminated_mask.append(is_terminated)
+
+                # Apply filter to both dataframes
+                df_transformed = df_transformed[~pd.Series(terminated_mask, index=df_transformed.index)]
+                df_source = df_source[~pd.Series(terminated_mask, index=df_source.index)]
+
+                # Reset indices
+                df_transformed = df_transformed.reset_index(drop=True)
+                df_source = df_source.reset_index(drop=True)
+
+                terminated_count = initial_count - len(df_transformed)
+
+                logger.info("=" * 60)
+                logger.info(f"TERMINATION FILTERING COMPLETE")
+                logger.info(f"Filtered out {terminated_count} terminated clinics from sheet '{sheet_name}'")
+                logger.info(f"Matching criteria: Provider Code + Postal Code (dual-parameter)")
+                if filtered_provider_codes:
+                    logger.info(f"Filtered provider codes: {', '.join(filtered_provider_codes[:10])}" +
+                               (f" ... and {len(filtered_provider_codes)-10} more" if len(filtered_provider_codes) > 10 else ""))
+                logger.info("=" * 60)
 
             # Detect country from address information
             def detect_country(address):
@@ -1452,8 +1550,10 @@ class ExcelTransformer:
             for index, row in df_transformed.iterrows():
                 postal_code = row['PostalCode']
                 address = row['Address1']
+                country = row['Country']  # Get country to force region bias for Malaysia
 
-                lat, lng, method = geocoding_service.geocode(postal_code, address)
+                # Pass country to geocode method to force Malaysia region for Malaysian addresses
+                lat, lng, method = geocoding_service.geocode(postal_code, address, country=country)
                 latitudes.append(lat)
                 longitudes.append(lng)
                 geocoding_methods.append(method)
@@ -2074,12 +2174,13 @@ def geocode_address():
         
         postal_code = data.get('postal_code')
         address = data.get('address')
-        
+        country = data.get('country')  # Optional: 'SINGAPORE' or 'MALAYSIA' to force region bias
+
         if not postal_code and not address:
             return jsonify({'error': 'Either postal_code or address must be provided'}), 400
-        
+
         geocoding_service = GeocodingService()
-        lat, lng, method = geocoding_service.geocode(postal_code, address)
+        lat, lng, method = geocoding_service.geocode(postal_code, address, country=country)
         
         if lat is not None and lng is not None:
             google_maps_url = f"https://maps.google.com/?q={lat},{lng}"
