@@ -1328,14 +1328,13 @@ class ExcelTransformer:
 
             # Filter out empty/invalid rows - keep only rows with valid clinic data
             initial_count = len(df_source)
-            if 'clinic_id' in col_map and 'clinic_name' in col_map:
-                # For sheets with both clinic_id and clinic_name, filter by both
-                valid_id_mask = df_source[col_map['clinic_id']].notna() & (df_source[col_map['clinic_id']].astype(str).str.strip() != '')
-                valid_name_mask = df_source[col_map['clinic_name']].notna() & (df_source[col_map['clinic_name']].astype(str).str.strip() != '')
-                valid_mask = valid_id_mask & valid_name_mask
-            elif 'clinic_name' in col_map:
-                # Fallback: filter by clinic_name only
+            if 'clinic_name' in col_map:
+                # Filter by clinic_name (essential identifier)
+                # Provider code is optional - some valid clinics may have missing codes
                 valid_mask = df_source[col_map['clinic_name']].notna() & (df_source[col_map['clinic_name']].astype(str).str.strip() != '')
+            elif 'clinic_id' in col_map:
+                # Fallback: if no clinic_name, use clinic_id
+                valid_mask = df_source[col_map['clinic_id']].notna() & (df_source[col_map['clinic_id']].astype(str).str.strip() != '')
             else:
                 # Should not happen, but keep all rows if no clinic identifier found
                 valid_mask = pd.Series([True] * len(df_source))
