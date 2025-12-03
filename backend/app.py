@@ -2568,6 +2568,201 @@ def job_status(job_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+def extract_clinic_names_from_excel(file_path):
+    """
+    Extract clinic names from an Excel file by automatically detecting
+    the clinic name column across all sheets.
+    Returns a set of lowercase clinic names for case-insensitive matching.
+    """
+    clinic_names = set()
+
+    try:
+        # Read all sheets from the Excel file
+        excel_file = pd.ExcelFile(file_path)
+        logger.info(f"Processing {len(excel_file.sheet_names)} sheets from {os.path.basename(file_path)}")
+
+        for sheet_name in excel_file.sheet_names:
+            try:
+                # Read the sheet without header first to find the actual header row
+                df_raw = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
+                logger.info(f"Sheet '{sheet_name}': {len(df_raw)} rows, {len(df_raw.columns)} columns")
+
+                # Find the header row by looking for 'Clinic Name' column
+                header_row = None
+                for idx in range(min(20, len(df_raw))):
+                    row_values = [str(val) for val in df_raw.iloc[idx].values if pd.notna(val)]
+                    row_text_lower = ' | '.join(row_values).lower()
+                    # Look for specific header indicators
+                    if ('clinic name' in row_text_lower or 'clinic_name' in row_text_lower) and \
+                       ('s/n' in row_text_lower or 'code' in row_text_lower):
+                        header_row = idx
+                        logger.info(f"Found header row at index {idx} in sheet '{sheet_name}'")
+                        logger.info(f"Header values: {row_values[:10]}")
+                        break
+
+                # Read with correct header
+                if header_row is not None:
+                    df = pd.read_excel(file_path, sheet_name=sheet_name, header=header_row)
+                else:
+                    # Fallback: assume first row is header
+                    df = pd.read_excel(file_path, sheet_name=sheet_name)
+                    logger.warning(f"Could not find header row in sheet '{sheet_name}', using default")
+
+                # Find clinic name column with better pattern matching
+                clinic_name_col = None
+
+                # Log available columns for debugging
+                logger.info(f"Available columns in sheet '{sheet_name}': {list(df.columns)[:10]}")
+
+                for col in df.columns:
+                    col_str = str(col).lower().strip()
+                    # Check for various patterns
+                    if (('clinic' in col_str and 'name' in col_str) or
+                        col_str == 'clinic name' or
+                        col_str == 'clinic' or
+                        col_str == 'name' or
+                        'clinic_name' in col_str.replace(' ', '_')):
+                        clinic_name_col = col
+                        break
+
+                if clinic_name_col:
+                    logger.info(f"Found clinic name column: '{clinic_name_col}' in sheet '{sheet_name}'")
+                    # Extract clinic names and normalize (lowercase, strip whitespace)
+                    for name in df[clinic_name_col].dropna():
+                        if isinstance(name, str) and name.strip():
+                            clinic_names.add(name.strip().lower())
+                else:
+                    logger.warning(f"Could not find clinic name column in sheet '{sheet_name}'")
+
+            except Exception as sheet_error:
+                logger.error(f"Error processing sheet '{sheet_name}': {sheet_error}")
+                continue
+
+        logger.info(f"Extracted {len(clinic_names)} unique clinic names from {os.path.basename(file_path)}")
+        return clinic_names
+
+    except Exception as e:
+        logger.error(f"Error extracting clinic names from {file_path}: {e}")
+        raise
+
+@app.route('/match-clinics', methods=['POST'])
+def match_clinics():
+    """
+    Compare clinic names from two Excel files and return:
+    - Matched clinics (found in both files)
+    - Unmatched in base (only in base file)
+    - Unmatched in comparison (only in comparison file)
+    Results are automatically downloaded as an Excel file with 3 sheets.
+    """
+    try:
+        # Validate request
+        if 'base_file' not in request.files or 'comparison_file' not in request.files:
+            return jsonify({'error': 'Both base_file and comparison_file are required'}), 400
+
+        base_file = request.files['base_file']
+        comparison_file = request.files['comparison_file']
+
+        if base_file.filename == '' or comparison_file.filename == '':
+            return jsonify({'error': 'Both files must be selected'}), 400
+
+        # Validate file extensions
+        for file in [base_file, comparison_file]:
+            if not file.filename.lower().endswith(('.xlsx', '.xls')):
+                return jsonify({'error': f'Invalid file format for {file.filename}. Only Excel files are supported.'}), 400
+
+        # Save uploaded files temporarily
+        job_id = str(uuid.uuid4())
+        base_path = os.path.join(UPLOAD_FOLDER, f"{job_id}_base_{base_file.filename}")
+        comparison_path = os.path.join(UPLOAD_FOLDER, f"{job_id}_comparison_{comparison_file.filename}")
+
+        base_file.save(base_path)
+        comparison_file.save(comparison_path)
+
+        logger.info(f"Matching clinics: Base='{base_file.filename}', Comparison='{comparison_file.filename}'")
+
+        # Extract clinic names from both files
+        base_clinics = extract_clinic_names_from_excel(base_path)
+        comparison_clinics = extract_clinic_names_from_excel(comparison_path)
+
+        # Perform matching (case-insensitive)
+        matched = base_clinics.intersection(comparison_clinics)
+        unmatched_base = base_clinics - comparison_clinics
+        unmatched_comparison = comparison_clinics - base_clinics
+
+        logger.info(f"Match results: {len(matched)} matched, {len(unmatched_base)} unmatched in base, {len(unmatched_comparison)} unmatched in comparison")
+
+        # Create results Excel file with 3 sheets
+        results_filename = f"clinic_match_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        results_path = os.path.join(PROCESSED_FOLDER, results_filename)
+
+        with pd.ExcelWriter(results_path, engine='openpyxl') as writer:
+            # Sheet 1: Matched clinics
+            matched_df = pd.DataFrame({
+                'Clinic Name': sorted(matched, key=str.lower)
+            })
+            matched_df.index = range(1, len(matched_df) + 1)
+            matched_df.to_excel(writer, sheet_name='Matched', index=True, index_label='S/N')
+
+            # Sheet 2: Unmatched in Base
+            unmatched_base_df = pd.DataFrame({
+                'Clinic Name': sorted(unmatched_base, key=str.lower)
+            })
+            unmatched_base_df.index = range(1, len(unmatched_base_df) + 1)
+            unmatched_base_df.to_excel(writer, sheet_name='Unmatched in Base', index=True, index_label='S/N')
+
+            # Sheet 3: Unmatched in Comparison
+            unmatched_comparison_df = pd.DataFrame({
+                'Clinic Name': sorted(unmatched_comparison, key=str.lower)
+            })
+            unmatched_comparison_df.index = range(1, len(unmatched_comparison_df) + 1)
+            unmatched_comparison_df.to_excel(writer, sheet_name='Unmatched in Comparison', index=True, index_label='S/N')
+
+        # Clean up uploaded files
+        try:
+            os.remove(base_path)
+            os.remove(comparison_path)
+        except Exception as cleanup_error:
+            logger.warning(f"Failed to clean up uploaded files: {cleanup_error}")
+
+        # Return results
+        return jsonify({
+            'success': True,
+            'matched_count': len(matched),
+            'unmatched_base_count': len(unmatched_base),
+            'unmatched_comparison_count': len(unmatched_comparison),
+            'download_filename': results_filename,
+            'base_total': len(base_clinics),
+            'comparison_total': len(comparison_clinics)
+        })
+
+    except Exception as e:
+        logger.error(f"Error in match_clinics: {e}\n{traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/download-match/<filename>', methods=['GET'])
+def download_match_result(filename):
+    """Download clinic matching results file"""
+    try:
+        file_path = os.path.join(PROCESSED_FOLDER, filename)
+
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found'}), 404
+
+        # Verify it's a safe filename (no path traversal)
+        if '..' in filename or '/' in filename or '\\' in filename:
+            return jsonify({'error': 'Invalid filename'}), 400
+
+        return send_file(
+            file_path,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+    except Exception as e:
+        logger.error(f"Error downloading match result: {e}")
+        return jsonify({'error': str(e)}), 500
+
 def startup_check():
     """Perform startup checks to ensure all dependencies are available"""
     try:

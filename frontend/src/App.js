@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import FileUpload from './components/FileUpload';
 import ProcessingStatus from './components/ProcessingStatus';
+import ClinicMatcher from './components/ClinicMatcher';
 import apiService from './services/api';
 import './index.css';
 
 function App() {
+  const [activeTab, setActiveTab] = useState('transformer'); // 'transformer' or 'matcher'
   const [processingStatus, setProcessingStatus] = useState('idle');
   const [result, setResult] = useState(null);
   const [backendHealth, setBackendHealth] = useState(null);
@@ -160,6 +162,30 @@ function App() {
           <h1 className="text-4xl font-bold text-gray-800 mb-4">
             Excel Template Transformer
           </h1>
+
+          {/* Tab Navigation */}
+          <div className="flex justify-center space-x-2 mt-6">
+            <button
+              onClick={() => setActiveTab('transformer')}
+              className={`px-6 py-2 font-medium rounded-lg transition-colors ${
+                activeTab === 'transformer'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+              }`}
+            >
+              Excel Transformer
+            </button>
+            <button
+              onClick={() => setActiveTab('matcher')}
+              className={`px-6 py-2 font-medium rounded-lg transition-colors ${
+                activeTab === 'matcher'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+              }`}
+            >
+              Clinic Matcher
+            </button>
+          </div>
         </header>
 
         {/* Backend Status Indicator */}
@@ -191,7 +217,7 @@ function App() {
                 </code>
               </div>
             </div>
-          ) : (
+          ) : activeTab === 'transformer' ? (
             <>
               {/* File Upload Component */}
               <FileUpload
@@ -378,6 +404,11 @@ function App() {
                   onReset={handleReset}
                 />
               )}
+            </>
+          ) : (
+            <>
+              {/* Clinic Matcher Component */}
+              <ClinicMatcher />
             </>
           )}
 
