@@ -305,48 +305,68 @@ const ClinicMatcher = () => {
       )}
 
       {/* Results Display */}
-      {results && (
-        <div className="card bg-green-50 border border-green-200">
-          <h3 className="text-lg font-semibold text-green-900 mb-4">
-            Matching Complete!
-          </h3>
+      {results && (() => {
+        const totalBase = results.matched_count + results.unmatched_base_count;
+        const totalComparison = results.matched_count + results.unmatched_comparison_count;
+        const matchedPercentage = totalBase > 0 ? ((results.matched_count / totalBase) * 100).toFixed(1) : 0;
+        const unmatchedBasePercentage = totalBase > 0 ? ((results.unmatched_base_count / totalBase) * 100).toFixed(1) : 0;
+        const unmatchedComparisonPercentage = totalComparison > 0 ? ((results.unmatched_comparison_count / totalComparison) * 100).toFixed(1) : 0;
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-            <div className="bg-white rounded-lg p-4 border border-green-300">
-              <div className="text-3xl font-bold text-green-600">{results.matched_count}</div>
-              <div className="text-sm text-gray-600 mt-1">Matched Clinics</div>
-              <div className="text-xs text-gray-500 mt-1">Found in both files</div>
-            </div>
-            <div className="bg-white rounded-lg p-4 border border-orange-300">
-              <div className="text-3xl font-bold text-orange-600">{results.unmatched_base_count}</div>
-              <div className="text-sm text-gray-600 mt-1">Only in Base</div>
-              <div className="text-xs text-gray-500 mt-1">Not found in comparison</div>
-            </div>
-            <div className="bg-white rounded-lg p-4 border border-purple-300">
-              <div className="text-3xl font-bold text-purple-600">{results.unmatched_comparison_count}</div>
-              <div className="text-sm text-gray-600 mt-1">Only in Comparison</div>
-              <div className="text-xs text-gray-500 mt-1">Not found in base</div>
-            </div>
-          </div>
+        return (
+          <div className="card bg-green-50 border border-green-200">
+            <h3 className="text-lg font-semibold text-green-900 mb-4">
+              Matching Complete!
+            </h3>
 
-          <div className="bg-white rounded-lg p-4 border border-green-300">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-900">Results File Downloaded</p>
-                <p className="text-xs text-gray-600 mt-1">
-                  File: <span className="font-mono">{results.download_filename}</span>
-                </p>
-                <p className="text-xs text-gray-500 mt-1">
-                  Contains 3 sheets: Matched, Unmatched in Base, Unmatched in Comparison
-                </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <div className="bg-white rounded-lg p-4 border border-green-300">
+                <div className="text-3xl font-bold text-green-600">{results.matched_count}</div>
+                <div className="text-sm text-gray-600 mt-1">Matched Clinics</div>
+                <div className="text-xs text-gray-500 mt-1">Found in both files</div>
+                <div className="mt-2 pt-2 border-t border-green-200">
+                  <div className="text-lg font-semibold text-green-700">{matchedPercentage}%</div>
+                  <div className="text-xs text-gray-500">of base file</div>
+                </div>
               </div>
-              <svg className="h-8 w-8 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-              </svg>
+              <div className="bg-white rounded-lg p-4 border border-orange-300">
+                <div className="text-3xl font-bold text-orange-600">{results.unmatched_base_count}</div>
+                <div className="text-sm text-gray-600 mt-1">Only in Base</div>
+                <div className="text-xs text-gray-500 mt-1">Not found in comparison</div>
+                <div className="mt-2 pt-2 border-t border-orange-200">
+                  <div className="text-lg font-semibold text-orange-700">{unmatchedBasePercentage}%</div>
+                  <div className="text-xs text-gray-500">of base file</div>
+                </div>
+              </div>
+              <div className="bg-white rounded-lg p-4 border border-purple-300">
+                <div className="text-3xl font-bold text-purple-600">{results.unmatched_comparison_count}</div>
+                <div className="text-sm text-gray-600 mt-1">Only in Comparison</div>
+                <div className="text-xs text-gray-500 mt-1">Not found in base</div>
+                <div className="mt-2 pt-2 border-t border-purple-200">
+                  <div className="text-lg font-semibold text-purple-700">{unmatchedComparisonPercentage}%</div>
+                  <div className="text-xs text-gray-500">of comparison file</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg p-4 border border-green-300">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Results File Downloaded</p>
+                  <p className="text-xs text-gray-600 mt-1">
+                    File: <span className="font-mono">{results.download_filename}</span>
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Contains 3 sheets: Matched, Unmatched in Base, Unmatched in Comparison
+                  </p>
+                </div>
+                <svg className="h-8 w-8 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };
