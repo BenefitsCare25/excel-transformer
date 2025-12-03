@@ -17,7 +17,11 @@ const ClinicMatcher = () => {
     }
   }, []);
 
-  const baseDropzone = useDropzone({
+  const {
+    getRootProps: getBaseRootProps,
+    getInputProps: getBaseInputProps,
+    isDragActive: isBaseDragActive
+  } = useDropzone({
     onDrop: onDropBase,
     accept: {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
@@ -36,7 +40,11 @@ const ClinicMatcher = () => {
     }
   }, []);
 
-  const comparisonDropzone = useDropzone({
+  const {
+    getRootProps: getComparisonRootProps,
+    getInputProps: getComparisonInputProps,
+    isDragActive: isComparisonDragActive
+  } = useDropzone({
     onDrop: onDropComparison,
     accept: {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
@@ -100,71 +108,6 @@ const ClinicMatcher = () => {
     setError(null);
   };
 
-  const DropzoneArea = ({ dropzone, file, title, description }) => (
-    <div className="flex-1">
-      <h3 className="text-lg font-semibold text-gray-800 mb-3">{title}</h3>
-      <div
-        {...dropzone.getRootProps()}
-        className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
-          dropzone.isDragActive
-            ? 'border-blue-500 bg-blue-50'
-            : file
-            ? 'border-green-500 bg-green-50'
-            : 'border-gray-300 hover:border-gray-400 bg-white'
-        } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
-      >
-        <input {...dropzone.getInputProps()} />
-
-        {file ? (
-          <div className="space-y-3">
-            <div className="w-16 h-16 mx-auto text-green-600">
-              <svg fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-900">{file.name}</p>
-              <p className="text-xs text-gray-500 mt-1">
-                {(file.size / (1024 * 1024)).toFixed(2)} MB
-              </p>
-            </div>
-            {!isProcessing && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (title.includes('Base')) {
-                    setBaseFile(null);
-                  } else {
-                    setComparisonFile(null);
-                  }
-                  setResults(null);
-                  setError(null);
-                }}
-                className="text-xs text-red-600 hover:text-red-700 font-medium"
-              >
-                Remove
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <div className="w-12 h-12 mx-auto text-gray-400">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-700">
-                {dropzone.isDragActive ? 'Drop file here' : 'Drop file or click to browse'}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">{description}</p>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-
   return (
     <div className="space-y-6">
       {/* Instructions Card */}
@@ -190,18 +133,125 @@ const ClinicMatcher = () => {
       {/* Dual Upload Section */}
       <div className="card">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <DropzoneArea
-            dropzone={baseDropzone}
-            file={baseFile}
-            title="Base File (Master List)"
-            description="Upload your master clinic list"
-          />
-          <DropzoneArea
-            dropzone={comparisonDropzone}
-            file={comparisonFile}
-            title="Comparison File"
-            description="Upload file to compare against base"
-          />
+          {/* Base File Dropzone */}
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-gray-800 mb-3">Base File (Master List)</h3>
+            <div
+              {...getBaseRootProps()}
+              className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                isBaseDragActive
+                  ? 'border-blue-500 bg-blue-50'
+                  : baseFile
+                  ? 'border-green-500 bg-green-50'
+                  : 'border-gray-300 hover:border-gray-400 bg-white'
+              } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <input {...getBaseInputProps()} />
+
+              {baseFile ? (
+                <div className="space-y-3">
+                  <div className="w-16 h-16 mx-auto text-green-600">
+                    <svg fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{baseFile.name}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {(baseFile.size / (1024 * 1024)).toFixed(2)} MB
+                    </p>
+                  </div>
+                  {!isProcessing && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setBaseFile(null);
+                        setResults(null);
+                        setError(null);
+                      }}
+                      className="text-xs text-red-600 hover:text-red-700 font-medium"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="w-12 h-12 mx-auto text-gray-400">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">
+                      {isBaseDragActive ? 'Drop file here' : 'Drop file or click to browse'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">Upload your master clinic list</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Comparison File Dropzone */}
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-gray-800 mb-3">Comparison File</h3>
+            <div
+              {...getComparisonRootProps()}
+              className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                isComparisonDragActive
+                  ? 'border-blue-500 bg-blue-50'
+                  : comparisonFile
+                  ? 'border-green-500 bg-green-50'
+                  : 'border-gray-300 hover:border-gray-400 bg-white'
+              } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <input {...getComparisonInputProps()} />
+
+              {comparisonFile ? (
+                <div className="space-y-3">
+                  <div className="w-16 h-16 mx-auto text-green-600">
+                    <svg fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{comparisonFile.name}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {(comparisonFile.size / (1024 * 1024)).toFixed(2)} MB
+                    </p>
+                  </div>
+                  {!isProcessing && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setComparisonFile(null);
+                        setResults(null);
+                        setError(null);
+                      }}
+                      className="text-xs text-red-600 hover:text-red-700 font-medium"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="w-12 h-12 mx-auto text-gray-400">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">
+                      {isComparisonDragActive ? 'Drop file here' : 'Drop file or click to browse'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">Upload file to compare against base</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Action Buttons */}
