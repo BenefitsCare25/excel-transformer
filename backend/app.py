@@ -782,14 +782,14 @@ class ExcelTransformer:
                     return ''
                 # Convert to string and remove any decimal points
                 code_str = str(x).strip()
-                # If it's a number with decimal (e.g., "330047.0"), convert to int first
+                # If it's a number with decimal (e.g., "330047.0" or "80050.0"), convert to int first
                 if '.' in code_str:
                     try:
                         code_str = str(int(float(code_str)))
                     except (ValueError, OverflowError):
                         pass
-                # Ensure 6-digit format with leading zeros
-                return code_str.zfill(6)
+                # Return as-is without padding - preserve original length (5 digits for Malaysia, 6 for Singapore)
+                return code_str
             
             df['PostalCode'] = df['PostalCode'].apply(format_code)
         return df
