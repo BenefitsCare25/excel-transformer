@@ -774,6 +774,59 @@ class ExcelTransformer:
         return sanitized.strip('_')
 
     @staticmethod
+    def format_postal_codes(df):
+        """Format PostalCode column as string to preserve leading zeros and prevent decimal notation"""
+        if 'PostalCode' in df.columns:
+            def format_code(x):
+                if pd.isna(x) or str(x).strip() in ('', 'None', 'nan'):
+                    return ''
+                # Convert to string and remove any decimal points
+                code_str = str(x).strip()
+                # If it's a number with decimal (e.g., "330047.0"), convert to int first
+                if '.' in code_str:
+                    try:
+                        code_str = str(int(float(code_str)))
+                    except (ValueError, OverflowError):
+                        pass
+                # Ensure 6-digit format with leading zeros
+                return code_str.zfill(6)
+            
+            df['PostalCode'] = df['PostalCode'].apply(format_code)
+        return df
+    
+    @staticmethod
+    def write_excel_with_text_postal_codes(df, file_path):
+        """Write DataFrame to Excel with PostalCode column formatted as text"""
+        from openpyxl import load_workbook
+        from openpyxl.styles import numbers
+        
+        # Write the DataFrame to Excel
+        df.to_excel(file_path, index=False, engine='openpyxl')
+        
+        # Open the workbook and apply text formatting to PostalCode column
+        if 'PostalCode' in df.columns:
+            wb = load_workbook(file_path)
+            ws = wb.active
+            
+            # Find the PostalCode column index
+            postal_col_idx = None
+            for idx, cell in enumerate(ws[1], start=1):
+                if cell.value == 'PostalCode':
+                    postal_col_idx = idx
+                    break
+            
+            if postal_col_idx:
+                # Apply text format to the entire PostalCode column
+                for row in range(2, ws.max_row + 1):
+                    cell = ws.cell(row=row, column=postal_col_idx)
+                    cell.number_format = '@'  # '@' is the Excel format code for text
+            
+            wb.save(file_path)
+        
+        return file_path
+
+
+    @staticmethod
     def map_columns(df_columns):
         """Robust column mapping with fuzzy matching and multiple file format support"""
         import re
@@ -1805,7 +1858,8 @@ class ExcelTransformer:
                             sanitized_name = ExcelTransformer.sanitize_filename(sheet)
                             sg_filename = f"{job_id}_{sanitized_name}_Singapore.xlsx"
                             sg_path = os.path.join(output_dir, sg_filename)
-                            df_sg.to_excel(sg_path, index=False)
+                            df_sg = ExcelTransformer.format_postal_codes(df_sg)
+                            ExcelTransformer.write_excel_with_text_postal_codes(df_sg, sg_path)
 
                             # Use "SINGAPORE" for Singapore data, regardless of original sheet name
                             sg_display_name = "SINGAPORE"
@@ -1830,7 +1884,8 @@ class ExcelTransformer:
                             sanitized_name = ExcelTransformer.sanitize_filename(sheet)
                             my_filename = f"{job_id}_{sanitized_name}_Malaysia.xlsx"
                             my_path = os.path.join(output_dir, my_filename)
-                            df_my.to_excel(my_path, index=False)
+                            df_my = ExcelTransformer.format_postal_codes(df_my)
+                            ExcelTransformer.write_excel_with_text_postal_codes(df_my, my_path)
 
                             # Use "MALAYSIA" for Malaysia data, regardless of original sheet name
                             my_display_name = "MALAYSIA"
@@ -1858,7 +1913,8 @@ class ExcelTransformer:
                         output_path = os.path.join(output_dir, output_filename)
 
                         # Save the transformed dataframe
-                        df.to_excel(output_path, index=False)
+                        df = ExcelTransformer.format_postal_codes(df)
+                        ExcelTransformer.write_excel_with_text_postal_codes(df, output_path)
 
                         # Store result info
                         sheet_result = {
