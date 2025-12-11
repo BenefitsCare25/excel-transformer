@@ -2748,6 +2748,180 @@ def extract_clinic_names_from_excel(file_path):
         logger.error(f"Error extracting clinic names from {file_path}: {e}")
         raise
 
+def generate_utilisation_report(file_path, exclude_polyclinics=False, exclude_hospitals=False):
+    """
+    Generate utilisation report from Excel file with clinic visit and amount data.
+
+    Args:
+        file_path: Path to the Excel file with utilization data
+        exclude_polyclinics: Boolean to filter out polyclinics
+        exclude_hospitals: Boolean to filter out government hospitals
+
+    Returns:
+        tuple: (report_filename, total_visits, total_amount, clinic_count)
+    """
+    try:
+        # Read all sheets from the Excel file
+        excel_file = pd.ExcelFile(file_path)
+        all_data = []
+
+        logger.info(f"Generating utilisation report from {os.path.basename(file_path)}")
+        logger.info(f"Processing {len(excel_file.sheet_names)} sheets")
+
+        # Combine all sheets into single DataFrame
+        for sheet_name in excel_file.sheet_names:
+            try:
+                df = pd.read_excel(file_path, sheet_name=sheet_name)
+                logger.info(f"Sheet '{sheet_name}': {len(df)} rows")
+                all_data.append(df)
+            except Exception as sheet_error:
+                logger.error(f"Error reading sheet '{sheet_name}': {sheet_error}")
+                continue
+
+        if not all_data:
+            raise ValueError("No valid data found in Excel file")
+
+        # Combine all sheets
+        combined_df = pd.concat(all_data, ignore_index=True)
+        logger.info(f"Combined data: {len(combined_df)} total rows")
+
+        # Find clinic name column
+        clinic_col = None
+        for col in combined_df.columns:
+            col_str = str(col).lower().strip()
+            if 'clinic' in col_str and 'name' in col_str:
+                clinic_col = col
+                break
+
+        if clinic_col is None:
+            # Fallback: look for just 'clinic' or 'name'
+            for col in combined_df.columns:
+                col_str = str(col).lower().strip()
+                if col_str in ['clinic name', 'clinic', 'name']:
+                    clinic_col = col
+                    break
+
+        if clinic_col is None:
+            raise ValueError("Could not find 'Clinic Name' column in Excel file")
+
+        logger.info(f"Using clinic name column: '{clinic_col}'")
+
+        # Find incurred amount column
+        amount_col = None
+        for col in combined_df.columns:
+            col_str = str(col).lower().strip()
+            if 'incurred' in col_str and ('amt' in col_str or 'amount' in col_str):
+                amount_col = col
+                break
+
+        if amount_col is None:
+            raise ValueError("Could not find 'INCURRED AMT. ($)' column in Excel file")
+
+        logger.info(f"Using amount column: '{amount_col}'")
+
+        # Clean data: remove rows with empty clinic names
+        combined_df = combined_df[combined_df[clinic_col].notna()]
+        combined_df = combined_df[combined_df[clinic_col].astype(str).str.strip() != '']
+
+        # Normalize clinic names (strip whitespace)
+        combined_df['Clinic Name Normalized'] = combined_df[clinic_col].astype(str).str.strip()
+
+        # Convert amount to numeric (coerce errors to 0)
+        combined_df['Amount Numeric'] = pd.to_numeric(combined_df[amount_col], errors='coerce').fillna(0)
+
+        logger.info(f"After cleaning: {len(combined_df)} rows")
+
+        # Apply filters if requested
+        if exclude_polyclinics or exclude_hospitals:
+            # Create lowercase version for filtering
+            combined_df['Clinic Name Lower'] = combined_df['Clinic Name Normalized'].str.lower()
+
+            before_filter = len(combined_df)
+
+            if exclude_polyclinics:
+                combined_df = combined_df[~combined_df['Clinic Name Lower'].str.contains('polyclinic', na=False)]
+                logger.info(f"After polyclinic filter: {len(combined_df)} rows (removed {before_filter - len(combined_df)})")
+                before_filter = len(combined_df)
+
+            if exclude_hospitals:
+                # Filter out government hospitals
+                hospital_mask = combined_df['Clinic Name Lower'].apply(
+                    lambda x: any(hosp in x for hosp in GOVERNMENT_HOSPITALS)
+                )
+                combined_df = combined_df[~hospital_mask]
+                logger.info(f"After hospital filter: {len(combined_df)} rows (removed {before_filter - len(combined_df)})")
+
+        if len(combined_df) == 0:
+            raise ValueError("No data remaining after filtering")
+
+        # Group by clinic name and aggregate
+        utilisation_summary = combined_df.groupby('Clinic Name Normalized').agg({
+            'Amount Numeric': 'sum',
+            clinic_col: 'count'  # Count visits
+        }).reset_index()
+
+        # Rename columns
+        utilisation_summary.columns = ['Clinic Name', 'Total Utilisation Amount ($)', 'Number of Visits']
+
+        # Reorder columns to match expected format
+        utilisation_summary = utilisation_summary[['Clinic Name', 'Number of Visits', 'Total Utilisation Amount ($)']]
+
+        # Sort by Number of Visits (descending)
+        utilisation_summary = utilisation_summary.sort_values('Number of Visits', ascending=False)
+
+        # Reset index
+        utilisation_summary = utilisation_summary.reset_index(drop=True)
+
+        logger.info(f"Utilisation summary: {len(utilisation_summary)} clinics")
+
+        # Calculate totals
+        total_visits = int(utilisation_summary['Number of Visits'].sum())
+        total_amount = float(utilisation_summary['Total Utilisation Amount ($)'].sum())
+        clinic_count = len(utilisation_summary)
+
+        logger.info(f"Totals: {total_visits} visits, ${total_amount:.2f}, {clinic_count} clinics")
+
+        # Generate Excel file
+        report_filename = f"utilisation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        report_path = os.path.join(PROCESSED_FOLDER, report_filename)
+
+        with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
+            utilisation_summary.to_excel(writer, sheet_name='Clinic Summary', index=False)
+
+            # Get worksheet for formatting
+            ws = writer.sheets['Clinic Summary']
+
+            # Format currency column (C) with dollar sign
+            for row in range(2, len(utilisation_summary) + 2):
+                cell = ws[f'C{row}']
+                cell.number_format = '$#,##0.00'
+
+            # Auto-adjust column widths
+            for column in ws.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if cell.value:
+                            max_length = max(max_length, len(str(cell.value)))
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 50)  # Cap at 50
+                ws.column_dimensions[column_letter].width = adjusted_width
+
+            # Bold headers
+            from openpyxl.styles import Font
+            for cell in ws[1]:
+                cell.font = Font(bold=True)
+
+        logger.info(f"Utilisation report saved: {report_filename}")
+
+        return report_filename, total_visits, total_amount, clinic_count
+
+    except Exception as e:
+        logger.error(f"Error generating utilisation report: {e}\n{traceback.format_exc()}")
+        raise
+
 @app.route('/match-clinics', methods=['POST'])
 def match_clinics():
     """
@@ -2784,9 +2958,11 @@ def match_clinics():
         # Get filter parameters
         exclude_polyclinics = request.form.get('exclude_polyclinics', 'false').lower() == 'true'
         exclude_hospitals = request.form.get('exclude_hospitals', 'false').lower() == 'true'
+        generate_report = request.form.get('generate_report', 'false').lower() == 'true'
 
         logger.info(f"Matching clinics: Base='{base_file.filename}', Comparison='{comparison_file.filename}'")
         logger.info(f"Filters: exclude_polyclinics={exclude_polyclinics}, exclude_hospitals={exclude_hospitals}")
+        logger.info(f"Generate utilisation report: {generate_report}")
 
         # Extract clinic names from both files
         base_clinics = extract_clinic_names_from_excel(base_path)
@@ -2861,6 +3037,23 @@ def match_clinics():
             unmatched_comparison_df.index = range(1, len(unmatched_comparison_df) + 1)
             unmatched_comparison_df.to_excel(writer, sheet_name='Unmatched in Comparison', index=True, index_label='S/N')
 
+        # Generate utilisation report if requested
+        report_filename = None
+        total_visits = 0
+        total_amount = 0.0
+        clinic_count = 0
+
+        if generate_report:
+            try:
+                logger.info("Generating utilisation report from base file...")
+                report_filename, total_visits, total_amount, clinic_count = generate_utilisation_report(
+                    base_path, exclude_polyclinics, exclude_hospitals
+                )
+                logger.info(f"Utilisation report generated: {report_filename}")
+            except Exception as report_error:
+                logger.error(f"Failed to generate utilisation report: {report_error}")
+                # Continue with matching results even if report generation fails
+
         # Clean up uploaded files
         try:
             os.remove(base_path)
@@ -2869,7 +3062,7 @@ def match_clinics():
             logger.warning(f"Failed to clean up uploaded files: {cleanup_error}")
 
         # Return results with filter breakdown
-        return jsonify({
+        response_data = {
             'success': True,
             'matched_count': len(matched),
             'unmatched_base_count': len(unmatched_base),
@@ -2883,7 +3076,16 @@ def match_clinics():
             'comparison_hospitals_filtered': comparison_hospitals_filtered,
             'base_total_after_filter': len(base_clinics),
             'comparison_total_after_filter': len(comparison_clinics)
-        })
+        }
+
+        # Add utilisation report data if generated
+        if report_filename:
+            response_data['utilisation_report_filename'] = report_filename
+            response_data['total_visits'] = total_visits
+            response_data['total_amount'] = total_amount
+            response_data['clinic_count'] = clinic_count
+
+        return jsonify(response_data)
 
     except Exception as e:
         logger.error(f"Error in match_clinics: {e}\n{traceback.format_exc()}")

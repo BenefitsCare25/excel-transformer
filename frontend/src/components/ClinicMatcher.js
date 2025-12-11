@@ -9,6 +9,7 @@ const ClinicMatcher = () => {
   const [error, setError] = useState(null);
   const [excludePolyclinics, setExcludePolyclinics] = useState(false);
   const [excludeHospitals, setExcludeHospitals] = useState(false);
+  const [generateReport, setGenerateReport] = useState(false);
 
   // Base file dropzone
   const onDropBase = useCallback((acceptedFiles) => {
@@ -71,6 +72,7 @@ const ClinicMatcher = () => {
     formData.append('comparison_file', comparisonFile);
     formData.append('exclude_polyclinics', excludePolyclinics);
     formData.append('exclude_hospitals', excludeHospitals);
+    formData.append('generate_report', generateReport);
 
     try {
       const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
@@ -112,6 +114,18 @@ const ClinicMatcher = () => {
     setError(null);
     setExcludePolyclinics(false);
     setExcludeHospitals(false);
+    setGenerateReport(false);
+  };
+
+  const downloadUtilisationReport = (filename) => {
+    const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+    const downloadUrl = `${apiUrl}/download-match/${filename}`;
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (
@@ -290,6 +304,19 @@ const ClinicMatcher = () => {
                 <p className="text-xs text-gray-500">Filter out 11 government hospitals (SGH, CGH, NUH, TTSH, etc.)</p>
               </div>
             </label>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={generateReport}
+                onChange={(e) => setGenerateReport(e.target.checked)}
+                disabled={isProcessing}
+                className="mt-1"
+              />
+              <div>
+                <span className="font-medium text-gray-800">Generate Utilisation Report from Base File</span>
+                <p className="text-xs text-gray-500">Create a summary report with clinic names, visit counts, and total amounts</p>
+              </div>
+            </label>
           </div>
         </div>
 
@@ -412,6 +439,46 @@ const ClinicMatcher = () => {
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* Utilisation Report Section */}
+            {results.utilisation_report_filename && (
+              <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <p className="text-sm font-semibold text-blue-900">Utilisation Report Generated</p>
+                    <p className="text-xs text-gray-600 mt-1">
+                      File: <span className="font-mono">{results.utilisation_report_filename}</span>
+                    </p>
+                  </div>
+                  <svg className="h-6 w-6 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
+                    <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
+                  </svg>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3 mb-3">
+                  <div className="bg-white rounded p-3 border border-blue-300">
+                    <div className="text-2xl font-bold text-blue-600">{results.clinic_count}</div>
+                    <div className="text-xs text-gray-600">Clinics</div>
+                  </div>
+                  <div className="bg-white rounded p-3 border border-blue-300">
+                    <div className="text-2xl font-bold text-blue-600">{results.total_visits.toLocaleString()}</div>
+                    <div className="text-xs text-gray-600">Total Visits</div>
+                  </div>
+                  <div className="bg-white rounded p-3 border border-blue-300">
+                    <div className="text-2xl font-bold text-blue-600">${results.total_amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                    <div className="text-xs text-gray-600">Total Amount</div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => downloadUtilisationReport(results.utilisation_report_filename)}
+                  className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Download Utilisation Report
+                </button>
               </div>
             )}
 
