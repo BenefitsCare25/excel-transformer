@@ -50,6 +50,22 @@ POSTAL_CODE_PATHS = [
     'postal_code_master.xlsx',  # Current directory
 ]
 
+# Government hospitals to exclude from clinic matching (with common abbreviations)
+GOVERNMENT_HOSPITALS = {
+    'alexandra hospital',
+    'changi general hospital', 'cgh',
+    'institute of mental health', 'imh',
+    'khoo teck puat hospital', 'ktph',
+    'kk women\'s and children\'s hospital', 'kkh',
+    'national university hospital', 'nuh',
+    'ng teng fong general hospital',
+    'jurong community hospital',  # Part of combined entry
+    'sengkang general hospital', 'skh',
+    'singapore general hospital', 'sgh',
+    'tan tock seng hospital', 'ttsh',
+    'woodlands health',
+}
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 
@@ -2624,6 +2640,37 @@ def job_status(job_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+def filter_excluded_clinics(clinic_names_set, exclude_polyclinics, exclude_hospitals):
+    """
+    Filter clinic names by removing polyclinics and/or government hospitals.
+
+    Args:
+        clinic_names_set: Set of lowercase clinic names
+        exclude_polyclinics: Boolean flag to remove polyclinics
+        exclude_hospitals: Boolean flag to remove government hospitals
+
+    Returns:
+        tuple: (filtered_set, polyclinic_count, hospital_count)
+    """
+    filtered_set = clinic_names_set.copy()
+    polyclinic_count = 0
+    hospital_count = 0
+
+    if exclude_polyclinics:
+        polyclinics = {name for name in filtered_set if 'polyclinic' in name}
+        polyclinic_count = len(polyclinics)
+        filtered_set -= polyclinics
+        logger.debug(f"Filtered {polyclinic_count} polyclinics")
+
+    if exclude_hospitals:
+        hospitals = {name for name in filtered_set
+                     if any(hosp in name for hosp in GOVERNMENT_HOSPITALS)}
+        hospital_count = len(hospitals)
+        filtered_set -= hospitals
+        logger.debug(f"Filtered {hospital_count} hospitals")
+
+    return filtered_set, polyclinic_count, hospital_count
+
 def extract_clinic_names_from_excel(file_path):
     """
     Extract clinic names from an Excel file by automatically detecting
@@ -2734,11 +2781,52 @@ def match_clinics():
         base_file.save(base_path)
         comparison_file.save(comparison_path)
 
+        # Get filter parameters
+        exclude_polyclinics = request.form.get('exclude_polyclinics', 'false').lower() == 'true'
+        exclude_hospitals = request.form.get('exclude_hospitals', 'false').lower() == 'true'
+
         logger.info(f"Matching clinics: Base='{base_file.filename}', Comparison='{comparison_file.filename}'")
+        logger.info(f"Filters: exclude_polyclinics={exclude_polyclinics}, exclude_hospitals={exclude_hospitals}")
 
         # Extract clinic names from both files
         base_clinics = extract_clinic_names_from_excel(base_path)
         comparison_clinics = extract_clinic_names_from_excel(comparison_path)
+
+        logger.info(f"Extracted clinics: Base={len(base_clinics)}, Comparison={len(comparison_clinics)}")
+
+        # Apply filters if requested
+        base_polyclinics_filtered = 0
+        base_hospitals_filtered = 0
+        comparison_polyclinics_filtered = 0
+        comparison_hospitals_filtered = 0
+
+        if exclude_polyclinics or exclude_hospitals:
+            # Filter base clinics
+            base_clinics_filtered, base_polyclinics_filtered, base_hospitals_filtered = filter_excluded_clinics(
+                base_clinics, exclude_polyclinics, exclude_hospitals
+            )
+
+            # Filter comparison clinics
+            comparison_clinics_filtered, comparison_polyclinics_filtered, comparison_hospitals_filtered = filter_excluded_clinics(
+                comparison_clinics, exclude_polyclinics, exclude_hospitals
+            )
+
+            logger.info(f"Base: Filtered {base_polyclinics_filtered} polyclinics, {base_hospitals_filtered} hospitals")
+            logger.info(f"Comparison: Filtered {comparison_polyclinics_filtered} polyclinics, {comparison_hospitals_filtered} hospitals")
+
+            # Validate that we have clinics remaining after filtering
+            if len(base_clinics_filtered) == 0 or len(comparison_clinics_filtered) == 0:
+                return jsonify({
+                    'error': 'All clinics were filtered out. Please adjust filter settings.',
+                    'base_total': len(base_clinics),
+                    'comparison_total': len(comparison_clinics),
+                    'base_filtered_out': base_polyclinics_filtered + base_hospitals_filtered,
+                    'comparison_filtered_out': comparison_polyclinics_filtered + comparison_hospitals_filtered
+                }), 400
+
+            # Use filtered sets for matching
+            base_clinics = base_clinics_filtered
+            comparison_clinics = comparison_clinics_filtered
 
         # Perform matching (case-insensitive)
         matched = base_clinics.intersection(comparison_clinics)
@@ -2780,7 +2868,7 @@ def match_clinics():
         except Exception as cleanup_error:
             logger.warning(f"Failed to clean up uploaded files: {cleanup_error}")
 
-        # Return results
+        # Return results with filter breakdown
         return jsonify({
             'success': True,
             'matched_count': len(matched),
@@ -2788,7 +2876,13 @@ def match_clinics():
             'unmatched_comparison_count': len(unmatched_comparison),
             'download_filename': results_filename,
             'base_total': len(base_clinics),
-            'comparison_total': len(comparison_clinics)
+            'comparison_total': len(comparison_clinics),
+            'base_polyclinics_filtered': base_polyclinics_filtered,
+            'base_hospitals_filtered': base_hospitals_filtered,
+            'comparison_polyclinics_filtered': comparison_polyclinics_filtered,
+            'comparison_hospitals_filtered': comparison_hospitals_filtered,
+            'base_total_after_filter': len(base_clinics),
+            'comparison_total_after_filter': len(comparison_clinics)
         })
 
     except Exception as e:

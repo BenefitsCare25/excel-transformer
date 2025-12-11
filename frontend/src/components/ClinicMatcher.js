@@ -7,6 +7,8 @@ const ClinicMatcher = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
+  const [excludePolyclinics, setExcludePolyclinics] = useState(false);
+  const [excludeHospitals, setExcludeHospitals] = useState(false);
 
   // Base file dropzone
   const onDropBase = useCallback((acceptedFiles) => {
@@ -67,6 +69,8 @@ const ClinicMatcher = () => {
     const formData = new FormData();
     formData.append('base_file', baseFile);
     formData.append('comparison_file', comparisonFile);
+    formData.append('exclude_polyclinics', excludePolyclinics);
+    formData.append('exclude_hospitals', excludeHospitals);
 
     try {
       const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
@@ -106,6 +110,8 @@ const ClinicMatcher = () => {
     setComparisonFile(null);
     setResults(null);
     setError(null);
+    setExcludePolyclinics(false);
+    setExcludeHospitals(false);
   };
 
   return (
@@ -254,6 +260,39 @@ const ClinicMatcher = () => {
           </div>
         </div>
 
+        {/* Filter Options */}
+        <div className="mt-6 pt-6 border-t border-gray-200">
+          <h4 className="text-sm font-medium text-gray-700 mb-3">Filter Options</h4>
+          <div className="space-y-3">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={excludePolyclinics}
+                onChange={(e) => setExcludePolyclinics(e.target.checked)}
+                disabled={isProcessing}
+                className="mt-1"
+              />
+              <div>
+                <span className="font-medium text-gray-800">Exclude Polyclinics</span>
+                <p className="text-xs text-gray-500">Filter out all polyclinics from matching</p>
+              </div>
+            </label>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={excludeHospitals}
+                onChange={(e) => setExcludeHospitals(e.target.checked)}
+                disabled={isProcessing}
+                className="mt-1"
+              />
+              <div>
+                <span className="font-medium text-gray-800">Exclude Government Hospitals</span>
+                <p className="text-xs text-gray-500">Filter out 11 government hospitals (SGH, CGH, NUH, TTSH, etc.)</p>
+              </div>
+            </label>
+          </div>
+        </div>
+
         {/* Action Buttons */}
         <div className="mt-6 flex justify-center space-x-4">
           <button
@@ -347,6 +386,34 @@ const ClinicMatcher = () => {
                 </div>
               </div>
             </div>
+
+            {/* Filter Breakdown - Only show if filters were applied */}
+            {(results.base_polyclinics_filtered > 0 || results.base_hospitals_filtered > 0 ||
+              results.comparison_polyclinics_filtered > 0 || results.comparison_hospitals_filtered > 0) && (
+              <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <p className="text-sm font-medium text-gray-700 mb-2">Filters Applied:</p>
+                <div className="grid grid-cols-2 gap-4 text-sm text-gray-600">
+                  {(results.base_polyclinics_filtered > 0 || results.comparison_polyclinics_filtered > 0) && (
+                    <div>
+                      <span className="font-medium">Polyclinics excluded:</span> {' '}
+                      {results.base_polyclinics_filtered + results.comparison_polyclinics_filtered} total
+                      <span className="text-xs block text-gray-500 mt-1">
+                        ({results.base_polyclinics_filtered} from base, {results.comparison_polyclinics_filtered} from comparison)
+                      </span>
+                    </div>
+                  )}
+                  {(results.base_hospitals_filtered > 0 || results.comparison_hospitals_filtered > 0) && (
+                    <div>
+                      <span className="font-medium">Gov hospitals excluded:</span> {' '}
+                      {results.base_hospitals_filtered + results.comparison_hospitals_filtered} total
+                      <span className="text-xs block text-gray-500 mt-1">
+                        ({results.base_hospitals_filtered} from base, {results.comparison_hospitals_filtered} from comparison)
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="bg-white rounded-lg p-4 border border-green-300">
               <div className="flex items-center justify-between">
