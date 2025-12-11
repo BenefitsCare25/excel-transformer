@@ -2748,6 +2748,97 @@ def extract_clinic_names_from_excel(file_path):
         logger.error(f"Error extracting clinic names from {file_path}: {e}")
         raise
 
+def extract_clinics_with_visit_counts(file_path):
+    """
+    Extract clinic names with visit counts from Excel file.
+    Similar to utilisation report logic but returns structured data for top N selection.
+
+    Args:
+        file_path: Path to the Excel file with utilization data
+
+    Returns:
+        list of tuples: [(clinic_name_normalized, visit_count), ...]
+        sorted by visit_count descending
+        Returns empty list if extraction fails
+    """
+    try:
+        # Read all sheets from the Excel file
+        excel_file = pd.ExcelFile(file_path)
+        all_data = []
+
+        logger.info(f"Extracting clinics with visit counts from {os.path.basename(file_path)}")
+        logger.info(f"Processing {len(excel_file.sheet_names)} sheets")
+
+        # Combine all sheets into single DataFrame
+        for sheet_name in excel_file.sheet_names:
+            try:
+                df = pd.read_excel(file_path, sheet_name=sheet_name)
+                logger.info(f"Sheet '{sheet_name}': {len(df)} rows")
+                all_data.append(df)
+            except Exception as sheet_error:
+                logger.error(f"Error reading sheet '{sheet_name}': {sheet_error}")
+                continue
+
+        if not all_data:
+            logger.warning("No valid data found in Excel file for visit count extraction")
+            return []
+
+        # Combine all sheets
+        combined_df = pd.concat(all_data, ignore_index=True)
+        logger.info(f"Combined data: {len(combined_df)} total rows")
+
+        # Find clinic name column
+        clinic_col = None
+        for col in combined_df.columns:
+            col_str = str(col).lower().strip()
+            if 'clinic' in col_str and 'name' in col_str:
+                clinic_col = col
+                break
+
+        if clinic_col is None:
+            # Fallback: look for just 'clinic' or 'name'
+            for col in combined_df.columns:
+                col_str = str(col).lower().strip()
+                if col_str in ['clinic name', 'clinic', 'name']:
+                    clinic_col = col
+                    break
+
+        if clinic_col is None:
+            logger.warning("Could not find 'Clinic Name' column, falling back to alphabetical ordering")
+            return []
+
+        logger.info(f"Using clinic name column: '{clinic_col}'")
+
+        # Clean data: remove rows with empty clinic names
+        combined_df = combined_df[combined_df[clinic_col].notna()]
+        combined_df = combined_df[combined_df[clinic_col].astype(str).str.strip() != '']
+
+        # Normalize clinic names (strip whitespace and lowercase)
+        combined_df['Clinic Name Normalized'] = combined_df[clinic_col].astype(str).str.strip().str.lower()
+
+        logger.info(f"After cleaning: {len(combined_df)} rows")
+
+        # Group by clinic name and count visits
+        visit_counts = combined_df.groupby('Clinic Name Normalized').size().reset_index(name='visit_count')
+
+        # Sort by visit count descending
+        visit_counts = visit_counts.sort_values('visit_count', ascending=False)
+
+        # Convert to list of tuples
+        result = [(row['Clinic Name Normalized'], row['visit_count'])
+                  for _, row in visit_counts.iterrows()]
+
+        logger.info(f"Extracted {len(result)} clinics with visit counts")
+        if result:
+            logger.info(f"Top clinic: {result[0][0]} with {result[0][1]} visits")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error extracting clinics with visit counts: {e}\n{traceback.format_exc()}")
+        logger.warning("Falling back to empty list (will use alphabetical ordering)")
+        return []
+
 def generate_utilisation_report(file_path, exclude_polyclinics=False, exclude_hospitals=False):
     """
     Generate utilisation report from Excel file with clinic visit and amount data.
@@ -2959,57 +3050,122 @@ def match_clinics():
         exclude_polyclinics = request.form.get('exclude_polyclinics', 'false').lower() == 'true'
         exclude_hospitals = request.form.get('exclude_hospitals', 'false').lower() == 'true'
         generate_report = request.form.get('generate_report', 'false').lower() == 'true'
+        top_n_filter = request.form.get('top_n_filter', None)  # 'top10', 'top20', or None
 
         logger.info(f"Matching clinics: Base='{base_file.filename}', Comparison='{comparison_file.filename}'")
         logger.info(f"Filters: exclude_polyclinics={exclude_polyclinics}, exclude_hospitals={exclude_hospitals}")
         logger.info(f"Generate utilisation report: {generate_report}")
+        logger.info(f"Top N filter: {top_n_filter}")
 
         # Extract clinic names from both files
-        base_clinics = extract_clinic_names_from_excel(base_path)
+        # If top N filter is enabled, extract with visit counts; otherwise, just extract names
+        if top_n_filter:
+            base_clinics_with_counts = extract_clinics_with_visit_counts(base_path)
+            logger.info(f"Extracted {len(base_clinics_with_counts)} clinics with visit counts from base file")
+        else:
+            base_clinics = extract_clinic_names_from_excel(base_path)
+            logger.info(f"Extracted {len(base_clinics)} clinic names from base file")
+
         comparison_clinics = extract_clinic_names_from_excel(comparison_path)
 
-        logger.info(f"Extracted clinics: Base={len(base_clinics)}, Comparison={len(comparison_clinics)}")
-
-        # Apply filters if requested
+        # Initialize filter counters
         base_polyclinics_filtered = 0
         base_hospitals_filtered = 0
         comparison_polyclinics_filtered = 0
         comparison_hospitals_filtered = 0
 
-        if exclude_polyclinics or exclude_hospitals:
-            # Filter base clinics
-            base_clinics_filtered, base_polyclinics_filtered, base_hospitals_filtered = filter_excluded_clinics(
-                base_clinics, exclude_polyclinics, exclude_hospitals
-            )
+        # Initialize top N variables
+        top_n_clinic_names = set()
+        top_n_count = 0
+        top_n_warning = None
 
-            # Filter comparison clinics
+        # Handle top N filtering if enabled
+        if top_n_filter:
+            # Determine the N value
+            n_value = 10 if top_n_filter == 'top10' else 20
+
+            # Apply filters to the list of (clinic, count) tuples if requested
+            if exclude_polyclinics or exclude_hospitals:
+                filtered_clinics_with_counts = []
+                for clinic_name, visit_count in base_clinics_with_counts:
+                    exclude_this = False
+
+                    # Check polyclinic filter
+                    if exclude_polyclinics and 'polyclinic' in clinic_name:
+                        base_polyclinics_filtered += 1
+                        exclude_this = True
+
+                    # Check hospital filter
+                    if exclude_hospitals and any(hosp in clinic_name for hosp in GOVERNMENT_HOSPITALS):
+                        base_hospitals_filtered += 1
+                        exclude_this = True
+
+                    if not exclude_this:
+                        filtered_clinics_with_counts.append((clinic_name, visit_count))
+
+                base_clinics_with_counts = filtered_clinics_with_counts
+                logger.info(f"Base: Filtered {base_polyclinics_filtered} polyclinics, {base_hospitals_filtered} hospitals from visit data")
+
+            # Select top N clinics from filtered list
+            top_n_list = base_clinics_with_counts[:n_value]
+            top_n_clinic_names = {clinic[0] for clinic in top_n_list}
+            top_n_count = len(top_n_clinic_names)
+
+            logger.info(f"Selected top {n_value} clinics: got {top_n_count} clinics")
+
+            # Check if we have fewer clinics than requested
+            if top_n_count < n_value and top_n_count > 0:
+                top_n_warning = f"Only {top_n_count} clinics available after filters (requested top {n_value})"
+                logger.warning(top_n_warning)
+
+            # Create base_clinics set from all clinics for regular matching
+            base_clinics = {clinic[0] for clinic in base_clinics_with_counts}
+
+        else:
+            # Regular extraction (no top N)
+            # Apply filters if requested
+            if exclude_polyclinics or exclude_hospitals:
+                base_clinics_filtered, base_polyclinics_filtered, base_hospitals_filtered = filter_excluded_clinics(
+                    base_clinics, exclude_polyclinics, exclude_hospitals
+                )
+                base_clinics = base_clinics_filtered
+                logger.info(f"Base: Filtered {base_polyclinics_filtered} polyclinics, {base_hospitals_filtered} hospitals")
+
+        # Filter comparison clinics (always done the same way)
+        if exclude_polyclinics or exclude_hospitals:
             comparison_clinics_filtered, comparison_polyclinics_filtered, comparison_hospitals_filtered = filter_excluded_clinics(
                 comparison_clinics, exclude_polyclinics, exclude_hospitals
             )
-
-            logger.info(f"Base: Filtered {base_polyclinics_filtered} polyclinics, {base_hospitals_filtered} hospitals")
+            comparison_clinics = comparison_clinics_filtered
             logger.info(f"Comparison: Filtered {comparison_polyclinics_filtered} polyclinics, {comparison_hospitals_filtered} hospitals")
 
-            # Validate that we have clinics remaining after filtering
-            if len(base_clinics_filtered) == 0 or len(comparison_clinics_filtered) == 0:
-                return jsonify({
-                    'error': 'All clinics were filtered out. Please adjust filter settings.',
-                    'base_total': len(base_clinics),
-                    'comparison_total': len(comparison_clinics),
-                    'base_filtered_out': base_polyclinics_filtered + base_hospitals_filtered,
-                    'comparison_filtered_out': comparison_polyclinics_filtered + comparison_hospitals_filtered
-                }), 400
+        # Log final counts
+        logger.info(f"Final clinic counts: Base={len(base_clinics)}, Comparison={len(comparison_clinics)}")
 
-            # Use filtered sets for matching
-            base_clinics = base_clinics_filtered
-            comparison_clinics = comparison_clinics_filtered
+        # Validate that we have clinics remaining after filtering
+        if len(base_clinics) == 0 or len(comparison_clinics) == 0:
+            return jsonify({
+                'error': 'All clinics were filtered out. Please adjust filter settings.',
+                'base_total': len(base_clinics) if not top_n_filter else len(base_clinics_with_counts),
+                'comparison_total': len(comparison_clinics),
+                'base_filtered_out': base_polyclinics_filtered + base_hospitals_filtered,
+                'comparison_filtered_out': comparison_polyclinics_filtered + comparison_hospitals_filtered
+            }), 400
 
-        # Perform matching (case-insensitive)
+        # Perform matching (case-insensitive) - always perform full matching
         matched = base_clinics.intersection(comparison_clinics)
         unmatched_base = base_clinics - comparison_clinics
         unmatched_comparison = comparison_clinics - base_clinics
 
         logger.info(f"Match results: {len(matched)} matched, {len(unmatched_base)} unmatched in base, {len(unmatched_comparison)} unmatched in comparison")
+
+        # Calculate top N matching if enabled
+        top_n_matched = set()
+        top_n_unmatched = set()
+        if top_n_filter and top_n_count > 0:
+            top_n_matched = top_n_clinic_names.intersection(comparison_clinics)
+            top_n_unmatched = top_n_clinic_names - comparison_clinics
+            logger.info(f"Top {n_value} match results: {len(top_n_matched)} matched, {len(top_n_unmatched)} unmatched")
 
         # Create results Excel file with 3 sheets
         results_filename = f"clinic_match_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
@@ -3084,6 +3240,18 @@ def match_clinics():
             response_data['total_visits'] = total_visits
             response_data['total_amount'] = total_amount
             response_data['clinic_count'] = clinic_count
+
+        # Add top N matching data if enabled
+        if top_n_filter:
+            response_data['top_n_enabled'] = True
+            response_data['top_n_filter_type'] = top_n_filter
+            response_data['top_n_count'] = top_n_count
+            response_data['top_n_matched_count'] = len(top_n_matched)
+            response_data['top_n_unmatched_count'] = len(top_n_unmatched)
+            if top_n_warning:
+                response_data['top_n_warning'] = top_n_warning
+        else:
+            response_data['top_n_enabled'] = False
 
         return jsonify(response_data)
 

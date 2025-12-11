@@ -10,6 +10,7 @@ const ClinicMatcher = () => {
   const [excludePolyclinics, setExcludePolyclinics] = useState(false);
   const [excludeHospitals, setExcludeHospitals] = useState(false);
   const [generateReport, setGenerateReport] = useState(false);
+  const [topNFilter, setTopNFilter] = useState(null); // null, 'top10', or 'top20'
 
   // Base file dropzone
   const onDropBase = useCallback((acceptedFiles) => {
@@ -73,6 +74,9 @@ const ClinicMatcher = () => {
     formData.append('exclude_polyclinics', excludePolyclinics);
     formData.append('exclude_hospitals', excludeHospitals);
     formData.append('generate_report', generateReport);
+    if (topNFilter) {
+      formData.append('top_n_filter', topNFilter);
+    }
 
     try {
       const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
@@ -115,6 +119,7 @@ const ClinicMatcher = () => {
     setExcludePolyclinics(false);
     setExcludeHospitals(false);
     setGenerateReport(false);
+    setTopNFilter(null);
   };
 
   const downloadUtilisationReport = (filename) => {
@@ -320,6 +325,42 @@ const ClinicMatcher = () => {
           </div>
         </div>
 
+        {/* Top Clinic Matching Options */}
+        <div className="mt-6 pt-6 border-t border-gray-200">
+          <h4 className="text-sm font-medium text-gray-700 mb-3">Top Clinic Matching</h4>
+          <p className="text-xs text-gray-500 mb-3">
+            Select top N most visited clinics from base file for matching (filters applied first, then top N selected)
+          </p>
+          <div className="space-y-3">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={topNFilter === 'top10'}
+                onChange={(e) => setTopNFilter(e.target.checked ? 'top10' : null)}
+                disabled={isProcessing || topNFilter === 'top20'}
+                className="mt-1"
+              />
+              <div>
+                <span className="font-medium text-gray-800">Top 10 Clinics</span>
+                <p className="text-xs text-gray-500">Match only the top 10 most visited clinics from base file</p>
+              </div>
+            </label>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={topNFilter === 'top20'}
+                onChange={(e) => setTopNFilter(e.target.checked ? 'top20' : null)}
+                disabled={isProcessing || topNFilter === 'top10'}
+                className="mt-1"
+              />
+              <div>
+                <span className="font-medium text-gray-800">Top 20 Clinics</span>
+                <p className="text-xs text-gray-500">Match only the top 20 most visited clinics from base file</p>
+              </div>
+            </label>
+          </div>
+        </div>
+
         {/* Action Buttons */}
         <div className="mt-6 flex justify-center space-x-4">
           <button
@@ -413,6 +454,52 @@ const ClinicMatcher = () => {
                 </div>
               </div>
             </div>
+
+            {/* Top N Matching Statistics - Only show when top N filter is enabled */}
+            {results.top_n_enabled && (
+              <div className="mt-4 p-4 bg-purple-50 rounded-lg border border-purple-200">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <p className="text-sm font-semibold text-purple-900">
+                      Top {results.top_n_filter_type === 'top10' ? '10' : '20'} Clinic Matching
+                    </p>
+                    <p className="text-xs text-gray-600 mt-1">
+                      Matching statistics for top {results.top_n_filter_type === 'top10' ? '10' : '20'} most visited clinics
+                    </p>
+                    {results.top_n_warning && (
+                      <p className="text-xs text-orange-600 mt-1">⚠️ {results.top_n_warning}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-white rounded p-3 border border-purple-300">
+                    <div className="text-2xl font-bold text-purple-600">{results.top_n_count}</div>
+                    <div className="text-xs text-gray-600">Top N Clinics</div>
+                  </div>
+                  <div className="bg-white rounded p-3 border border-green-300">
+                    <div className="text-2xl font-bold text-green-600">{results.top_n_matched_count}</div>
+                    <div className="text-xs text-gray-600">Matched</div>
+                    <div className="mt-2 pt-2 border-t border-green-200">
+                      <div className="text-lg font-semibold text-green-700">
+                        {((results.top_n_matched_count / results.top_n_count) * 100).toFixed(1)}%
+                      </div>
+                      <div className="text-xs text-gray-500">of top N</div>
+                    </div>
+                  </div>
+                  <div className="bg-white rounded p-3 border border-orange-300">
+                    <div className="text-2xl font-bold text-orange-600">{results.top_n_unmatched_count}</div>
+                    <div className="text-xs text-gray-600">Unmatched</div>
+                    <div className="mt-2 pt-2 border-t border-orange-200">
+                      <div className="text-lg font-semibold text-orange-700">
+                        {((results.top_n_unmatched_count / results.top_n_count) * 100).toFixed(1)}%
+                      </div>
+                      <div className="text-xs text-gray-500">of top N</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Filter Breakdown - Only show if filters were applied */}
             {(results.base_polyclinics_filtered > 0 || results.base_hospitals_filtered > 0 ||
