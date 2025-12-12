@@ -1464,8 +1464,13 @@ class ExcelTransformer:
                         if day_type in fallback_map:
                             fallback_value = extracted.get(fallback_map[day_type])
                             if fallback_value:
+                                # Day mentioned in remarks - use extracted value
                                 current_result = fallback_value
                                 logger.debug(f"Row {idx}: Used remarks fallback for {day_type} - extracted: {fallback_value}")
+                            else:
+                                # Day NOT mentioned in remarks - set to CLOSED
+                                current_result = 'CLOSED'
+                                logger.debug(f"Row {idx}: Day {day_type} not found in remarks - setting to CLOSED")
                     except Exception as e:
                         logger.warning(f"Row {idx}: Remarks extraction failed for {day_type}: {e}")
 
