@@ -69,6 +69,9 @@ GOVERNMENT_HOSPITALS = {
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 
+# Initialize cleanup service
+from cleanup_service import CleanupService
+cleanup_service = CleanupService(UPLOAD_FOLDER, PROCESSED_FOLDER, ttl_minutes=15)
 # Global postal code lookup - loaded once at module startup
 _POSTAL_CODE_LOOKUP_CACHE = None
 
@@ -2570,6 +2573,13 @@ def download_batch(batch_id):
                     arc_name = f"{base_name}_{sheet_part}.xlsx"
                     zipf.write(file_path, arc_name)
 
+
+        # Schedule cleanup for all batch jobs after zip is sent
+        def cleanup_batch():
+            for result in successful_results:
+                cleanup_service.cleanup_job_files(result['job_id'])
+        threading.Timer(2.0, cleanup_batch).start()
+        
         return send_file(
             temp_zip.name,
             as_attachment=True,
@@ -2791,6 +2801,9 @@ def download_specific_file(job_id, filename):
         sheet_part = filename.replace(f"{job_id}_", "").replace(".xlsx", "")
         download_name = f"transformed_{sheet_part}.xlsx"
 
+        # Schedule cleanup after file is sent
+        threading.Timer(2.0, lambda: cleanup_service.cleanup_job_files(job_id)).start()
+        
         return send_file(
             output_path,
             as_attachment=True,
@@ -2820,6 +2833,9 @@ def download_file(job_id):
             sheet_part = filename.replace(f"{job_id}_", "").replace(".xlsx", "")
             download_name = f"transformed_{sheet_part}.xlsx"
 
+            # Schedule cleanup after file is sent
+            threading.Timer(2.0, lambda: cleanup_service.cleanup_job_files(job_id)).start()
+            
             return send_file(
                 output_path,
                 as_attachment=True,
@@ -2841,6 +2857,9 @@ def download_file(job_id):
                     arc_name = f"transformed_{sheet_part}.xlsx"
                     zipf.write(file_path, arc_name)
 
+            
+            # Schedule cleanup after zip is sent
+            threading.Timer(2.0, lambda: cleanup_service.cleanup_job_files(job_id)).start()
             return send_file(
                 temp_zip.name,
                 as_attachment=True,
@@ -3531,6 +3550,13 @@ def download_match_result(filename):
         if '..' in filename or '/' in filename or '\\' in filename:
             return jsonify({'error': 'Invalid filename'}), 400
 
+        # Schedule cleanup after file is sent
+        threading.Timer(2.0, lambda: os.remove(file_path) if os.path.exists(file_path) else None).start()
+        
+
+        # Schedule cleanup after file is sent
+        threading.Timer(2.0, lambda: os.remove(file_path) if os.path.exists(file_path) else None).start()
+        
         return send_file(
             file_path,
             as_attachment=True,
@@ -3570,6 +3596,12 @@ def startup_check():
 
 # Perform startup check
 startup_check()
+
+# Run initial cleanup and start periodic cleanup
+cleanup_service.startup_cleanup()
+cleanup_service.start_periodic_cleanup()
+
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
