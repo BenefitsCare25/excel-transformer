@@ -1158,15 +1158,236 @@ class ExcelTransformer:
         """Combine telephone number with remarks"""
         phone_str = str(phone) if pd.notna(phone) else ""
         remarks_str = str(remarks) if pd.notna(remarks) else ""
-        
+
         if remarks_str and remarks_str.lower() != 'nan':
             return f"{phone_str} - {remarks_str}"
         return phone_str
-    
+
+    @staticmethod
+    def _is_truly_empty(value):
+        """
+        Check if value is truly empty (NaN/null or empty string/whitespace).
+        Note: 'CLOSED' is NOT considered empty as it's explicit data.
+
+        Args:
+            value: Value to check
+
+        Returns:
+            bool: True if value is truly empty, False otherwise
+        """
+        if pd.isna(value):
+            return True
+        value_str = str(value).strip().lower()
+        return value_str in ('', 'nan', 'none')
+
+    @staticmethod
+    def normalize_time_range(start, end):
+        """
+        Normalize time range to standard format.
+        Handles various formats: 0900, 9AM, 9:00AM, 17, etc.
+
+        Args:
+            start: Start time string
+            end: End time string
+
+        Returns:
+            str: Normalized time range (e.g., "0900-1230" or "9:00AM-5:00PM")
+        """
+        def normalize_single_time(time_str):
+            """Normalize a single time value"""
+            time_str = str(time_str).strip()
+
+            # Check if it has AM/PM
+            has_ampm = bool(re.search(r'(am|pm)', time_str, re.IGNORECASE))
+
+            if has_ampm:
+                # Preserve AM/PM format, just ensure colon for readability
+                if ':' not in time_str and len(re.findall(r'\d', time_str)) >= 3:
+                    # Insert colon: 900AM -> 9:00AM
+                    match = re.match(r'(\d{1,2})(\d{2})\s*(am|pm)', time_str, re.IGNORECASE)
+                    if match:
+                        return f"{match.group(1)}:{match.group(2)}{match.group(3).upper()}"
+                return time_str.upper()
+            else:
+                # 24hr format - ensure 4 digits
+                digits_only = re.sub(r'\D', '', time_str)
+                if len(digits_only) == 3:
+                    # 900 -> 0900
+                    digits_only = '0' + digits_only
+                elif len(digits_only) == 2:
+                    # Assume hours only: 9 -> 0900, 17 -> 1700
+                    digits_only = digits_only + '00'
+                elif len(digits_only) == 1:
+                    # Single digit hour: 9 -> 0900
+                    digits_only = '0' + digits_only + '00'
+
+                return digits_only[:4].zfill(4)
+
+        normalized_start = normalize_single_time(start)
+        normalized_end = normalize_single_time(end)
+
+        return f"{normalized_start}-{normalized_end}"
+
+    @staticmethod
+    def extract_hours_from_remarks(remarks_text):
+        """
+        Extract operating hours from remarks text with intelligent parsing.
+        Handles various patterns like:
+        - "(dental) Mon-Fri:0900-1230,1400-1600;Sat/Sun:0900-1200"
+        - "Mon - Wed : 1030 to 2200"
+        - "THUR: 0830 TO 1230, 1400 TO 1700"
+        - "EVE OF PH: HALF DAY 9AM TO 1PM"
+
+        Args:
+            remarks_text: Raw remarks string from Excel file
+
+        Returns:
+            dict: {
+                'weekdays': str or None,    # Mon-Fri hours
+                'saturday': str or None,    # Saturday hours
+                'sunday': str or None,      # Sunday hours
+                'publicday': str or None,   # Public holiday hours
+                'metadata': dict            # Parsing info
+            }
+        """
+        logger = logging.getLogger(__name__)
+
+        # Initialize empty result
+        result = {
+            'weekdays': None,
+            'saturday': None,
+            'sunday': None,
+            'publicday': None,
+            'metadata': {'confidence': 0.0, 'patterns_found': []}
+        }
+
+        # Validate input
+        if pd.isna(remarks_text) or not str(remarks_text).strip():
+            result['metadata']['reason'] = 'empty_input'
+            return result
+
+        try:
+            # Normalize text
+            text = str(remarks_text).strip()
+            # Remove common prefixes
+            text = re.sub(r'^\(dental\)\s*', '', text, flags=re.IGNORECASE)
+            text = re.sub(r'^\(DENTAL\)\s*', '', text)
+
+            # Define day patterns (case-insensitive)
+            # Order matters - check ranges and combos first, then individual days
+            day_patterns = {
+                # Ranges (check these first)
+                'mon_to_fri': r'mon(?:day)?\s*(?:-|to)\s*fri(?:day)?',
+                'mon_to_wed': r'mon(?:day)?\s*(?:-|to)\s*wed(?:nesday)?',
+                'thu_to_fri': r'thu(?:r(?:s)?)?\s*(?:-|to)\s*fri(?:day)?',
+                # Combinations (slash-separated)
+                'day_combo': r'(?:mon|tue|wed|thu(?:r)?|fri|sat|sun)(?:\s*/\s*(?:mon|tue|wed|thu(?:r)?|fri|sat|sun))+',
+                # General keywords
+                'weekdays': r'weekdays?',
+                # Special cases
+                'public_holiday': r'(?:public\s+holiday|ph|public\s+hol(?:iday)?)',
+                'eve_of_ph': r'eve\s+of\s+(?:public\s+holiday|ph)',
+                # Individual days (check last)
+                'monday': r'\bmon(?:day)?\b',
+                'tuesday': r'\btue(?:s(?:day)?)?\b',
+                'wednesday': r'\bwed(?:nesday)?\b',
+                'thursday': r'\bthu(?:r(?:s(?:day)?)?)?\b',
+                'friday': r'\bfri(?:day)?\b',
+                'saturday': r'\bsat(?:urday)?\b',
+                'sunday': r'\bsun(?:day)?\b',
+            }
+
+            # Define time patterns (order matters - more specific first)
+            time_patterns = [
+                r'(\d{1,2}(?::\d{2})?\s*(?:am|pm))\s*(?:-|to)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm))',  # 9AM-5PM or 9AM to 5PM
+                r'(\d{4})\s*-\s*(\d{4})',  # 0900-1230
+                r'(\d{4})\s+(?:to|TO)\s+(\d{4})',  # 0900 TO 1230
+                r'(\d{1,2})\s+(?:to|TO)\s+(\d{1,2})(?=\s|,|;|$)',  # 9 to 17 (with lookahead to ensure it's not part of a word)
+            ]
+
+            # Split by semicolons and newlines to get segments
+            segments = re.split(r'[;\n]', text)
+
+            for segment in segments:
+                segment = segment.strip()
+                if not segment:
+                    continue
+
+                # Try to match day pattern followed by colon and time ranges
+                for day_key, day_pattern in day_patterns.items():
+                    # Match pattern: "Day: time_ranges"
+                    match = re.search(f'({day_pattern})\\s*:\\s*([^;\\n]+)', segment, re.IGNORECASE)
+                    if match:
+                        day_str = match.group(1).strip().lower()
+                        time_str = match.group(2).strip()
+
+                        # Extract all time ranges from time_str
+                        time_ranges = []
+                        for time_pattern in time_patterns:
+                            for time_match in re.finditer(time_pattern, time_str, re.IGNORECASE):
+                                start = time_match.group(1)
+                                end = time_match.group(2)
+                                normalized = ExcelTransformer.normalize_time_range(start, end)
+                                time_ranges.append(normalized)
+
+                        # If no time ranges found, store the raw time string
+                        if not time_ranges:
+                            # Check for special cases like "HALF DAY", "By appointment"
+                            if re.search(r'half\s+day|appointment|closed', time_str, re.IGNORECASE):
+                                time_ranges.append(time_str)
+
+                        # Join multiple time slots with comma
+                        final_time = ','.join(time_ranges) if time_ranges else None
+
+                        if final_time:
+                            # Map to result categories
+                            if day_key in ['mon_to_fri', 'mon_to_wed', 'thu_to_fri', 'weekdays']:
+                                result['weekdays'] = final_time
+                                result['metadata']['patterns_found'].append(day_key)
+                            elif day_key == 'saturday':
+                                result['saturday'] = final_time
+                                result['metadata']['patterns_found'].append('saturday')
+                            elif day_key == 'sunday':
+                                result['sunday'] = final_time
+                                result['metadata']['patterns_found'].append('sunday')
+                            elif day_key in ['public_holiday', 'eve_of_ph']:
+                                result['publicday'] = final_time
+                                result['metadata']['patterns_found'].append('publicday')
+                            elif day_key == 'day_combo':
+                                # Handle combinations like "Sat/Sun" or "Mon/Tue/Fri"
+                                if re.search(r'sat', day_str, re.IGNORECASE) and re.search(r'sun', day_str, re.IGNORECASE):
+                                    # Both Sat and Sun
+                                    result['saturday'] = final_time
+                                    result['sunday'] = final_time
+                                    result['metadata']['patterns_found'].append('sat_sun_combo')
+                                else:
+                                    # Weekday combination - map to weekdays
+                                    result['weekdays'] = final_time
+                                    result['metadata']['patterns_found'].append('weekday_combo')
+                            elif day_key in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']:
+                                # Specific weekday - map to weekdays category
+                                if not result['weekdays']:  # Only if not already set
+                                    result['weekdays'] = final_time
+                                    result['metadata']['patterns_found'].append(f'specific_{day_key}')
+
+            # Calculate confidence
+            found_count = sum(1 for v in [result['weekdays'], result['saturday'], result['sunday'], result['publicday']] if v is not None)
+            result['metadata']['confidence'] = min(1.0, found_count * 0.25)
+
+            if found_count > 0:
+                logger.debug(f"Extracted hours from remarks: {result}")
+
+        except Exception as e:
+            logger.warning(f"Remarks extraction failed: {e}")
+            result['metadata']['reason'] = 'parse_error'
+            result['metadata']['error'] = str(e)
+
+        return result
 
     @staticmethod
     def combine_operating_hours_flexible(df_source, col_map, day_type):
-        """Smart operating hours combination supporting both complex (AM/PM/NIGHT) and simple formats"""
+        """Smart operating hours combination supporting both complex (AM/PM/NIGHT) and simple formats with remarks fallback"""
+        logger = logging.getLogger(__name__)
 
         # Define potential column keys for each day type
         if day_type == 'weekday':
@@ -1184,8 +1405,18 @@ class ExcelTransformer:
         else:
             return ['CLOSED/CLOSED/CLOSED'] * len(df_source)
 
+        # Map day_type to extraction key for remarks fallback
+        fallback_map = {
+            'weekday': 'weekdays',
+            'saturday': 'saturday',
+            'sunday': 'sunday',
+            'public_holiday': 'publicday'
+        }
+
         result = []
-        for _, row in df_source.iterrows():
+        for idx, row in df_source.iterrows():
+            current_result = None
+
             # Strategy 1: Try complex format (AM/PM/NIGHT columns)
             am_key, pm_key, night_key = complex_keys
             # Only use complex format if we have multiple time periods (AM/PM/Night)
@@ -1203,7 +1434,7 @@ class ExcelTransformer:
                 pm = 'CLOSED' if pd.isna(pm) else str(pm)
                 night = 'CLOSED' if pd.isna(night) else str(night)
 
-                result.append(f"{am}/{pm}/{night}")
+                current_result = f"{am}/{pm}/{night}"
 
             else:
                 # Strategy 2: Use simple format - check any available key
@@ -1218,10 +1449,27 @@ class ExcelTransformer:
 
                 if found_key:
                     # For SP clinic format, use clean hours without /CLOSED/CLOSED suffix
-                    result.append(hours_str)
+                    current_result = hours_str
                 else:
                     # Strategy 3: No mapping found, default to CLOSED
-                    result.append('CLOSED')
+                    current_result = 'CLOSED'
+
+            # NEW: Strategy 4 - Fallback to remarks if day column is truly empty
+            if ExcelTransformer._is_truly_empty(current_result) and 'remarks' in col_map:
+                remarks = row.get(col_map['remarks'], None)
+                if pd.notna(remarks):
+                    try:
+                        extracted = ExcelTransformer.extract_hours_from_remarks(remarks)
+
+                        if day_type in fallback_map:
+                            fallback_value = extracted.get(fallback_map[day_type])
+                            if fallback_value:
+                                current_result = fallback_value
+                                logger.debug(f"Row {idx}: Used remarks fallback for {day_type} - extracted: {fallback_value}")
+                    except Exception as e:
+                        logger.warning(f"Row {idx}: Remarks extraction failed for {day_type}: {e}")
+
+            result.append(current_result)
 
         return result
 
