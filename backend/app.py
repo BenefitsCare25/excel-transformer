@@ -1277,6 +1277,7 @@ class ExcelTransformer:
             # Order matters - check ranges and combos first, then individual days
             day_patterns = {
                 # Ranges (check these first)
+                'mon_to_sat': r'mon(?:day)?\s*(?:-|to)\s*sat(?:urday)?',  # Mon-Sat includes weekdays
                 'mon_to_fri': r'mon(?:day)?\s*(?:-|to)\s*fri(?:day)?',
                 'mon_to_wed': r'mon(?:day)?\s*(?:-|to)\s*wed(?:nesday)?',
                 'thu_to_fri': r'thu(?:r(?:s)?)?\s*(?:-|to)\s*fri(?:day)?',
@@ -1341,7 +1342,12 @@ class ExcelTransformer:
 
                         if final_time:
                             # Map to result categories
-                            if day_key in ['mon_to_fri', 'mon_to_wed', 'thu_to_fri', 'weekdays']:
+                            if day_key == 'mon_to_sat':
+                                # Mon-Sat means Monday through Saturday - includes both weekdays AND Saturday
+                                result['weekdays'] = final_time
+                                result['saturday'] = final_time
+                                result['metadata']['patterns_found'].append('mon_to_sat')
+                            elif day_key in ['mon_to_fri', 'mon_to_wed', 'thu_to_fri', 'weekdays']:
                                 result['weekdays'] = final_time
                                 result['metadata']['patterns_found'].append(day_key)
                             elif day_key == 'saturday':
