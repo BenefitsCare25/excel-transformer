@@ -14,6 +14,8 @@ from functools import lru_cache
 import logging
 import threading
 import time
+from dataclasses import dataclass
+from typing import Optional, List
 try:
     from concurrent.futures import ThreadPoolExecutor, as_completed
     CONCURRENT_SUPPORT = True
@@ -3335,141 +3337,131 @@ def match_clinics():
         logger.info(f"Generate utilisation report: {generate_report}")
         logger.info(f"Top N filter: {top_n_filter}")
 
-        # Extract clinic names from both files
-        # If top N filter is enabled, extract with visit counts; otherwise, just extract names
+        # Extract clinic records with full address components
+        logger.info("Using enhanced address-based matching...")
+        base_clinics_full = extract_clinics_with_addresses(base_path)
+        comparison_clinics_full = extract_clinics_with_addresses(comparison_path)
+
+        logger.info(f"Extracted {len(base_clinics_full)} clinic records from base file")
+        logger.info(f"Extracted {len(comparison_clinics_full)} clinic records from comparison file")
+
+        # For backward compatibility with top N filtering
         if top_n_filter:
-            base_clinics_with_counts = extract_clinics_with_visit_counts(base_path)
-            logger.info(f"Extracted {len(base_clinics_with_counts)} clinics with visit counts from base file")
-        else:
-            base_clinics = extract_clinic_names_from_excel(base_path)
-            logger.info(f"Extracted {len(base_clinics)} clinic names from base file")
+            # Build list with visit counts for top N filtering
+            base_clinics_with_counts = [(c.name, c.visit_count or 0) for c in base_clinics_full if c.visit_count is not None]
+            # Sort by visit count descending
+            base_clinics_with_counts.sort(key=lambda x: x[1], reverse=True)
+            logger.info(f"Found {len(base_clinics_with_counts)} clinics with visit counts for top N filtering")
 
-        comparison_clinics = extract_clinic_names_from_excel(comparison_path)
-
-        # Initialize filter counters
+        # Apply filtering to ClinicRecord objects
         base_polyclinics_filtered = 0
         base_hospitals_filtered = 0
         comparison_polyclinics_filtered = 0
         comparison_hospitals_filtered = 0
 
-        # Initialize top N variables
+        # Filter base clinics
+        base_clinics_filtered = []
+        for clinic in base_clinics_full:
+            exclude_this = False
+
+            # Check polyclinic filter
+            if exclude_polyclinics and 'polyclinic' in clinic.normalized_name:
+                base_polyclinics_filtered += 1
+                exclude_this = True
+
+            # Check hospital filter
+            if exclude_hospitals and any(hosp in clinic.normalized_name for hosp in GOVERNMENT_HOSPITALS):
+                base_hospitals_filtered += 1
+                exclude_this = True
+
+            if not exclude_this:
+                base_clinics_filtered.append(clinic)
+
+        # Filter comparison clinics
+        comparison_clinics_filtered = []
+        for clinic in comparison_clinics_full:
+            exclude_this = False
+
+            # Check polyclinic filter
+            if exclude_polyclinics and 'polyclinic' in clinic.normalized_name:
+                comparison_polyclinics_filtered += 1
+                exclude_this = True
+
+            # Check hospital filter
+            if exclude_hospitals and any(hosp in clinic.normalized_name for hosp in GOVERNMENT_HOSPITALS):
+                comparison_hospitals_filtered += 1
+                exclude_this = True
+
+            if not exclude_this:
+                comparison_clinics_filtered.append(clinic)
+
+        logger.info(f"After filtering: Base={len(base_clinics_filtered)}, Comparison={len(comparison_clinics_filtered)}")
+        logger.info(f"Base filtered out: {base_polyclinics_filtered} polyclinics, {base_hospitals_filtered} hospitals")
+        logger.info(f"Comparison filtered out: {comparison_polyclinics_filtered} polyclinics, {comparison_hospitals_filtered} hospitals")
+
+        # Handle top N filtering
         top_n_clinic_names = set()
         top_n_count = 0
         top_n_warning = None
 
-        # Handle top N filtering if enabled
         if top_n_filter:
-            # Determine the N value
             n_value = 10 if top_n_filter == 'top10' else 20
 
-            # Apply filters to the list of (clinic, count) tuples if requested
-            if exclude_polyclinics or exclude_hospitals:
-                filtered_clinics_with_counts = []
-                for clinic_name, visit_count in base_clinics_with_counts:
-                    exclude_this = False
+            # Filter by visit counts
+            clinics_with_visits = [c for c in base_clinics_filtered if c.visit_count is not None]
+            # Sort by visit count descending
+            clinics_with_visits.sort(key=lambda c: c.visit_count, reverse=True)
 
-                    # Check polyclinic filter
-                    if exclude_polyclinics and 'polyclinic' in clinic_name:
-                        base_polyclinics_filtered += 1
-                        exclude_this = True
-
-                    # Check hospital filter
-                    if exclude_hospitals and any(hosp in clinic_name for hosp in GOVERNMENT_HOSPITALS):
-                        base_hospitals_filtered += 1
-                        exclude_this = True
-
-                    if not exclude_this:
-                        filtered_clinics_with_counts.append((clinic_name, visit_count))
-
-                base_clinics_with_counts = filtered_clinics_with_counts
-                logger.info(f"Base: Filtered {base_polyclinics_filtered} polyclinics, {base_hospitals_filtered} hospitals from visit data")
-
-            # Select top N clinics from filtered list
-            top_n_list = base_clinics_with_counts[:n_value]
-            top_n_clinic_names = {clinic[0] for clinic in top_n_list}
+            # Select top N
+            top_n_clinics = clinics_with_visits[:n_value]
+            top_n_clinic_names = {c.normalized_name for c in top_n_clinics}
             top_n_count = len(top_n_clinic_names)
 
-            logger.info(f"Selected top {n_value} clinics: got {top_n_count} clinics")
+            logger.info(f"Selected top {n_value} clinics by visit count: got {top_n_count} clinics")
 
-            # Check if we have fewer clinics than requested
             if top_n_count < n_value and top_n_count > 0:
                 top_n_warning = f"Only {top_n_count} clinics available after filters (requested top {n_value})"
                 logger.warning(top_n_warning)
 
-            # Create base_clinics set from all clinics for regular matching
-            base_clinics = {clinic[0] for clinic in base_clinics_with_counts}
+            # Filter base clinics to only top N
+            base_clinics_filtered = top_n_clinics
 
-        else:
-            # Regular extraction (no top N)
-            # Apply filters if requested
-            if exclude_polyclinics or exclude_hospitals:
-                base_clinics_filtered, base_polyclinics_filtered, base_hospitals_filtered = filter_excluded_clinics(
-                    base_clinics, exclude_polyclinics, exclude_hospitals
-                )
-                base_clinics = base_clinics_filtered
-                logger.info(f"Base: Filtered {base_polyclinics_filtered} polyclinics, {base_hospitals_filtered} hospitals")
-
-        # Filter comparison clinics (always done the same way)
-        if exclude_polyclinics or exclude_hospitals:
-            comparison_clinics_filtered, comparison_polyclinics_filtered, comparison_hospitals_filtered = filter_excluded_clinics(
-                comparison_clinics, exclude_polyclinics, exclude_hospitals
-            )
-            comparison_clinics = comparison_clinics_filtered
-            logger.info(f"Comparison: Filtered {comparison_polyclinics_filtered} polyclinics, {comparison_hospitals_filtered} hospitals")
-
-        # Log final counts
-        logger.info(f"Final clinic counts: Base={len(base_clinics)}, Comparison={len(comparison_clinics)}")
-
-        # Validate that we have clinics remaining after filtering
-        if len(base_clinics) == 0 or len(comparison_clinics) == 0:
+        # Validate that we have clinics remaining
+        if len(base_clinics_filtered) == 0 or len(comparison_clinics_filtered) == 0:
             return jsonify({
                 'error': 'All clinics were filtered out. Please adjust filter settings.',
-                'base_total': len(base_clinics) if not top_n_filter else len(base_clinics_with_counts),
-                'comparison_total': len(comparison_clinics),
+                'base_total': len(base_clinics_full),
+                'comparison_total': len(comparison_clinics_full),
                 'base_filtered_out': base_polyclinics_filtered + base_hospitals_filtered,
                 'comparison_filtered_out': comparison_polyclinics_filtered + comparison_hospitals_filtered
             }), 400
 
-        # Perform matching (case-insensitive) - always perform full matching
-        matched = base_clinics.intersection(comparison_clinics)
-        unmatched_base = base_clinics - comparison_clinics
-        unmatched_comparison = comparison_clinics - base_clinics
+        # Perform enhanced multi-criteria matching
+        matches, unmatched_base, unmatched_comparison = match_clinics_enhanced(
+            base_clinics_filtered,
+            comparison_clinics_filtered
+        )
 
-        logger.info(f"Match results: {len(matched)} matched, {len(unmatched_base)} unmatched in base, {len(unmatched_comparison)} unmatched in comparison")
+        # Calculate match statistics
+        exact_name_count = sum(1 for m in matches if m.match_type == MatchType.EXACT_NAME)
+        postal_unit_count = sum(1 for m in matches if m.match_type == MatchType.POSTAL_UNIT)
+        block_unit_count = sum(1 for m in matches if m.match_type == MatchType.BLOCK_UNIT)
 
-        # Calculate top N matching if enabled
-        top_n_matched = set()
-        top_n_unmatched = set()
+        logger.info(f"Match breakdown: {exact_name_count} exact name, {postal_unit_count} postal+unit, {block_unit_count} block+unit")
+
+        # Calculate top N matching if enabled (for response data)
+        top_n_matched_count = 0
+        top_n_unmatched_count = 0
         if top_n_filter and top_n_count > 0:
-            top_n_matched = top_n_clinic_names.intersection(comparison_clinics)
-            top_n_unmatched = top_n_clinic_names - comparison_clinics
-            logger.info(f"Top {n_value} match results: {len(top_n_matched)} matched, {len(top_n_unmatched)} unmatched")
+            top_n_matched_count = len([m for m in matches if m.base_clinic.normalized_name in top_n_clinic_names])
+            top_n_unmatched_count = len([c for c in unmatched_base if c.normalized_name in top_n_clinic_names])
+            logger.info(f"Top {n_value} results: {top_n_matched_count} matched, {top_n_unmatched_count} unmatched")
 
-        # Create results Excel file with 3 sheets
+        # Generate enhanced Excel report with match details
         results_filename = f"clinic_match_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         results_path = os.path.join(PROCESSED_FOLDER, results_filename)
 
-        with pd.ExcelWriter(results_path, engine='openpyxl') as writer:
-            # Sheet 1: Matched clinics
-            matched_df = pd.DataFrame({
-                'Clinic Name': sorted(matched, key=str.lower)
-            })
-            matched_df.index = range(1, len(matched_df) + 1)
-            matched_df.to_excel(writer, sheet_name='Matched', index=True, index_label='S/N')
-
-            # Sheet 2: Unmatched in Base
-            unmatched_base_df = pd.DataFrame({
-                'Clinic Name': sorted(unmatched_base, key=str.lower)
-            })
-            unmatched_base_df.index = range(1, len(unmatched_base_df) + 1)
-            unmatched_base_df.to_excel(writer, sheet_name='Unmatched in Base', index=True, index_label='S/N')
-
-            # Sheet 3: Unmatched in Comparison
-            unmatched_comparison_df = pd.DataFrame({
-                'Clinic Name': sorted(unmatched_comparison, key=str.lower)
-            })
-            unmatched_comparison_df.index = range(1, len(unmatched_comparison_df) + 1)
-            unmatched_comparison_df.to_excel(writer, sheet_name='Unmatched in Comparison', index=True, index_label='S/N')
+        generate_match_report_enhanced(matches, unmatched_base, unmatched_comparison, results_path)
 
         # Generate utilisation report if requested
         report_filename = None
@@ -3495,21 +3487,32 @@ def match_clinics():
         except Exception as cleanup_error:
             logger.warning(f"Failed to clean up uploaded files: {cleanup_error}")
 
-        # Return results with filter breakdown
+        # Return enhanced results with match type breakdown
         response_data = {
             'success': True,
-            'matched_count': len(matched),
+            'matched_count': len(matches),
             'unmatched_base_count': len(unmatched_base),
             'unmatched_comparison_count': len(unmatched_comparison),
             'download_filename': results_filename,
-            'base_total': len(base_clinics),
-            'comparison_total': len(comparison_clinics),
+            'base_total': len(base_clinics_full),
+            'comparison_total': len(comparison_clinics_full),
             'base_polyclinics_filtered': base_polyclinics_filtered,
             'base_hospitals_filtered': base_hospitals_filtered,
             'comparison_polyclinics_filtered': comparison_polyclinics_filtered,
             'comparison_hospitals_filtered': comparison_hospitals_filtered,
-            'base_total_after_filter': len(base_clinics),
-            'comparison_total_after_filter': len(comparison_clinics)
+            'base_total_after_filter': len(base_clinics_filtered),
+            'comparison_total_after_filter': len(comparison_clinics_filtered),
+            # Enhanced match breakdown
+            'match_breakdown': {
+                'exact_name': exact_name_count,
+                'postal_unit': postal_unit_count,
+                'block_unit': block_unit_count
+            },
+            'match_breakdown_percentages': {
+                'exact_name': f"{exact_name_count/len(matches)*100:.1f}%" if matches else '0.0%',
+                'postal_unit': f"{postal_unit_count/len(matches)*100:.1f}%" if matches else '0.0%',
+                'block_unit': f"{block_unit_count/len(matches)*100:.1f}%" if matches else '0.0%'
+            }
         }
 
         # Add utilisation report data if generated
@@ -3524,8 +3527,8 @@ def match_clinics():
             response_data['top_n_enabled'] = True
             response_data['top_n_filter_type'] = top_n_filter
             response_data['top_n_count'] = top_n_count
-            response_data['top_n_matched_count'] = len(top_n_matched)
-            response_data['top_n_unmatched_count'] = len(top_n_unmatched)
+            response_data['top_n_matched_count'] = top_n_matched_count
+            response_data['top_n_unmatched_count'] = top_n_unmatched_count
             if top_n_warning:
                 response_data['top_n_warning'] = top_n_warning
         else:
@@ -3536,6 +3539,759 @@ def match_clinics():
     except Exception as e:
         logger.error(f"Error in match_clinics: {e}\n{traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
+# Enhanced Clinic Matching: Data Structures and Helper Functions
+# ============================================================================
+
+@dataclass
+class ClinicRecord:
+    """Enhanced clinic record with address components for multi-criteria matching"""
+    # Identification
+    name: str                      # Original clinic name
+    normalized_name: str           # Lowercase for matching
+
+    # Address components
+    postal_code: Optional[str]     # 6-digit Singapore postal
+    unit_number: Optional[str]     # #XX-XXX format
+    block: Optional[str]           # Block number
+    road_name: str                 # Street name
+    building_name: Optional[str]   # Building/mall name
+
+    # Metadata
+    visit_count: Optional[int]     # For top N filtering
+    row_index: int                 # Excel row for tracking
+
+    # Validation flags
+    is_singapore: bool             # True if Singapore address
+    has_valid_postal: bool         # True if 6-digit numeric postal
+    has_unit_number: bool          # True if unit exists
+
+
+@dataclass
+class ClinicMatch:
+    """Match result with classification and confidence scoring"""
+    base_clinic: ClinicRecord
+    comparison_clinic: ClinicRecord
+    match_type: str                # "Exact Name" / "Postal+Unit" / "Block+Unit"
+    confidence: float              # 1.0 / 0.9 / 0.7
+    notes: str                     # Match details
+
+
+class MatchType:
+    """Match type constants"""
+    EXACT_NAME = "Exact Name Match"
+    POSTAL_UNIT = "Postal Code + Unit Match"
+    BLOCK_UNIT = "Block + Unit Match"
+
+
+def normalize_postal_code(postal: str) -> str:
+    """
+    Extract and normalize 6-digit Singapore postal code.
+
+    Handles formats: "238869", "S238869", " 238869 ", "s238869"
+    Returns: "238869" or empty string if invalid
+
+    Edge cases:
+    - Malaysian postal codes (text format) -> empty string
+    - 5-digit codes -> empty string (invalid Singapore postal)
+    - Special characters -> empty string
+    """
+    if not postal or pd.isna(postal):
+        return ""
+
+    cleaned = str(postal).strip().upper()
+
+    # Remove 'S' prefix if present (Singapore format)
+    if cleaned.startswith('S'):
+        cleaned = cleaned[1:]
+
+    # Remove any non-digit characters
+    cleaned = re.sub(r'\D', '', cleaned)
+
+    # Valid Singapore postal code is exactly 6 digits
+    if cleaned.isdigit() and len(cleaned) == 6:
+        return cleaned
+
+    return ""
+
+
+def normalize_unit_number(unit: str) -> str:
+    """
+    Normalize unit number to consistent format.
+
+    Handles formats: "#01-23", "01-23", " #1-23 ", "#1-23", " #01-23 "
+    Returns: "01-23" format (zero-padded, no # prefix)
+
+    Edge cases:
+    - Missing unit -> empty string
+    - Multiple units ("#01-01/02") -> keep as-is
+    - Basement units ("#B1-01") -> keep as-is
+    """
+    if not unit or pd.isna(unit):
+        return ""
+
+    cleaned = str(unit).strip().lstrip('#')
+
+    # Handle formats like "01-23" or "1-23"
+    if '-' in cleaned:
+        parts = cleaned.split('-')
+        if len(parts) == 2:
+            # Check if first part is numeric (floor number)
+            floor = parts[0].strip()
+            unit_num = parts[1].strip()
+
+            # Handle basement units (B1, B2, etc.)
+            if floor.upper().startswith('B'):
+                return cleaned
+
+            # Handle multiple units (01/02, 15/16, etc.)
+            if '/' in cleaned:
+                return cleaned
+
+            # Zero-pad both parts if they're numeric
+            if floor.isdigit() and unit_num.isdigit():
+                return f"{floor.zfill(2)}-{unit_num.zfill(2)}"
+
+    return cleaned
+
+
+def normalize_block(block: str) -> str:
+    """
+    Normalize block number.
+
+    Handles formats: "123", " 123A ", "BLK 123", "blk 123"
+    Returns: Uppercase, no "BLK" prefix
+
+    Edge cases:
+    - Alphanumeric blocks ("29A", "592G") -> preserved
+    - Multiple blocks ("268 & 269") -> preserved
+    """
+    if not block or pd.isna(block):
+        return ""
+
+    cleaned = str(block).strip().upper()
+
+    # Remove "BLK" prefix if present
+    if cleaned.startswith('BLK '):
+        cleaned = cleaned[4:]
+
+    return cleaned.strip()
+
+
+def is_singapore_address(postal: str) -> bool:
+    """
+    Check if address is Singapore (vs Malaysian or other).
+
+    Logic: Singapore postal codes are 6-digit numeric
+    Malaysian postal codes are text-based (e.g., "81300, Skudai, Johor")
+
+    Returns: True if valid Singapore postal code format
+    """
+    normalized = normalize_postal_code(postal)
+    return len(normalized) == 6 and normalized.isdigit()
+
+
+def format_clinic_address(clinic: ClinicRecord) -> str:
+    """
+    Format full address from components.
+
+    Format: "{block} {road_name} {unit_number} {building_name}"
+    Example: "123 ORCHARD ROAD #01-23 PLAZA SINGAPURA"
+
+    Omits empty components gracefully.
+    """
+    parts = []
+
+    if clinic.block:
+        parts.append(f"BLK {clinic.block}")
+    if clinic.road_name:
+        parts.append(clinic.road_name)
+    if clinic.unit_number:
+        parts.append(f"#{clinic.unit_number}" if not clinic.unit_number.startswith('#') else clinic.unit_number)
+    if clinic.building_name:
+        parts.append(clinic.building_name)
+
+    return ' '.join(parts)
+
+
+def extract_clinics_with_addresses(file_path: str) -> List[ClinicRecord]:
+    """
+    Extract clinic records with full address components from Excel file.
+
+    Uses existing header detection logic to find column headers.
+    Processes all sheets in the Excel file.
+
+    Args:
+        file_path: Path to Excel file
+
+    Returns:
+        List of ClinicRecord objects with address data
+
+    Column Mapping (case-insensitive, flexible matching):
+        - 'Clinic Name' / 'Clinic' / 'Name' -> name
+        - 'BLK' / 'Block' -> block
+        - 'ROAD NAME' / 'Road' / 'Street' -> road_name
+        - 'UNIT NUMBER' / 'Unit' -> unit_number
+        - 'BUILDING NAME' / 'Building' -> building_name
+        - 'POSTAL CODE' / 'Postal' -> postal_code
+        - 'UNIQUE VISIT COUNT' / 'Visit Count' / 'Visits' -> visit_count (optional)
+    """
+    clinics = []
+
+    try:
+        excel_file = pd.ExcelFile(file_path)
+        logger.info(f"Extracting addresses from {len(excel_file.sheet_names)} sheets in {os.path.basename(file_path)}")
+
+        for sheet_name in excel_file.sheet_names:
+            try:
+                # Read sheet without header first to find header row
+                df_raw = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
+
+                # Find header row (reuse existing logic)
+                header_row = None
+                for idx in range(min(20, len(df_raw))):
+                    row_values = [str(val) for val in df_raw.iloc[idx].values if pd.notna(val)]
+                    row_text_lower = ' | '.join(row_values).lower()
+
+                    if ('clinic name' in row_text_lower or 'clinic_name' in row_text_lower or 'clinic' in row_text_lower):
+                        header_row = idx
+                        logger.info(f"Found header row at index {idx} in sheet '{sheet_name}'")
+                        break
+
+                # Read with correct header
+                if header_row is not None:
+                    df = pd.read_excel(file_path, sheet_name=sheet_name, header=header_row)
+                else:
+                    df = pd.read_excel(file_path, sheet_name=sheet_name)
+                    logger.warning(f"Could not find header row in '{sheet_name}', using default")
+
+                # Find columns with flexible matching
+                col_mapping = {}
+
+                for col in df.columns:
+                    col_str = str(col).lower().strip()
+
+                    # Clinic name
+                    if any(pattern in col_str for pattern in ['clinic name', 'clinic_name', 'name']) and 'clinic name' not in [v.lower() for v in col_mapping.values()]:
+                        if 'clinic' in col_str or col_str == 'name':
+                            col_mapping['name'] = col
+
+                    # Block
+                    elif col_str in ['blk', 'block'] or 'blk' == col_str:
+                        col_mapping['block'] = col
+
+                    # Road name
+                    elif any(pattern in col_str for pattern in ['road name', 'road_name', 'street']):
+                        col_mapping['road_name'] = col
+
+                    # Unit number
+                    elif any(pattern in col_str for pattern in ['unit number', 'unit_number', 'unit']):
+                        col_mapping['unit_number'] = col
+
+                    # Building name
+                    elif any(pattern in col_str for pattern in ['building name', 'building_name', 'building']):
+                        col_mapping['building_name'] = col
+
+                    # Postal code
+                    elif any(pattern in col_str for pattern in ['postal code', 'postal_code', 'postal']):
+                        col_mapping['postal_code'] = col
+
+                    # Visit count (optional)
+                    elif any(pattern in col_str for pattern in ['unique visit count', 'visit count', 'visits', 'visit_count']):
+                        col_mapping['visit_count'] = col
+
+                # Log found columns
+                logger.info(f"Sheet '{sheet_name}': Found columns: {list(col_mapping.keys())}")
+
+                # Check minimum required columns
+                if 'name' not in col_mapping:
+                    logger.warning(f"Sheet '{sheet_name}': No clinic name column found, skipping")
+                    continue
+
+                # Extract clinics
+                for row_idx, row in df.iterrows():
+                    # Get clinic name (required)
+                    clinic_name = row.get(col_mapping.get('name', ''), '')
+                    if not clinic_name or pd.isna(clinic_name) or str(clinic_name).strip() == '':
+                        continue
+
+                    clinic_name = str(clinic_name).strip()
+
+                    # Get address components (optional)
+                    postal = str(row.get(col_mapping.get('postal_code', ''), '')).strip() if 'postal_code' in col_mapping else ''
+                    unit = str(row.get(col_mapping.get('unit_number', ''), '')).strip() if 'unit_number' in col_mapping else ''
+                    block = str(row.get(col_mapping.get('block', ''), '')).strip() if 'block' in col_mapping else ''
+                    road = str(row.get(col_mapping.get('road_name', ''), '')).strip() if 'road_name' in col_mapping else ''
+                    building = str(row.get(col_mapping.get('building_name', ''), '')).strip() if 'building_name' in col_mapping else ''
+                    visit_count_val = row.get(col_mapping.get('visit_count', ''), None) if 'visit_count' in col_mapping else None
+
+                    # Handle NaN values
+                    if pd.isna(postal) or postal == 'nan':
+                        postal = ''
+                    if pd.isna(unit) or unit == 'nan':
+                        unit = ''
+                    if pd.isna(block) or block == 'nan':
+                        block = ''
+                    if pd.isna(road) or road == 'nan':
+                        road = ''
+                    if pd.isna(building) or building == 'nan':
+                        building = ''
+
+                    # Normalize address components
+                    normalized_postal = normalize_postal_code(postal)
+                    normalized_unit = normalize_unit_number(unit)
+                    normalized_block = normalize_block(block)
+
+                    # Determine address type
+                    is_sg = is_singapore_address(postal)
+                    has_valid_postal = len(normalized_postal) == 6
+                    has_unit = len(normalized_unit) > 0
+
+                    # Parse visit count
+                    visit_count = None
+                    if visit_count_val is not None and not pd.isna(visit_count_val):
+                        try:
+                            visit_count = int(visit_count_val)
+                        except (ValueError, TypeError):
+                            visit_count = None
+
+                    # Create ClinicRecord
+                    clinic = ClinicRecord(
+                        name=clinic_name,
+                        normalized_name=clinic_name.lower(),
+                        postal_code=normalized_postal if normalized_postal else None,
+                        unit_number=normalized_unit if normalized_unit else None,
+                        block=normalized_block if normalized_block else None,
+                        road_name=road,
+                        building_name=building if building else None,
+                        visit_count=visit_count,
+                        row_index=int(row_idx),
+                        is_singapore=is_sg,
+                        has_valid_postal=has_valid_postal,
+                        has_unit_number=has_unit
+                    )
+
+                    clinics.append(clinic)
+
+            except Exception as sheet_error:
+                logger.error(f"Error processing sheet '{sheet_name}': {sheet_error}")
+                continue
+
+        logger.info(f"Extracted {len(clinics)} clinic records from {os.path.basename(file_path)}")
+        logger.info(f"  - Singapore addresses: {sum(c.is_singapore for c in clinics)}")
+        logger.info(f"  - With valid postal codes: {sum(c.has_valid_postal for c in clinics)}")
+        logger.info(f"  - With unit numbers: {sum(c.has_unit_number for c in clinics)}")
+
+        return clinics
+
+    except Exception as e:
+        logger.error(f"Error extracting clinics from {file_path}: {e}")
+        raise
+
+
+def build_postal_unit_index(clinics: List[ClinicRecord]) -> dict:
+    """
+    Create postal+unit lookup index for fast matching.
+
+    Index format: {postal|unit: ClinicRecord}
+    Only includes Singapore addresses with valid postal codes and unit numbers.
+
+    Args:
+        clinics: List of ClinicRecord objects
+
+    Returns:
+        Dictionary mapping "postal|unit" keys to ClinicRecord objects
+
+    Note: First occurrence wins if duplicates exist
+    """
+    index = {}
+    duplicates = []
+
+    for clinic in clinics:
+        if clinic.is_singapore and clinic.has_valid_postal and clinic.has_unit_number:
+            key = f"{clinic.postal_code}|{clinic.unit_number}"
+
+            if key in index:
+                duplicates.append((key, clinic.name, index[key].name))
+            else:
+                index[key] = clinic
+
+    if duplicates:
+        logger.warning(f"Found {len(duplicates)} duplicate postal+unit combinations (first occurrence kept)")
+        for key, name1, name2 in duplicates[:5]:  # Log first 5 duplicates
+            logger.warning(f"  Duplicate {key}: '{name1}' vs '{name2}'")
+
+    logger.info(f"Built postal+unit index with {len(index)} entries")
+    return index
+
+
+def build_block_unit_index(clinics: List[ClinicRecord]) -> dict:
+    """
+    Create block+unit lookup index for fallback matching.
+
+    Index format: {block|unit: ClinicRecord}
+    Includes all clinics with unit numbers (fallback when postal unavailable).
+
+    Args:
+        clinics: List of ClinicRecord objects
+
+    Returns:
+        Dictionary mapping "block|unit" keys to ClinicRecord objects
+
+    Note: First occurrence wins if duplicates exist
+    """
+    index = {}
+    duplicates = []
+
+    for clinic in clinics:
+        if clinic.has_unit_number and clinic.block:
+            key = f"{clinic.block}|{clinic.unit_number}"
+
+            if key in index:
+                duplicates.append((key, clinic.name, index[key].name))
+            else:
+                index[key] = clinic
+
+    if duplicates:
+        logger.warning(f"Found {len(duplicates)} duplicate block+unit combinations (first occurrence kept)")
+        for key, name1, name2 in duplicates[:5]:  # Log first 5 duplicates
+            logger.warning(f"  Duplicate {key}: '{name1}' vs '{name2}'")
+
+    logger.info(f"Built block+unit index with {len(index)} entries")
+    return index
+
+
+def match_clinics_enhanced(base_clinics: List[ClinicRecord],
+                          comparison_clinics: List[ClinicRecord]) -> tuple:
+    """
+    Multi-criteria clinic matching with three-level fallback strategy.
+
+    Matching Priority:
+    1. Exact normalized name match (confidence: 1.0)
+    2. Postal code + unit number match (confidence: 0.9)
+    3. Block + unit number match (confidence: 0.7)
+
+    Args:
+        base_clinics: Clinics from base file
+        comparison_clinics: Clinics from comparison file
+
+    Returns:
+        Tuple of (matches, unmatched_base, unmatched_comparison)
+        - matches: List[ClinicMatch] with classification
+        - unmatched_base: List[ClinicRecord] from base not found in comparison
+        - unmatched_comparison: List[ClinicRecord] from comparison not found in base
+    """
+    logger.info(f"Starting enhanced matching: {len(base_clinics)} base vs {len(comparison_clinics)} comparison clinics")
+
+    matches = []
+    matched_base_indices = set()
+    matched_comparison_indices = set()
+
+    # Build lookup indexes for efficient matching
+    logger.info("Building lookup indexes...")
+    name_index = {c.normalized_name: (i, c) for i, c in enumerate(comparison_clinics)}
+    postal_unit_index = {}
+    for i, c in enumerate(comparison_clinics):
+        if c.is_singapore and c.has_valid_postal and c.has_unit_number:
+            key = f"{c.postal_code}|{c.unit_number}"
+            if key not in postal_unit_index:
+                postal_unit_index[key] = (i, c)
+
+    block_unit_index = {}
+    for i, c in enumerate(comparison_clinics):
+        if c.has_unit_number and c.block:
+            key = f"{c.block}|{c.unit_number}"
+            if key not in block_unit_index:
+                block_unit_index[key] = (i, c)
+
+    logger.info(f"  - Name index: {len(name_index)} entries")
+    logger.info(f"  - Postal+Unit index: {len(postal_unit_index)} entries")
+    logger.info(f"  - Block+Unit index: {len(block_unit_index)} entries")
+
+    # Match statistics
+    exact_name_count = 0
+    postal_unit_count = 0
+    block_unit_count = 0
+
+    # Perform multi-level matching
+    for base_idx, base_clinic in enumerate(base_clinics):
+        match = None
+        comparison_idx = None
+
+        # Level 1: Exact name match
+        if base_clinic.normalized_name in name_index:
+            comparison_idx, comparison_clinic = name_index[base_clinic.normalized_name]
+            match = ClinicMatch(
+                base_clinic=base_clinic,
+                comparison_clinic=comparison_clinic,
+                match_type=MatchType.EXACT_NAME,
+                confidence=1.0,
+                notes="Exact clinic name match"
+            )
+            exact_name_count += 1
+
+        # Level 2: Postal + Unit match (Singapore only)
+        elif base_clinic.is_singapore and base_clinic.has_valid_postal and base_clinic.has_unit_number:
+            postal_unit_key = f"{base_clinic.postal_code}|{base_clinic.unit_number}"
+            if postal_unit_key in postal_unit_index:
+                comparison_idx, comparison_clinic = postal_unit_index[postal_unit_key]
+
+                # Only match if not already matched by name
+                if comparison_idx not in matched_comparison_indices:
+                    name_diff = ""
+                    if base_clinic.name.lower() != comparison_clinic.name.lower():
+                        name_diff = f" (Base: '{base_clinic.name}' vs Comparison: '{comparison_clinic.name}')"
+
+                    match = ClinicMatch(
+                        base_clinic=base_clinic,
+                        comparison_clinic=comparison_clinic,
+                        match_type=MatchType.POSTAL_UNIT,
+                        confidence=0.9,
+                        notes=f"Same postal code ({base_clinic.postal_code}) and unit ({base_clinic.unit_number}){name_diff}"
+                    )
+                    postal_unit_count += 1
+
+        # Level 3: Block + Unit match (fallback)
+        elif base_clinic.has_unit_number and base_clinic.block:
+            block_unit_key = f"{base_clinic.block}|{base_clinic.unit_number}"
+            if block_unit_key in block_unit_index:
+                comparison_idx, comparison_clinic = block_unit_index[block_unit_key]
+
+                # Only match if not already matched by name or postal
+                if comparison_idx not in matched_comparison_indices:
+                    name_diff = ""
+                    if base_clinic.name.lower() != comparison_clinic.name.lower():
+                        name_diff = f" (Base: '{base_clinic.name}' vs Comparison: '{comparison_clinic.name}')"
+
+                    match = ClinicMatch(
+                        base_clinic=base_clinic,
+                        comparison_clinic=comparison_clinic,
+                        match_type=MatchType.BLOCK_UNIT,
+                        confidence=0.7,
+                        notes=f"Same block ({base_clinic.block}) and unit ({base_clinic.unit_number}){name_diff}"
+                    )
+                    block_unit_count += 1
+
+        # Record match if found
+        if match:
+            matches.append(match)
+            matched_base_indices.add(base_idx)
+            if comparison_idx is not None:
+                matched_comparison_indices.add(comparison_idx)
+
+    # Collect unmatched clinics
+    unmatched_base = [c for i, c in enumerate(base_clinics) if i not in matched_base_indices]
+    unmatched_comparison = [c for i, c in enumerate(comparison_clinics) if i not in matched_comparison_indices]
+
+    # Log results
+    logger.info(f"Matching complete:")
+    logger.info(f"  - Total matches: {len(matches)}")
+    logger.info(f"    - Exact name: {exact_name_count} ({exact_name_count/len(matches)*100:.1f}%)" if matches else "    - Exact name: 0")
+    logger.info(f"    - Postal+Unit: {postal_unit_count} ({postal_unit_count/len(matches)*100:.1f}%)" if matches else "    - Postal+Unit: 0")
+    logger.info(f"    - Block+Unit: {block_unit_count} ({block_unit_count/len(matches)*100:.1f}%)" if matches else "    - Block+Unit: 0")
+    logger.info(f"  - Unmatched in base: {len(unmatched_base)}")
+    logger.info(f"  - Unmatched in comparison: {len(unmatched_comparison)}")
+
+    return matches, unmatched_base, unmatched_comparison
+
+
+def generate_match_report_enhanced(matches: List[ClinicMatch],
+                                   unmatched_base: List[ClinicRecord],
+                                   unmatched_comparison: List[ClinicRecord],
+                                   output_path: str) -> str:
+    """
+    Generate enhanced Excel report with match type breakdown and statistics.
+
+    Creates 4 sheets:
+    1. Matched Clinics - with match type, confidence, and address details
+    2. Unmatched in Base - clinics only in base file
+    3. Unmatched in Comparison - clinics only in comparison file
+    4. Match Statistics - summary statistics and breakdown
+
+    Args:
+        matches: List of ClinicMatch objects
+        unmatched_base: List of unmatched base clinics
+        unmatched_comparison: List of unmatched comparison clinics
+        output_path: Path for output Excel file
+
+    Returns:
+        Path to generated Excel file
+    """
+    try:
+        logger.info(f"Generating enhanced match report: {output_path}")
+
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            # Sheet 1: Matched Clinics
+            if matches:
+                matched_data = []
+                for match in matches:
+                    matched_data.append({
+                        'Match Type': match.match_type,
+                        'Confidence': match.confidence,
+                        'Base Clinic Name': match.base_clinic.name,
+                        'Base Address': format_clinic_address(match.base_clinic),
+                        'Base Postal Code': match.base_clinic.postal_code or '',
+                        'Base Unit': match.base_clinic.unit_number or '',
+                        'Base Block': match.base_clinic.block or '',
+                        'Comparison Clinic Name': match.comparison_clinic.name,
+                        'Comparison Address': format_clinic_address(match.comparison_clinic),
+                        'Comparison Postal Code': match.comparison_clinic.postal_code or '',
+                        'Comparison Unit': match.comparison_clinic.unit_number or '',
+                        'Comparison Block': match.comparison_clinic.block or '',
+                        'Visit Count': match.base_clinic.visit_count or '',
+                        'Notes': match.notes
+                    })
+
+                df_matched = pd.DataFrame(matched_data)
+                df_matched.to_excel(writer, sheet_name='Matched Clinics', index=False)
+                logger.info(f"  - Matched Clinics sheet: {len(matched_data)} rows")
+            else:
+                # Empty sheet with headers
+                df_matched = pd.DataFrame(columns=[
+                    'Match Type', 'Confidence', 'Base Clinic Name', 'Base Address',
+                    'Base Postal Code', 'Base Unit', 'Base Block',
+                    'Comparison Clinic Name', 'Comparison Address',
+                    'Comparison Postal Code', 'Comparison Unit', 'Comparison Block',
+                    'Visit Count', 'Notes'
+                ])
+                df_matched.to_excel(writer, sheet_name='Matched Clinics', index=False)
+                logger.info("  - Matched Clinics sheet: 0 rows (empty)")
+
+            # Sheet 2: Unmatched in Base
+            if unmatched_base:
+                unmatched_base_data = []
+                for clinic in unmatched_base:
+                    unmatched_base_data.append({
+                        'Clinic Name': clinic.name,
+                        'Address': format_clinic_address(clinic),
+                        'Postal Code': clinic.postal_code or '',
+                        'Unit Number': clinic.unit_number or '',
+                        'Block': clinic.block or '',
+                        'Road Name': clinic.road_name or '',
+                        'Building Name': clinic.building_name or '',
+                        'Visit Count': clinic.visit_count or '',
+                        'Is Singapore': 'Yes' if clinic.is_singapore else 'No'
+                    })
+
+                df_unmatched_base = pd.DataFrame(unmatched_base_data)
+                df_unmatched_base.to_excel(writer, sheet_name='Unmatched in Base', index=False)
+                logger.info(f"  - Unmatched in Base sheet: {len(unmatched_base_data)} rows")
+            else:
+                df_unmatched_base = pd.DataFrame(columns=[
+                    'Clinic Name', 'Address', 'Postal Code', 'Unit Number', 'Block',
+                    'Road Name', 'Building Name', 'Visit Count', 'Is Singapore'
+                ])
+                df_unmatched_base.to_excel(writer, sheet_name='Unmatched in Base', index=False)
+                logger.info("  - Unmatched in Base sheet: 0 rows (empty)")
+
+            # Sheet 3: Unmatched in Comparison
+            if unmatched_comparison:
+                unmatched_comparison_data = []
+                for clinic in unmatched_comparison:
+                    unmatched_comparison_data.append({
+                        'Clinic Name': clinic.name,
+                        'Address': format_clinic_address(clinic),
+                        'Postal Code': clinic.postal_code or '',
+                        'Unit Number': clinic.unit_number or '',
+                        'Block': clinic.block or '',
+                        'Road Name': clinic.road_name or '',
+                        'Building Name': clinic.building_name or '',
+                        'Is Singapore': 'Yes' if clinic.is_singapore else 'No'
+                    })
+
+                df_unmatched_comparison = pd.DataFrame(unmatched_comparison_data)
+                df_unmatched_comparison.to_excel(writer, sheet_name='Unmatched in Comparison', index=False)
+                logger.info(f"  - Unmatched in Comparison sheet: {len(unmatched_comparison_data)} rows")
+            else:
+                df_unmatched_comparison = pd.DataFrame(columns=[
+                    'Clinic Name', 'Address', 'Postal Code', 'Unit Number', 'Block',
+                    'Road Name', 'Building Name', 'Is Singapore'
+                ])
+                df_unmatched_comparison.to_excel(writer, sheet_name='Unmatched in Comparison', index=False)
+                logger.info("  - Unmatched in Comparison sheet: 0 rows (empty)")
+
+            # Sheet 4: Match Statistics
+            stats_data = []
+
+            # Total counts
+            total_base = len(matches) + len(unmatched_base)
+            total_comparison = len(matches) + len(unmatched_comparison)
+
+            stats_data.append({'Metric': 'Total Base Clinics', 'Count': total_base, 'Percentage': '100.0%'})
+            stats_data.append({'Metric': 'Total Comparison Clinics', 'Count': total_comparison, 'Percentage': '100.0%'})
+            stats_data.append({'Metric': '', 'Count': '', 'Percentage': ''})  # Blank row
+
+            # Match breakdown
+            stats_data.append({'Metric': 'Total Matches', 'Count': len(matches),
+                             'Percentage': f"{len(matches)/total_base*100:.1f}%" if total_base > 0 else '0.0%'})
+
+            if matches:
+                exact_name_count = sum(1 for m in matches if m.match_type == MatchType.EXACT_NAME)
+                postal_unit_count = sum(1 for m in matches if m.match_type == MatchType.POSTAL_UNIT)
+                block_unit_count = sum(1 for m in matches if m.match_type == MatchType.BLOCK_UNIT)
+
+                stats_data.append({'Metric': '  - Exact Name Match', 'Count': exact_name_count,
+                                 'Percentage': f"{exact_name_count/len(matches)*100:.1f}%"})
+                stats_data.append({'Metric': '  - Postal+Unit Match', 'Count': postal_unit_count,
+                                 'Percentage': f"{postal_unit_count/len(matches)*100:.1f}%"})
+                stats_data.append({'Metric': '  - Block+Unit Match', 'Count': block_unit_count,
+                                 'Percentage': f"{block_unit_count/len(matches)*100:.1f}%"})
+
+            stats_data.append({'Metric': '', 'Count': '', 'Percentage': ''})  # Blank row
+
+            # Unmatched
+            stats_data.append({'Metric': 'Unmatched in Base', 'Count': len(unmatched_base),
+                             'Percentage': f"{len(unmatched_base)/total_base*100:.1f}%" if total_base > 0 else '0.0%'})
+            stats_data.append({'Metric': 'Unmatched in Comparison', 'Count': len(unmatched_comparison),
+                             'Percentage': f"{len(unmatched_comparison)/total_comparison*100:.1f}%" if total_comparison > 0 else '0.0%'})
+
+            stats_data.append({'Metric': '', 'Count': '', 'Percentage': ''})  # Blank row
+
+            # Address completeness (base file)
+            all_base_clinics = [m.base_clinic for m in matches] + unmatched_base
+            if all_base_clinics:
+                sg_count = sum(1 for c in all_base_clinics if c.is_singapore)
+                postal_count = sum(1 for c in all_base_clinics if c.has_valid_postal)
+                unit_count = sum(1 for c in all_base_clinics if c.has_unit_number)
+
+                stats_data.append({'Metric': 'Base File - Address Completeness', 'Count': '', 'Percentage': ''})
+                stats_data.append({'Metric': '  - Singapore Addresses', 'Count': sg_count,
+                                 'Percentage': f"{sg_count/len(all_base_clinics)*100:.1f}%"})
+                stats_data.append({'Metric': '  - Valid Postal Codes', 'Count': postal_count,
+                                 'Percentage': f"{postal_count/len(all_base_clinics)*100:.1f}%"})
+                stats_data.append({'Metric': '  - With Unit Numbers', 'Count': unit_count,
+                                 'Percentage': f"{unit_count/len(all_base_clinics)*100:.1f}%"})
+
+            stats_data.append({'Metric': '', 'Count': '', 'Percentage': ''})  # Blank row
+
+            # Address completeness (comparison file)
+            all_comparison_clinics = [m.comparison_clinic for m in matches] + unmatched_comparison
+            if all_comparison_clinics:
+                sg_count = sum(1 for c in all_comparison_clinics if c.is_singapore)
+                postal_count = sum(1 for c in all_comparison_clinics if c.has_valid_postal)
+                unit_count = sum(1 for c in all_comparison_clinics if c.has_unit_number)
+
+                stats_data.append({'Metric': 'Comparison File - Address Completeness', 'Count': '', 'Percentage': ''})
+                stats_data.append({'Metric': '  - Singapore Addresses', 'Count': sg_count,
+                                 'Percentage': f"{sg_count/len(all_comparison_clinics)*100:.1f}%"})
+                stats_data.append({'Metric': '  - Valid Postal Codes', 'Count': postal_count,
+                                 'Percentage': f"{postal_count/len(all_comparison_clinics)*100:.1f}%"})
+                stats_data.append({'Metric': '  - With Unit Numbers', 'Count': unit_count,
+                                 'Percentage': f"{unit_count/len(all_comparison_clinics)*100:.1f}%"})
+
+            df_stats = pd.DataFrame(stats_data)
+            df_stats.to_excel(writer, sheet_name='Match Statistics', index=False)
+            logger.info(f"  - Match Statistics sheet: {len(stats_data)} rows")
+
+        logger.info(f"Enhanced match report generated successfully: {output_path}")
+        return output_path
+
+    except Exception as e:
+        logger.error(f"Error generating match report: {e}\n{traceback.format_exc()}")
+        raise
+
 
 @app.route('/download-match/<filename>', methods=['GET'])
 def download_match_result(filename):

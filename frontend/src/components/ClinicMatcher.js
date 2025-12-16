@@ -455,6 +455,147 @@ const ClinicMatcher = () => {
               </div>
             </div>
 
+            {/* Match Type Breakdown - Show enhanced matching statistics */}
+            {results.match_breakdown && (
+              <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                <div className="mb-3">
+                  <p className="text-sm font-semibold text-blue-900">Match Type Breakdown</p>
+                  <p className="text-xs text-gray-600 mt-1">
+                    How clinics were matched (name, postal code, or address)
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Exact Name Matches */}
+                  <div className="bg-white rounded-lg p-4 border border-emerald-300">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1">
+                        <div className="text-2xl font-bold text-emerald-600">
+                          {results.match_breakdown.exact_name}
+                        </div>
+                        <div className="text-sm text-gray-700 font-medium mt-1">Exact Name Match</div>
+                      </div>
+                      <div className="flex-shrink-0">
+                        <svg className="h-6 w-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-500 mb-2">
+                      Clinic names matched exactly
+                    </div>
+                    <div className="pt-2 border-t border-emerald-200">
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-lg font-semibold text-emerald-700">
+                          {results.match_breakdown_percentages?.exact_name || '0%'}
+                        </span>
+                        <span className="text-xs text-gray-500">of all matches</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Postal + Unit Matches */}
+                  <div className="bg-white rounded-lg p-4 border border-blue-300">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1">
+                        <div className="text-2xl font-bold text-blue-600">
+                          {results.match_breakdown.postal_unit}
+                        </div>
+                        <div className="text-sm text-gray-700 font-medium mt-1">Postal + Unit Match</div>
+                      </div>
+                      <div className="flex-shrink-0">
+                        <svg className="h-6 w-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-500 mb-2">
+                      Same postal code & unit number
+                    </div>
+                    <div className="pt-2 border-t border-blue-200">
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-lg font-semibold text-blue-700">
+                          {results.match_breakdown_percentages?.postal_unit || '0%'}
+                        </span>
+                        <span className="text-xs text-gray-500">of all matches</span>
+                      </div>
+                    </div>
+                    {results.match_breakdown.postal_unit > 0 && (
+                      <div className="mt-2 pt-2 border-t border-blue-100">
+                        <div className="flex items-start space-x-1">
+                          <svg className="h-3 w-3 text-blue-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                          </svg>
+                          <p className="text-xs text-blue-700">
+                            Clinics with different names but same location
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Block + Unit Matches */}
+                  <div className="bg-white rounded-lg p-4 border border-indigo-300">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1">
+                        <div className="text-2xl font-bold text-indigo-600">
+                          {results.match_breakdown.block_unit}
+                        </div>
+                        <div className="text-sm text-gray-700 font-medium mt-1">Block + Unit Match</div>
+                      </div>
+                      <div className="flex-shrink-0">
+                        <svg className="h-6 w-6 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                        </svg>
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-500 mb-2">
+                      Same block & unit number (fallback)
+                    </div>
+                    <div className="pt-2 border-t border-indigo-200">
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-lg font-semibold text-indigo-700">
+                          {results.match_breakdown_percentages?.block_unit || '0%'}
+                        </span>
+                        <span className="text-xs text-gray-500">of all matches</span>
+                      </div>
+                    </div>
+                    {results.match_breakdown.block_unit > 0 && (
+                      <div className="mt-2 pt-2 border-t border-indigo-100">
+                        <div className="flex items-start space-x-1">
+                          <svg className="h-3 w-3 text-indigo-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                          </svg>
+                          <p className="text-xs text-indigo-700">
+                            Used when postal code unavailable
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Summary insight */}
+                {results.match_breakdown.postal_unit > 0 && (
+                  <div className="mt-3 p-3 bg-white rounded-lg border border-blue-200">
+                    <div className="flex items-start space-x-2">
+                      <svg className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                      </svg>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-blue-900">Enhanced Matching Enabled</p>
+                        <p className="text-xs text-gray-600 mt-1">
+                          Found {results.match_breakdown.postal_unit} additional matches using postal code and address matching.
+                          These clinics might have different names but are at the same physical location.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Top N Matching Statistics - Only show when top N filter is enabled */}
             {results.top_n_enabled && (
               <div className="mt-4 p-4 bg-purple-50 rounded-lg border border-purple-200">
