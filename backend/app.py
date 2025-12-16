@@ -3798,6 +3798,10 @@ def extract_clinics_with_addresses(file_path: str) -> List[ClinicRecord]:
                     elif any(pattern in col_str for pattern in ['postal code', 'postal_code', 'postal']):
                         col_mapping['postal_code'] = col
 
+                    # Combined address column (for files with single address field)
+                    elif col_str == 'address' and 'address' not in col_mapping:
+                        col_mapping['address'] = col
+
                     # Visit count (optional)
                     elif any(pattern in col_str for pattern in ['unique visit count', 'visit count', 'visits', 'visit_count']):
                         col_mapping['visit_count'] = col
@@ -3826,6 +3830,34 @@ def extract_clinics_with_addresses(file_path: str) -> List[ClinicRecord]:
                     road = str(row.get(col_mapping.get('road_name', ''), '')).strip() if 'road_name' in col_mapping else ''
                     building = str(row.get(col_mapping.get('building_name', ''), '')).strip() if 'building_name' in col_mapping else ''
                     visit_count_val = row.get(col_mapping.get('visit_count', ''), None) if 'visit_count' in col_mapping else None
+
+                    # Get combined address if available
+                    address_field = str(row.get(col_mapping.get('address', ''), '')).strip() if 'address' in col_mapping else ''
+                    if pd.isna(address_field) or address_field == 'nan':
+                        address_field = ''
+
+                    # Extract from combined address if dedicated columns are empty
+                    if address_field:
+                        # Extract postal code from address if not already present
+                        if not postal or postal == '':
+                            # Pattern: "SINGAPORE 123456" or "S123456"
+                            postal_match = re.search(r'(?:SINGAPORE\s+|S)(\d{6})\b', address_field, re.IGNORECASE)
+                            if postal_match:
+                                postal = postal_match.group(1)
+
+                        # Extract unit number from address if not already present
+                        if not unit or unit == '':
+                            # Pattern: "#01-01", "#02-18", "01-01", etc.
+                            unit_match = re.search(r'#?(\d{1,2}[-/]\d{1,3})\b', address_field)
+                            if unit_match:
+                                unit = unit_match.group(1)
+
+                        # Extract block number from address if not already present
+                        if not block or block == '':
+                            # Pattern: "BLK 410", "BLK 5", "410 ANG MO KIO" (number at start)
+                            block_match = re.search(r'(?:BLK\s+)?(\d+)\s+(?:ANG MO KIO|UPPER|LOWER|ROAD|AVENUE|STREET|CRESCENT|DRIVE|LANE)', address_field, re.IGNORECASE)
+                            if block_match:
+                                block = block_match.group(1)
 
                     # Handle NaN values
                     if pd.isna(postal) or postal == 'nan':
