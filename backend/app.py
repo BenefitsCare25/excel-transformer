@@ -3177,16 +3177,16 @@ def generate_utilisation_report(file_path, exclude_polyclinics=False, exclude_ho
 
         logger.info(f"Using clinic name column: '{clinic_col}'")
 
-        # Find incurred amount column
+        # Find paid amount column
         amount_col = None
         for col in combined_df.columns:
-            col_str = str(col).lower().strip()
-            if 'incurred' in col_str and ('amt' in col_str or 'amount' in col_str):
+            col_str = str(col).lower().strip().replace('\n', ' ')
+            if 'paid' in col_str and ('amt' in col_str or 'amount' in col_str):
                 amount_col = col
                 break
 
         if amount_col is None:
-            raise ValueError("Could not find 'INCURRED AMT. ($)' column in Excel file")
+            raise ValueError("Could not find 'PAID AMT. ($)' column in Excel file")
 
         logger.info(f"Using amount column: '{amount_col}'")
 

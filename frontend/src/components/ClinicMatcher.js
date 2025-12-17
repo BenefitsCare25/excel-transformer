@@ -319,7 +319,7 @@ const ClinicMatcher = () => {
               />
               <div>
                 <span className="font-medium text-gray-800">Generate Utilisation Report from Base File</span>
-                <p className="text-xs text-gray-500">Create a summary report with clinic names, visit counts, and total amounts</p>
+                <p className="text-xs text-gray-500">Create a summary report with clinic names, visit counts, and total paid amounts</p>
               </div>
             </label>
           </div>
@@ -697,7 +697,7 @@ const ClinicMatcher = () => {
                   </div>
                   <div className="bg-white rounded p-3 border border-blue-300">
                     <div className="text-2xl font-bold text-blue-600">${results.total_amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-                    <div className="text-xs text-gray-600">Total Amount</div>
+                    <div className="text-xs text-gray-600">Total Paid Amount</div>
                   </div>
                 </div>
 

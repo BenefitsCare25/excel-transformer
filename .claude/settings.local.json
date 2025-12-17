@@ -37,7 +37,10 @@
       "Bash(del analyze_excel.py detailed_analysis.py)",
       "Bash(del:*)",
       "Bash(npm test:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(where:*)"
     ],
     "deny": [],
     "ask": []
