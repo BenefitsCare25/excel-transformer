@@ -3589,7 +3589,7 @@ def match_clinics():
                 )
                 if matched_clinic:
                     detail['matched'] = True
-                    detail['match_type'] = str(matched_clinic.match_type.value)
+                    detail['match_type'] = str(matched_clinic.match_type)
                     detail['matched_to'] = matched_clinic.comparison_clinic.name
 
             # Count matched/unmatched in top N
