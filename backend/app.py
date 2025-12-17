@@ -3576,11 +3576,13 @@ def match_clinics():
         exclude_hospitals = request.form.get('exclude_hospitals', 'false').lower() == 'true'
         generate_report = request.form.get('generate_report', 'false').lower() == 'true'
         top_n_filter = request.form.get('top_n_filter', None)  # 'top10', 'top20', or None
+        find_alternatives = request.form.get('find_alternatives', 'false').lower() == 'true'  # Find nearest alternatives for unmatched
 
         logger.info(f"Matching clinics: Base='{base_file.filename}', Comparison='{comparison_file.filename}'")
         logger.info(f"Filters: exclude_polyclinics={exclude_polyclinics}, exclude_hospitals={exclude_hospitals}")
         logger.info(f"Generate utilisation report: {generate_report}")
         logger.info(f"Top N filter: {top_n_filter}")
+        logger.info(f"Find alternatives: {find_alternatives}")
 
         # Extract clinic records with full address components
         logger.info("Using enhanced address-based matching...")
@@ -3743,11 +3745,87 @@ def match_clinics():
 
             logger.info(f"Top {n_value} subset analysis: {top_n_matched_count}/{len(top_n_clinic_details)} matched ({top_n_results['match_percentage']:.1f}%)")
 
+        # Calculate nearest alternatives for unmatched top N clinics (if user opted in)
+        alternative_nearest_details = None
+        if find_alternatives and top_n_filter and top_n_results and top_n_results['unmatched_count'] > 0:
+            logger.info("Calculating nearest alternatives for unmatched top N clinics...")
+
+            # Get unmatched top N clinics
+            unmatched_top_n = []
+            for detail in top_n_clinic_details:
+                if not detail['matched']:
+                    # Find the actual clinic object from base_clinics_filtered
+                    clinic_obj = next(
+                        (c for c in base_clinics_filtered if c.normalized_name == detail['normalized_name']),
+                        None
+                    )
+                    if clinic_obj:
+                        unmatched_top_n.append(clinic_obj)
+
+            # Build reverse lookup: comparison clinic -> base clinic
+            comparison_to_base = {
+                m.comparison_clinic.normalized_name: m.base_clinic.name
+                for m in matches
+            }
+
+            # Find alternatives for each unmatched clinic
+            alternatives_by_clinic = {}
+            for clinic in unmatched_top_n:
+                alternatives = find_nearest_clinics(
+                    target_clinic=clinic,
+                    candidate_clinics=comparison_clinics_filtered,
+                    matched_clinic_names=set(comparison_to_base.keys()),
+                    k=5
+                )
+
+                # Update matched_to field with actual base clinic name
+                for alt in alternatives:
+                    if alt.is_matched:
+                        alt.matched_to = comparison_to_base.get(alt.clinic.normalized_name, "MATCHED")
+
+                if alternatives:
+                    alternatives_by_clinic[clinic.normalized_name] = alternatives
+
+            # Format for JSON response
+            if alternatives_by_clinic:
+                alternative_nearest_details = {
+                    'unmatched_clinic_count': len(unmatched_top_n),
+                    'clinics_with_alternatives': len(alternatives_by_clinic),
+                    'alternatives': []
+                }
+
+                for clinic_name, alternatives in alternatives_by_clinic.items():
+                    # Find the clinic object for metadata
+                    clinic = next(c for c in unmatched_top_n if c.normalized_name == clinic_name)
+
+                    alternative_nearest_details['alternatives'].append({
+                        'base_clinic_name': clinic.name,
+                        'base_clinic_postal': clinic.postal_code or 'N/A',
+                        'base_clinic_coords': {
+                            'lat': clinic.latitude,
+                            'lng': clinic.longitude
+                        } if clinic.latitude and clinic.longitude else None,
+                        'nearest_clinics': [
+                            {
+                                'rank': idx + 1,
+                                'clinic_name': alt.clinic.name,
+                                'postal_code': alt.clinic.postal_code or 'N/A',
+                                'address': format_clinic_address(alt.clinic),
+                                'distance_km': alt.distance_km,
+                                'is_matched': alt.is_matched,
+                                'matched_to': alt.matched_to if alt.is_matched else None
+                            }
+                            for idx, alt in enumerate(alternatives)
+                        ]
+                    })
+
+                logger.info(f"Generated alternatives for {len(alternatives_by_clinic)} unmatched clinics")
+
         # Generate enhanced Excel report with match details
         results_filename = f"clinic_match_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         results_path = os.path.join(PROCESSED_FOLDER, results_filename)
 
-        generate_match_report_enhanced(matches, unmatched_base, unmatched_comparison, results_path)
+        generate_match_report_enhanced(matches, unmatched_base, unmatched_comparison, results_path, alternative_nearest_details)
 
         # Generate utilisation report if requested OR if Top N filter is enabled
         report_filename = None
@@ -3836,6 +3914,10 @@ def match_clinics():
         else:
             response_data['top_n_enabled'] = False
 
+        # Add alternative nearest clinics data if calculated
+        if alternative_nearest_details:
+            response_data['alternative_nearest_details'] = alternative_nearest_details
+
         return jsonify(response_data)
 
     except Exception as e:
@@ -3870,6 +3952,11 @@ class ClinicRecord:
     has_valid_postal: bool         # True if 6-digit numeric postal
     has_unit_number: bool          # True if unit exists
 
+    # Geolocation fields (for distance calculations)
+    latitude: Optional[float] = None       # Decimal degrees
+    longitude: Optional[float] = None      # Decimal degrees
+    geocode_method: Optional[str] = None   # 'postal_code', 'address', or 'failed'
+
 
 @dataclass
 class ClinicMatch:
@@ -3879,6 +3966,15 @@ class ClinicMatch:
     match_type: str                # "Exact Name" / "Postal+Unit" / "Block+Unit"
     confidence: float              # 1.0 / 0.9 / 0.7
     notes: str                     # Match details
+
+
+@dataclass
+class AlternativeClinic:
+    """Alternative nearby clinic suggestion for unmatched clinics"""
+    clinic: ClinicRecord           # The alternative clinic
+    distance_km: float             # Distance in kilometers
+    is_matched: bool               # Whether already matched to another clinic
+    matched_to: Optional[str]      # Base clinic name if matched
 
 
 class MatchType:
@@ -4010,6 +4106,115 @@ def is_singapore_address(postal: str) -> bool:
     return len(normalized) == 6 and normalized.isdigit()
 
 
+def calculate_haversine_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """
+    Calculate straight-line distance between two points using Haversine formula.
+
+    Args:
+        lat1, lng1: First point coordinates (decimal degrees)
+        lat2, lng2: Second point coordinates (decimal degrees)
+
+    Returns:
+        Distance in kilometers (rounded to 2 decimal places for 10-meter precision)
+
+    Formula:
+        a = sin²(Δφ/2) + cos φ1 ⋅ cos φ2 ⋅ sin²(Δλ/2)
+        c = 2 ⋅ atan2(√a, √(1−a))
+        d = R ⋅ c
+
+    Where:
+        φ = latitude, λ = longitude, R = Earth's radius (6371 km)
+    """
+    from math import radians, sin, cos, sqrt, atan2
+
+    # Earth radius in kilometers
+    R = 6371.0
+
+    # Convert to radians
+    lat1_rad = radians(lat1)
+    lng1_rad = radians(lng1)
+    lat2_rad = radians(lat2)
+    lng2_rad = radians(lng2)
+
+    # Differences
+    dlat = lat2_rad - lat1_rad
+    dlng = lng2_rad - lng1_rad
+
+    # Haversine formula
+    a = sin(dlat / 2)**2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlng / 2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+
+    distance = R * c
+
+    return round(distance, 2)  # Round to 2 decimal places (10m precision)
+
+
+def find_nearest_clinics(
+    target_clinic: ClinicRecord,
+    candidate_clinics: List[ClinicRecord],
+    matched_clinic_names: Set[str],
+    k: int = 5
+) -> List[AlternativeClinic]:
+    """
+    Find K nearest clinics to target clinic using Haversine distance.
+
+    Args:
+        target_clinic: Unmatched clinic to find alternatives for
+        candidate_clinics: All comparison clinics (matched + unmatched)
+        matched_clinic_names: Set of normalized names already matched
+        k: Number of nearest neighbors to return (default: 5)
+
+    Returns:
+        List of AlternativeClinic objects sorted by distance (ascending)
+        Returns empty list if target has no coordinates
+
+    Algorithm:
+        1. Filter candidates with valid coordinates
+        2. Calculate distance to each candidate
+        3. Sort by distance ascending
+        4. Return top K with match status
+    """
+    # Validate target has coordinates
+    if not target_clinic.latitude or not target_clinic.longitude:
+        logger.warning(f"Cannot find alternatives for '{target_clinic.name}' - no coordinates")
+        return []
+
+    # Calculate distances to all valid candidates
+    distances = []
+    for candidate in candidate_clinics:
+        # Skip candidates without coordinates
+        if not candidate.latitude or not candidate.longitude:
+            continue
+
+        # Calculate distance
+        distance = calculate_haversine_distance(
+            target_clinic.latitude,
+            target_clinic.longitude,
+            candidate.latitude,
+            candidate.longitude
+        )
+
+        # Check if this candidate is already matched
+        is_matched = candidate.normalized_name in matched_clinic_names
+
+        distances.append(
+            AlternativeClinic(
+                clinic=candidate,
+                distance_km=distance,
+                is_matched=is_matched,
+                matched_to="MATCHED" if is_matched else None  # Placeholder, updated by caller
+            )
+        )
+
+    # Sort by distance (ascending) and return top K
+    distances.sort(key=lambda x: x.distance_km)
+    top_k = distances[:k]
+
+    logger.info(f"Found {len(top_k)} alternatives for '{target_clinic.name}' (from {len(distances)} candidates)")
+
+    return top_k
+
+
 def format_clinic_address(clinic: ClinicRecord) -> str:
     """
     Format full address from components.
@@ -4031,6 +4236,40 @@ def format_clinic_address(clinic: ClinicRecord) -> str:
         parts.append(clinic.building_name)
 
     return ' '.join(parts)
+
+
+def format_clinic_address_for_geocoding(clinic: ClinicRecord) -> str:
+    """
+    Format clinic address components into geocodable string for Google Maps API.
+
+    Args:
+        clinic: ClinicRecord with address components
+
+    Returns:
+        Formatted address string optimized for geocoding API
+        Example: "BLK 123, Orchard Road, #01-23, Plaza Singapura, SINGAPORE 238869"
+
+    Note:
+        Different from format_clinic_address() - uses comma separators
+        and includes postal code for better geocoding accuracy.
+    """
+    parts = []
+
+    if clinic.block:
+        parts.append(f"BLK {clinic.block}")
+    if clinic.road_name:
+        parts.append(clinic.road_name)
+    if clinic.unit_number:
+        unit_str = f"#{clinic.unit_number}" if not clinic.unit_number.startswith('#') else clinic.unit_number
+        parts.append(unit_str)
+    if clinic.building_name:
+        parts.append(clinic.building_name)
+    if clinic.postal_code:
+        parts.append(f"SINGAPORE {clinic.postal_code}")
+    elif clinic.is_singapore:
+        parts.append("SINGAPORE")
+
+    return ", ".join(parts)
 
 
 def extract_clinics_with_addresses(file_path: str) -> List[ClinicRecord]:
@@ -4056,6 +4295,11 @@ def extract_clinics_with_addresses(file_path: str) -> List[ClinicRecord]:
         - 'UNIQUE VISIT COUNT' / 'Visit Count' / 'Visits' -> visit_count (optional)
     """
     clinics = []
+
+    # Initialize geocoding service (reuse postal lookup table across all clinics)
+    geocoding_service = GeocodingService(use_google_api=True)
+    geocoded_count = 0
+    geocode_failed_count = 0
 
     try:
         excel_file = pd.ExcelFile(file_path)
@@ -4229,6 +4473,27 @@ def extract_clinics_with_addresses(file_path: str) -> List[ClinicRecord]:
                         has_unit_number=has_unit
                     )
 
+                    # Geocode clinic for distance calculations
+                    try:
+                        if normalized_postal or road:  # Only geocode if we have address data
+                            address_str = format_clinic_address_for_geocoding(clinic)
+                            lat, lng, method = geocoding_service.geocode(
+                                postal_code=normalized_postal,
+                                address=address_str,
+                                country='SINGAPORE' if is_sg else None
+                            )
+                            clinic.latitude = lat
+                            clinic.longitude = lng
+                            clinic.geocode_method = method
+
+                            if lat and lng:
+                                geocoded_count += 1
+                            else:
+                                geocode_failed_count += 1
+                    except Exception as e:
+                        logger.warning(f"Geocoding failed for {clinic_name}: {str(e)}")
+                        geocode_failed_count += 1
+
                     clinics.append(clinic)
 
                 # Post-process: aggregate visit counts for transaction-level files
@@ -4263,7 +4528,10 @@ def extract_clinics_with_addresses(file_path: str) -> List[ClinicRecord]:
                             row_index=first_clinic.row_index,
                             is_singapore=first_clinic.is_singapore,
                             has_valid_postal=first_clinic.has_valid_postal,
-                            has_unit_number=first_clinic.has_unit_number
+                            has_unit_number=first_clinic.has_unit_number,
+                            latitude=first_clinic.latitude,
+                            longitude=first_clinic.longitude,
+                            geocode_method=first_clinic.geocode_method
                         )
                         aggregated_clinics.append(aggregated_clinic)
 
@@ -4280,6 +4548,9 @@ def extract_clinics_with_addresses(file_path: str) -> List[ClinicRecord]:
         logger.info(f"  - With valid postal codes: {sum(c.has_valid_postal for c in clinics)}")
         logger.info(f"  - With unit numbers: {sum(c.has_unit_number for c in clinics)}")
         logger.info(f"  - With visit counts: {sum(1 for c in clinics if c.visit_count is not None and c.visit_count > 0)}")
+        logger.info(f"  - Geocoded successfully: {geocoded_count} ({geocoded_count/len(clinics)*100:.1f}%)" if clinics else "  - Geocoded successfully: 0")
+        if geocode_failed_count > 0:
+            logger.warning(f"  - Geocoding failed: {geocode_failed_count}")
 
         return clinics
 
@@ -4497,7 +4768,8 @@ def match_clinics_enhanced(base_clinics: List[ClinicRecord],
 def generate_match_report_enhanced(matches: List[ClinicMatch],
                                    unmatched_base: List[ClinicRecord],
                                    unmatched_comparison: List[ClinicRecord],
-                                   output_path: str) -> str:
+                                   output_path: str,
+                                   alternative_nearest_details: Optional[dict] = None) -> str:
     """
     Generate enhanced Excel report with match type breakdown and statistics.
 
@@ -4681,6 +4953,32 @@ def generate_match_report_enhanced(matches: List[ClinicMatch],
             df_stats = pd.DataFrame(stats_data)
             df_stats.to_excel(writer, sheet_name='Match Statistics', index=False)
             logger.info(f"  - Match Statistics sheet: {len(stats_data)} rows")
+
+            # Sheet 5: Alternative Nearest Clinics (if available)
+            if alternative_nearest_details and alternative_nearest_details.get('alternatives'):
+                logger.info("Generating Alternative Nearest Clinics sheet...")
+                alt_data = []
+
+                for alt_group in alternative_nearest_details['alternatives']:
+                    base_name = alt_group['base_clinic_name']
+                    base_postal = alt_group['base_clinic_postal']
+
+                    for alt_clinic in alt_group['nearest_clinics']:
+                        alt_data.append({
+                            'Unmatched Clinic': base_name,
+                            'Base Postal Code': base_postal,
+                            'Alternative Rank': alt_clinic['rank'],
+                            'Alternative Clinic Name': alt_clinic['clinic_name'],
+                            'Alternative Postal Code': alt_clinic['postal_code'],
+                            'Alternative Address': alt_clinic['address'],
+                            'Distance (km)': alt_clinic['distance_km'],
+                            'Already Matched': 'Yes' if alt_clinic['is_matched'] else 'No',
+                            'Matched To Base Clinic': alt_clinic.get('matched_to', '')
+                        })
+
+                df_alternatives = pd.DataFrame(alt_data)
+                df_alternatives.to_excel(writer, sheet_name='Alternative Nearest', index=False)
+                logger.info(f"  - Alternative Nearest Clinics sheet: {len(alt_data)} rows")
 
         logger.info(f"Enhanced match report generated successfully: {output_path}")
         return output_path

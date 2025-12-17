@@ -127,6 +127,131 @@ const TopNAnalysis = ({ topNData, filterType, reportFilename, onDownloadReport }
   );
 };
 
+// Alternative Nearest Clinics Component - shows geographic alternatives for unmatched Top N clinics
+const AlternativeNearestClinics = ({ alternativeData }) => {
+  if (!alternativeData || !alternativeData.alternatives || alternativeData.alternatives.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="bg-purple-50 rounded-lg border border-purple-200 p-4">
+      {/* Header */}
+      <div className="mb-4">
+        <h4 className="text-md font-semibold text-purple-900">
+          🗺️ Nearest Alternative Clinics for Unmatched Top N
+        </h4>
+        <p className="text-xs text-gray-600 mt-1">
+          Geographic alternatives for {alternativeData.unmatched_clinic_count} unmatched clinic(s) based on proximity
+        </p>
+      </div>
+
+      {/* Summary Stats */}
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <div className="bg-white rounded p-3 border border-purple-300">
+          <div className="text-2xl font-bold text-purple-600">
+            {alternativeData.unmatched_clinic_count}
+          </div>
+          <div className="text-xs text-gray-600">Unmatched Clinics</div>
+        </div>
+        <div className="bg-white rounded p-3 border border-purple-300">
+          <div className="text-2xl font-bold text-purple-600">
+            {alternativeData.alternatives.reduce((sum, alt) => sum + alt.nearest_clinics.length, 0)}
+          </div>
+          <div className="text-xs text-gray-600">Alternative Suggestions</div>
+        </div>
+      </div>
+
+      {/* Alternatives by Clinic */}
+      {alternativeData.alternatives.map((clinicAlternatives, idx) => (
+        <div key={idx} className="mb-4 last:mb-0">
+          {/* Unmatched Clinic Header */}
+          <div className="bg-orange-100 rounded-t-lg border border-orange-300 p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-semibold text-gray-900">
+                  {clinicAlternatives.base_clinic_name}
+                </div>
+                <div className="text-xs text-gray-600 mt-1">
+                  Postal: {clinicAlternatives.base_clinic_postal}
+                </div>
+              </div>
+              <div className="text-xs bg-orange-200 text-orange-800 px-2 py-1 rounded">
+                NOT FOUND
+              </div>
+            </div>
+          </div>
+
+          {/* Nearest Alternatives Table */}
+          <div className="bg-white rounded-b-lg border-x border-b border-orange-300 overflow-hidden">
+            <table className="min-w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Rank</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Alternative Clinic</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Address</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700">Distance</th>
+                  <th className="px-3 py-2 text-center text-xs font-semibold text-gray-700">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {clinicAlternatives.nearest_clinics.map((alternative, altIdx) => (
+                  <tr key={altIdx} className={alternative.is_matched ? 'bg-blue-50' : 'bg-white'}>
+                    <td className="px-3 py-2 text-sm text-gray-900">{alternative.rank}</td>
+                    <td className="px-3 py-2">
+                      <div className="text-sm font-medium text-gray-900">
+                        {alternative.clinic_name}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        Postal: {alternative.postal_code}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-gray-600 max-w-xs truncate" title={alternative.address}>
+                      {alternative.address}
+                    </td>
+                    <td className="px-3 py-2 text-sm text-right">
+                      <span className="font-medium text-purple-700">
+                        {alternative.distance_km} km
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {alternative.is_matched ? (
+                        <div>
+                          <span className="inline-block px-2 py-1 rounded-full text-xs font-medium bg-blue-200 text-blue-800 mb-1">
+                            ✓ Matched
+                          </span>
+                          <div className="text-xs text-gray-600">
+                            → {alternative.matched_to}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="inline-block px-2 py-1 rounded-full text-xs font-medium bg-gray-200 text-gray-700">
+                          Available
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+
+      {/* Info Note */}
+      <div className="mt-4 p-3 bg-purple-100 rounded-lg border border-purple-200">
+        <div className="flex items-start space-x-2">
+          <svg className="h-4 w-4 text-purple-600 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+          </svg>
+          <p className="text-xs text-purple-900">
+            Alternatives are sorted by straight-line distance. "Matched" clinics are already serving other locations.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ClinicMatcher = () => {
   const [baseFile, setBaseFile] = useState(null);
   const [comparisonFile, setComparisonFile] = useState(null);
@@ -137,6 +262,7 @@ const ClinicMatcher = () => {
   const [excludeHospitals, setExcludeHospitals] = useState(false);
   const [generateReport, setGenerateReport] = useState(false);
   const [topNFilter, setTopNFilter] = useState(null); // null, 'top10', or 'top20'
+  const [findAlternatives, setFindAlternatives] = useState(false); // Find nearest alternatives for unmatched clinics
   const [fileInfo, setFileInfo] = useState({ base: null, comparison: null });
 
   // Validate and get file info from backend
@@ -238,6 +364,7 @@ const ClinicMatcher = () => {
     if (topNFilter) {
       formData.append('top_n_filter', topNFilter);
     }
+    formData.append('find_alternatives', findAlternatives);
 
     try {
       const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
@@ -670,7 +797,10 @@ const ClinicMatcher = () => {
               <input
                 type="checkbox"
                 checked={topNFilter === 'top10'}
-                onChange={(e) => setTopNFilter(e.target.checked ? 'top10' : null)}
+                onChange={(e) => {
+                  setTopNFilter(e.target.checked ? 'top10' : null);
+                  if (!e.target.checked) setFindAlternatives(false); // Reset when unchecked
+                }}
                 disabled={!fileInfo.base?.supportsTopN || isProcessing || topNFilter === 'top20'}
                 className="mt-1"
               />
@@ -683,7 +813,10 @@ const ClinicMatcher = () => {
               <input
                 type="checkbox"
                 checked={topNFilter === 'top20'}
-                onChange={(e) => setTopNFilter(e.target.checked ? 'top20' : null)}
+                onChange={(e) => {
+                  setTopNFilter(e.target.checked ? 'top20' : null);
+                  if (!e.target.checked) setFindAlternatives(false); // Reset when unchecked
+                }}
                 disabled={!fileInfo.base?.supportsTopN || isProcessing || topNFilter === 'top10'}
                 className="mt-1"
               />
@@ -692,6 +825,28 @@ const ClinicMatcher = () => {
                 <p className="text-xs text-gray-500">Match only the top 20 most visited clinics from base file</p>
               </div>
             </label>
+
+            {/* Find Alternatives Option - Only shown when Top N is selected */}
+            {topNFilter && (
+              <label className={`flex items-start gap-3 border-t border-gray-200 pt-3 mt-3 ${isProcessing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+                <input
+                  type="checkbox"
+                  checked={findAlternatives}
+                  onChange={(e) => setFindAlternatives(e.target.checked)}
+                  disabled={isProcessing}
+                  className="mt-1"
+                />
+                <div>
+                  <span className="font-medium text-gray-800">Find Nearest Alternatives</span>
+                  <p className="text-xs text-gray-500">
+                    For unmatched top N clinics, find 5 nearest alternatives from comparison file based on geographic distance
+                  </p>
+                  <p className="text-xs text-blue-600 mt-1">
+                    ⚡ Adds ~25s processing time for geocoding
+                  </p>
+                </div>
+              </label>
+            )}
           </div>
         </div>
 
@@ -957,6 +1112,13 @@ const ClinicMatcher = () => {
                     <p className="text-xs text-yellow-800">⚠️ {results.top_n_warning}</p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* SECTION 3: ALTERNATIVE NEAREST CLINICS */}
+            {results.alternative_nearest_details && results.alternative_nearest_details.alternatives && (
+              <div className="mb-6 border-t-2 border-gray-300 pt-6">
+                <AlternativeNearestClinics alternativeData={results.alternative_nearest_details} />
               </div>
             )}
 
