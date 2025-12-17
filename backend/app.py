@@ -3353,20 +3353,31 @@ def calculate_clinic_amounts(file_path, clinic_names_normalized):
         Dictionary mapping normalized_clinic_name -> total_amount
     """
     try:
+        logger.info("=" * 70)
+        logger.info("AMOUNT CALCULATION START")
+        logger.info(f"File: {os.path.basename(file_path)}")
+        logger.info(f"Looking up amounts for {len(clinic_names_normalized)} clinics")
+        logger.info("=" * 70)
+
         # Read all sheets from base file
         all_sheets = pd.read_excel(file_path, sheet_name=None, header=None)
+        logger.info(f"File has {len(all_sheets)} sheets: {list(all_sheets.keys())}")
 
         combined_data = []
         for sheet_name, df_raw in all_sheets.items():
+            logger.info(f"\nProcessing sheet '{sheet_name}' ({len(df_raw)} rows)...")
+
             # Find header row (same logic as generate_utilisation_report)
             header_row = None
             for idx in range(min(20, len(df_raw))):
                 row_values = df_raw.iloc[idx].astype(str).str.strip().str.lower()
                 if 'clinic name' in row_values.values:
                     header_row = idx
+                    logger.info(f"  Found header row at index {idx}")
                     break
 
             if header_row is None:
+                logger.warning(f"  ⚠️ No header row found in sheet '{sheet_name}' - SKIPPING")
                 continue
 
             # Read with correct header
@@ -3400,12 +3411,13 @@ def calculate_clinic_amounts(file_path, clinic_names_normalized):
                     ]):
                         amount_col = col
 
-            logger.info(f"Sheet '{sheet_name}': clinic_col={clinic_col}, amount_col={amount_col}")
+            logger.info(f"  Final columns → clinic_col={clinic_col}, amount_col={amount_col}")
 
             if clinic_col and amount_col:
                 # Filter for target clinics only
                 df['Clinic Name Normalized'] = df[clinic_col].astype(str).apply(normalize_clinic_name)
                 df_filtered = df[df['Clinic Name Normalized'].isin(clinic_names_normalized)]
+                logger.info(f"  Matched {len(df_filtered)} rows from target clinics")
 
                 # Convert amount to numeric
                 df_filtered['Amount Numeric'] = pd.to_numeric(
@@ -3413,7 +3425,12 @@ def calculate_clinic_amounts(file_path, clinic_names_normalized):
                     errors='coerce'
                 ).fillna(0)
 
+                total_for_sheet = df_filtered['Amount Numeric'].sum()
+                logger.info(f"  Total amount in this sheet: ${total_for_sheet:,.2f}")
+
                 combined_data.append(df_filtered[['Clinic Name Normalized', 'Amount Numeric']])
+            else:
+                logger.warning(f"  ⚠️ Missing columns (clinic={clinic_col}, amount={amount_col}) - SKIPPING")
 
         if not combined_data:
             logger.warning("=" * 60)
@@ -3432,7 +3449,14 @@ def calculate_clinic_amounts(file_path, clinic_names_normalized):
             'Amount Numeric': 'sum'
         }).to_dict()['Amount Numeric']
 
-        logger.info(f"Calculated amounts for {len(amount_summary)} clinics")
+        logger.info("=" * 70)
+        logger.info(f"✅ AMOUNT CALCULATION COMPLETE")
+        logger.info(f"Successfully calculated amounts for {len(amount_summary)} clinics")
+        if amount_summary:
+            top_3 = sorted(amount_summary.items(), key=lambda x: x[1], reverse=True)[:3]
+            for clinic, amount in top_3:
+                logger.info(f"  {clinic}: ${amount:,.2f}")
+        logger.info("=" * 70)
         return amount_summary
 
     except Exception as e:
@@ -3893,6 +3917,21 @@ def normalize_postal_code(postal: str) -> str:
         return cleaned
 
     return ""
+
+
+def normalize_clinic_name(name: str) -> str:
+    """
+    Normalize clinic name to consistent format for matching and lookups.
+
+    Returns: Lowercase, trimmed string
+
+    Edge cases:
+    - Empty/None -> empty string
+    - Whitespace variations -> trimmed
+    """
+    if not name or pd.isna(name):
+        return ""
+    return str(name).strip().lower()
 
 
 def normalize_unit_number(unit: str) -> str:
