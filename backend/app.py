@@ -3179,16 +3179,24 @@ def generate_utilisation_report(file_path, exclude_polyclinics=False, exclude_ho
 
         logger.info(f"Using clinic name column: '{clinic_col}'")
 
-        # Find paid amount column
+        # Find paid amount column (with priority order)
         amount_col = None
         for col in combined_df.columns:
             col_str = str(col).lower().strip().replace('\n', ' ')
-            if 'paid' in col_str and ('amt' in col_str or 'amount' in col_str):
+
+            # PRIORITY 1: Look for PAID amount columns (what we want)
+            if any(pattern in col_str for pattern in ['paid amt', 'paid amount', 'total paid']):
                 amount_col = col
+                logger.info(f"  ✓ Found PAID amount column: '{col}'")
                 break
 
+            # Skip incurred amounts explicitly
+            if 'incurred' in col_str and ('amt' in col_str or 'amount' in col_str):
+                logger.info(f"  ✗ Skipping INCURRED amount column: '{col}'")
+                continue
+
         if amount_col is None:
-            raise ValueError("Could not find 'PAID AMT. ($)' column in Excel file")
+            raise ValueError("Could not find 'PAID AMT.' or 'PAID AMOUNT' column in Excel file")
 
         logger.info(f"Using amount column: '{amount_col}'")
 
@@ -3368,11 +3376,31 @@ def calculate_clinic_amounts(file_path, clinic_names_normalized):
             clinic_col = None
             amount_col = None
             for col in df.columns:
-                col_lower = str(col).lower().strip()
+                col_lower = str(col).lower().strip().replace('\n', ' ')  # Handle newlines in column names
                 if 'clinic name' in col_lower:
                     clinic_col = col
-                if 'amount' in col_lower or 'utilisation' in col_lower:
+
+                # Amount column detection with priority order
+                # PRIORITY 1: Paid amount (what we want)
+                if any(pattern in col_lower for pattern in ['paid amt', 'paid amount', 'total paid']):
                     amount_col = col
+                    logger.info(f"  ✓ Found PAID amount column: {col}")
+                    continue
+
+                # PRIORITY 2: Skip incurred amounts (not what we want)
+                if 'incurred' in col_lower and ('amt' in col_lower or 'amount' in col_lower):
+                    logger.info(f"  ✗ Skipping INCURRED amount column: {col}")
+                    continue
+
+                # PRIORITY 3: Generic amount/payment columns (fallback)
+                if amount_col is None:  # Only use if we haven't found paid amount yet
+                    if any(pattern in col_lower for pattern in [
+                        'amount', 'amt.', 'amt ', 'utilisation', 'claim amount',
+                        'bill amount', 'total bill', 'payment'
+                    ]):
+                        amount_col = col
+
+            logger.info(f"Sheet '{sheet_name}': clinic_col={clinic_col}, amount_col={amount_col}")
 
             if clinic_col and amount_col:
                 # Filter for target clinics only
@@ -3388,7 +3416,14 @@ def calculate_clinic_amounts(file_path, clinic_names_normalized):
                 combined_data.append(df_filtered[['Clinic Name Normalized', 'Amount Numeric']])
 
         if not combined_data:
-            logger.warning("No valid transaction data found for amount calculation")
+            logger.warning("=" * 60)
+            logger.warning("AMOUNT CALCULATION FAILED - NO VALID TRANSACTION DATA")
+            logger.warning("Possible reasons:")
+            logger.warning("  1. Excel file doesn't have transaction-level data")
+            logger.warning("  2. Amount column name not recognized")
+            logger.warning("  3. File structure doesn't match expected format")
+            logger.warning("Expected: Sheets with 'Clinic Name' and amount/payment columns")
+            logger.warning("=" * 60)
             return {}
 
         # Combine all sheets and aggregate
@@ -3690,15 +3725,21 @@ def match_clinics():
 
         generate_match_report_enhanced(matches, unmatched_base, unmatched_comparison, results_path)
 
-        # Generate utilisation report if requested
+        # Generate utilisation report if requested OR if Top N filter is enabled
         report_filename = None
         total_visits = 0
         total_amount = 0.0
         clinic_count = 0
 
-        if generate_report:
+        # Auto-generate report when Top N is enabled (user needs the amounts)
+        should_generate_report = generate_report or top_n_filter
+
+        if should_generate_report:
             try:
-                logger.info("Generating utilisation report from base file...")
+                if top_n_filter and not generate_report:
+                    logger.info("Auto-generating utilisation report for Top N analysis...")
+                else:
+                    logger.info("Generating utilisation report from base file...")
                 # Build matched clinic name set
                 matched_clinic_names = {m.base_clinic.normalized_name for m in matches}
 

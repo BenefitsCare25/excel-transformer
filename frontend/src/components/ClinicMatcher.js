@@ -627,8 +627,13 @@ const ClinicMatcher = () => {
                 className="mt-1"
               />
               <div>
-                <span className="font-medium text-gray-800">Generate Utilisation Report from Base File</span>
-                <p className="text-xs text-gray-500">Create a summary report with clinic names, visit counts, and total paid amounts</p>
+                <span className="font-medium text-gray-800">Generate Full Utilisation Report (all clinics)</span>
+                <p className="text-xs text-gray-500">Create a summary report with all clinic names, visit counts, and total paid amounts</p>
+                {topNFilter && (
+                  <p className="text-xs text-blue-600 mt-1">
+                    ℹ️ Note: When using Top N filter, a utilisation report is auto-generated for the top N clinics only
+                  </p>
+                )}
               </div>
             </label>
           </div>
