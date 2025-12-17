@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 
 // Top N Analysis Component - shows detailed table for top N most-visited clinics
-const TopNAnalysis = ({ topNData, filterType }) => {
+const TopNAnalysis = ({ topNData, filterType, reportFilename, onDownloadReport }) => {
   const nValue = filterType === 'top10' ? 10 : 20;
 
   return (
@@ -106,6 +106,21 @@ const TopNAnalysis = ({ topNData, filterType }) => {
               </p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Download Utilisation Report Button */}
+      {reportFilename && (
+        <div className="mt-4 flex justify-end">
+          <button
+            onClick={() => onDownloadReport(reportFilename)}
+            className="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors shadow-sm"
+          >
+            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Download Utilisation Report
+          </button>
         </div>
       )}
     </div>
@@ -432,7 +447,11 @@ const ClinicMatcher = () => {
         {(fileInfo.base || fileInfo.comparison) && (
           <div className="mt-6 pt-6 border-t border-gray-200">
             <h4 className="text-sm font-medium text-gray-700 mb-3">File Information</h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className={`grid gap-4 ${
+              fileInfo.base && fileInfo.comparison
+                ? 'grid-cols-1 md:grid-cols-2'
+                : 'grid-cols-1'
+            }`}>
               {/* Base File Info */}
               {fileInfo.base && (
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
@@ -925,6 +944,8 @@ const ClinicMatcher = () => {
                 <TopNAnalysis
                   topNData={results.top_n_details}
                   filterType={results.top_n_filter_type}
+                  reportFilename={results.utilisation_report_filename}
+                  onDownloadReport={downloadUtilisationReport}
                 />
                 {results.top_n_warning && (
                   <div className="mt-3 p-3 bg-yellow-50 rounded-lg border border-yellow-200">

@@ -3332,6 +3332,78 @@ def generate_utilisation_report(file_path, exclude_polyclinics=False, exclude_ho
         logger.error(f"Error generating utilisation report: {e}\n{traceback.format_exc()}")
         raise
 
+
+def calculate_clinic_amounts(file_path, clinic_names_normalized):
+    """
+    Calculate total utilisation amounts for specific clinics from transaction data.
+
+    Args:
+        file_path: Path to base Excel file with transaction data
+        clinic_names_normalized: Set of normalized clinic names to calculate amounts for
+
+    Returns:
+        Dictionary mapping normalized_clinic_name -> total_amount
+    """
+    try:
+        # Read all sheets from base file
+        all_sheets = pd.read_excel(file_path, sheet_name=None, header=None)
+
+        combined_data = []
+        for sheet_name, df_raw in all_sheets.items():
+            # Find header row (same logic as generate_utilisation_report)
+            header_row = None
+            for idx in range(min(20, len(df_raw))):
+                row_values = df_raw.iloc[idx].astype(str).str.strip().str.lower()
+                if 'clinic name' in row_values.values:
+                    header_row = idx
+                    break
+
+            if header_row is None:
+                continue
+
+            # Read with correct header
+            df = pd.read_excel(file_path, sheet_name=sheet_name, header=header_row)
+
+            # Find clinic name and amount columns
+            clinic_col = None
+            amount_col = None
+            for col in df.columns:
+                col_lower = str(col).lower().strip()
+                if 'clinic name' in col_lower:
+                    clinic_col = col
+                if 'amount' in col_lower or 'utilisation' in col_lower:
+                    amount_col = col
+
+            if clinic_col and amount_col:
+                # Filter for target clinics only
+                df['Clinic Name Normalized'] = df[clinic_col].astype(str).apply(normalize_clinic_name)
+                df_filtered = df[df['Clinic Name Normalized'].isin(clinic_names_normalized)]
+
+                # Convert amount to numeric
+                df_filtered['Amount Numeric'] = pd.to_numeric(
+                    df_filtered[amount_col].astype(str).str.replace('$', '').str.replace(',', ''),
+                    errors='coerce'
+                ).fillna(0)
+
+                combined_data.append(df_filtered[['Clinic Name Normalized', 'Amount Numeric']])
+
+        if not combined_data:
+            logger.warning("No valid transaction data found for amount calculation")
+            return {}
+
+        # Combine all sheets and aggregate
+        combined_df = pd.concat(combined_data, ignore_index=True)
+        amount_summary = combined_df.groupby('Clinic Name Normalized').agg({
+            'Amount Numeric': 'sum'
+        }).to_dict()['Amount Numeric']
+
+        logger.info(f"Calculated amounts for {len(amount_summary)} clinics")
+        return amount_summary
+
+    except Exception as e:
+        logger.error(f"Error calculating clinic amounts: {e}")
+        return {}
+
 @app.route('/validate-clinic-file', methods=['POST'])
 def validate_clinic_file():
     """
@@ -3540,13 +3612,18 @@ def match_clinics():
             # DO NOT filter base_clinics_filtered - we want to match ALL clinics
             # Just track top N clinic details for response
             top_n_clinic_details = []
+
+            # Calculate amounts for top N clinics IMMEDIATELY from base file
+            top_n_normalized_names = {clinic.normalized_name for clinic in top_n_clinics}
+            amount_lookup = calculate_clinic_amounts(base_path, top_n_normalized_names)
+
             for idx, clinic in enumerate(top_n_clinics, start=1):
                 top_n_clinic_details.append({
                     'rank': idx,
                     'clinic_name': clinic.name,
                     'normalized_name': clinic.normalized_name,
                     'visit_count': clinic.visit_count,
-                    'total_amount': 0.0,  # Will be populated from utilisation report
+                    'total_amount': amount_lookup.get(clinic.normalized_name, 0.0),  # Use calculated amount
                     'matched': False,  # Will be updated after matching
                     'match_type': None,
                     'matched_to': None
@@ -3635,25 +3712,8 @@ def match_clinics():
                 )
                 logger.info(f"Utilisation report generated: {report_filename}")
 
-                # Populate total amounts for top N details from utilisation report
-                if report_filename and top_n_results:
-                    try:
-                        report_path = os.path.join(PROCESSED_FOLDER, report_filename)
-                        util_df = pd.read_excel(report_path, sheet_name='Clinic Summary')
-
-                        # Create lookup dictionary
-                        amount_lookup = {
-                            normalize_clinic_name(row['Clinic Name']): row['Total Utilisation Amount ($)']
-                            for _, row in util_df.iterrows()
-                        }
-
-                        # Update top N details with amounts
-                        for detail in top_n_results['clinic_details']:
-                            detail['total_amount'] = amount_lookup.get(detail['normalized_name'], 0.0)
-
-                        logger.info(f"Populated amounts for {len(top_n_results['clinic_details'])} top N clinics")
-                    except Exception as e:
-                        logger.warning(f"Could not populate amounts for top N: {e}")
+                # NOTE: Amounts for top N details are now populated earlier from base file data
+                # No need to read from utilisation report - amounts are independent of report generation
 
             except Exception as report_error:
                 logger.error(f"Failed to generate utilisation report: {report_error}")
