@@ -3882,6 +3882,13 @@ def extract_clinics_with_addresses(file_path: str) -> List[ClinicRecord]:
                     logger.warning(f"Sheet '{sheet_name}': No clinic name column found, skipping")
                     continue
 
+                # Detect if this is a transaction-level file (each row is a visit/claim)
+                is_transaction_level = any(pattern in str(col).lower() for col in df.columns
+                                          for pattern in ['paid amt', 'incurred amt', 'paid date', 'benefit type'])
+
+                if is_transaction_level:
+                    logger.info(f"Detected transaction-level file - will aggregate visit counts by clinic")
+
                 # Extract clinics
                 for row_idx, row in df.iterrows():
                     # Get clinic name (required)
@@ -3975,6 +3982,46 @@ def extract_clinics_with_addresses(file_path: str) -> List[ClinicRecord]:
 
                     clinics.append(clinic)
 
+                # Post-process: aggregate visit counts for transaction-level files
+                if is_transaction_level and clinics:
+                    logger.info(f"Aggregating {len(clinics)} transaction records into unique clinics...")
+
+                    # Group by clinic name and aggregate
+                    clinic_groups = {}
+                    for clinic in clinics:
+                        key = clinic.normalized_name
+                        if key not in clinic_groups:
+                            clinic_groups[key] = {
+                                'records': [],
+                                'visit_count': 0
+                            }
+                        clinic_groups[key]['records'].append(clinic)
+                        clinic_groups[key]['visit_count'] += 1  # Each row is one visit
+
+                    # Create aggregated clinic records (use first occurrence for address data)
+                    aggregated_clinics = []
+                    for group_data in clinic_groups.values():
+                        first_clinic = group_data['records'][0]
+                        aggregated_clinic = ClinicRecord(
+                            name=first_clinic.name,
+                            normalized_name=first_clinic.normalized_name,
+                            postal_code=first_clinic.postal_code,
+                            unit_number=first_clinic.unit_number,
+                            block=first_clinic.block,
+                            road_name=first_clinic.road_name,
+                            building_name=first_clinic.building_name,
+                            visit_count=group_data['visit_count'],
+                            row_index=first_clinic.row_index,
+                            is_singapore=first_clinic.is_singapore,
+                            has_valid_postal=first_clinic.has_valid_postal,
+                            has_unit_number=first_clinic.has_unit_number
+                        )
+                        aggregated_clinics.append(aggregated_clinic)
+
+                    # Replace original list with aggregated clinics
+                    clinics = aggregated_clinics
+                    logger.info(f"Aggregated into {len(clinics)} unique clinics with visit counts")
+
             except Exception as sheet_error:
                 logger.error(f"Error processing sheet '{sheet_name}': {sheet_error}")
                 continue
@@ -3983,6 +4030,7 @@ def extract_clinics_with_addresses(file_path: str) -> List[ClinicRecord]:
         logger.info(f"  - Singapore addresses: {sum(c.is_singapore for c in clinics)}")
         logger.info(f"  - With valid postal codes: {sum(c.has_valid_postal for c in clinics)}")
         logger.info(f"  - With unit numbers: {sum(c.has_unit_number for c in clinics)}")
+        logger.info(f"  - With visit counts: {sum(1 for c in clinics if c.visit_count is not None and c.visit_count > 0)}")
 
         return clinics
 
