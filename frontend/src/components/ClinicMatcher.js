@@ -988,8 +988,8 @@ const ClinicMatcher = () => {
               </div>
             )}
 
-            {/* Utilisation Report Section */}
-            {results.utilisation_report_filename && (
+            {/* Utilisation Report Section - Only show if NOT using Top N (Top N has its own button) */}
+            {results.utilisation_report_filename && !results.top_n_enabled && (
               <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
                 <div className="flex items-start justify-between mb-3">
                   <div>
