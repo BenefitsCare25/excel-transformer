@@ -3293,6 +3293,74 @@ def generate_utilisation_report(file_path, exclude_polyclinics=False, exclude_ho
         logger.error(f"Error generating utilisation report: {e}\n{traceback.format_exc()}")
         raise
 
+@app.route('/validate-clinic-file', methods=['POST'])
+def validate_clinic_file():
+    """
+    Validate uploaded clinic file and return metadata about its contents.
+    Returns clinic count, address data availability, and recommended matching strategy.
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+
+        if not file.filename.lower().endswith(('.xlsx', '.xls')):
+            return jsonify({'error': 'Invalid file format. Only Excel files are supported.'}), 400
+
+        # Save file temporarily
+        job_id = str(uuid.uuid4())
+        temp_path = os.path.join(UPLOAD_FOLDER, f"{job_id}_validate_{file.filename}")
+        file.save(temp_path)
+
+        try:
+            # Extract clinic records
+            clinics = extract_clinics_with_addresses(temp_path)
+
+            # Calculate statistics
+            clinic_count = len(clinics)
+            has_postal = sum(1 for c in clinics if c.has_valid_postal)
+            has_units = sum(1 for c in clinics if c.has_unit_number)
+            has_singapore = sum(1 for c in clinics if c.is_singapore)
+
+            # Determine if file has address data (>10% of records have postal codes)
+            has_address_data = (has_postal / clinic_count * 100) > 10 if clinic_count > 0 else False
+
+            # Calculate percentages
+            postal_percentage = round((has_postal / clinic_count * 100), 1) if clinic_count > 0 else 0
+            unit_percentage = round((has_units / clinic_count * 100), 1) if clinic_count > 0 else 0
+
+            # Determine matching strategy
+            if has_address_data:
+                matching_strategy = "Enhanced multi-level (name + address)"
+            else:
+                matching_strategy = "Name-only matching"
+
+            return jsonify({
+                'clinic_count': clinic_count,
+                'has_address_data': has_address_data,
+                'has_postal_codes': postal_percentage,
+                'has_unit_numbers': unit_percentage,
+                'matching_strategy': matching_strategy,
+                'singapore_addresses': has_singapore
+            })
+
+        finally:
+            # Clean up temporary file (best effort - let cleanup service handle if locked)
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except (PermissionError, OSError) as e:
+                    # File is locked - cleanup service will remove it later
+                    logger.debug(f"Could not immediately delete validation file (will be cleaned up later): {e}")
+
+    except Exception as e:
+        logger.error(f"File validation error: {e}\n{traceback.format_exc()}")
+        return jsonify({'error': f'Validation failed: {str(e)}'}), 500
+
+
 @app.route('/match-clinics', methods=['POST'])
 def match_clinics():
     """

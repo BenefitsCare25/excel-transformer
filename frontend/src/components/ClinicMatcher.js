@@ -11,6 +11,37 @@ const ClinicMatcher = () => {
   const [excludeHospitals, setExcludeHospitals] = useState(false);
   const [generateReport, setGenerateReport] = useState(false);
   const [topNFilter, setTopNFilter] = useState(null); // null, 'top10', or 'top20'
+  const [fileInfo, setFileInfo] = useState({ base: null, comparison: null });
+
+  // Validate and get file info from backend
+  const validateFile = async (file, fileType) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+      const response = await fetch(`${apiUrl}/validate-clinic-file`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (response.ok) {
+        const info = await response.json();
+        setFileInfo(prev => ({
+          ...prev,
+          [fileType]: {
+            clinicCount: info.clinic_count,
+            hasAddressData: info.has_address_data,
+            hasPostalCodes: info.has_postal_codes,
+            hasUnitNumbers: info.has_unit_numbers,
+            matchingStrategy: info.matching_strategy
+          }
+        }));
+      }
+    } catch (err) {
+      console.error('File validation error:', err);
+    }
+  };
 
   // Base file dropzone
   const onDropBase = useCallback((acceptedFiles) => {
@@ -18,6 +49,7 @@ const ClinicMatcher = () => {
       setBaseFile(acceptedFiles[0]);
       setResults(null);
       setError(null);
+      validateFile(acceptedFiles[0], 'base');
     }
   }, []);
 
@@ -41,6 +73,7 @@ const ClinicMatcher = () => {
       setComparisonFile(acceptedFiles[0]);
       setResults(null);
       setError(null);
+      validateFile(acceptedFiles[0], 'comparison');
     }
   }, []);
 
@@ -120,6 +153,7 @@ const ClinicMatcher = () => {
     setExcludeHospitals(false);
     setGenerateReport(false);
     setTopNFilter(null);
+    setFileInfo({ base: null, comparison: null });
   };
 
   const downloadUtilisationReport = (filename) => {
@@ -193,6 +227,7 @@ const ClinicMatcher = () => {
                         setBaseFile(null);
                         setResults(null);
                         setError(null);
+                        setFileInfo(prev => ({ ...prev, base: null }));
                       }}
                       className="text-xs text-red-600 hover:text-red-700 font-medium"
                     >
@@ -253,6 +288,7 @@ const ClinicMatcher = () => {
                         setComparisonFile(null);
                         setResults(null);
                         setError(null);
+                        setFileInfo(prev => ({ ...prev, comparison: null }));
                       }}
                       className="text-xs text-red-600 hover:text-red-700 font-medium"
                     >
@@ -278,6 +314,125 @@ const ClinicMatcher = () => {
             </div>
           </div>
         </div>
+
+        {/* File Validation Info */}
+        {(fileInfo.base || fileInfo.comparison) && (
+          <div className="mt-6 pt-6 border-t border-gray-200">
+            <h4 className="text-sm font-medium text-gray-700 mb-3">File Information</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Base File Info */}
+              {fileInfo.base && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex items-start justify-between mb-2">
+                    <h5 className="text-sm font-semibold text-blue-900">Base File</h5>
+                    <svg className="h-5 w-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-blue-800">Clinics detected:</span>
+                      <span className="font-semibold text-blue-900">{fileInfo.base.clinicCount}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-blue-800">Address data:</span>
+                      <span className={`font-semibold ${fileInfo.base.hasAddressData ? 'text-green-700' : 'text-orange-700'}`}>
+                        {fileInfo.base.hasAddressData ? 'Yes' : 'No'}
+                      </span>
+                    </div>
+                    {fileInfo.base.hasAddressData && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-blue-800">Postal codes:</span>
+                          <span className="font-semibold text-blue-900">{fileInfo.base.hasPostalCodes}%</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-blue-800">Unit numbers:</span>
+                          <span className="font-semibold text-blue-900">{fileInfo.base.hasUnitNumbers}%</span>
+                        </div>
+                      </>
+                    )}
+                    <div className="pt-2 border-t border-blue-300">
+                      <span className="text-xs text-blue-700 font-medium">Strategy: </span>
+                      <span className="text-xs text-blue-900">{fileInfo.base.matchingStrategy}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Comparison File Info */}
+              {fileInfo.comparison && (
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                  <div className="flex items-start justify-between mb-2">
+                    <h5 className="text-sm font-semibold text-purple-900">Comparison File</h5>
+                    <svg className="h-5 w-5 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-purple-800">Clinics detected:</span>
+                      <span className="font-semibold text-purple-900">{fileInfo.comparison.clinicCount}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-purple-800">Address data:</span>
+                      <span className={`font-semibold ${fileInfo.comparison.hasAddressData ? 'text-green-700' : 'text-orange-700'}`}>
+                        {fileInfo.comparison.hasAddressData ? 'Yes' : 'No'}
+                      </span>
+                    </div>
+                    {fileInfo.comparison.hasAddressData && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-purple-800">Postal codes:</span>
+                          <span className="font-semibold text-purple-900">{fileInfo.comparison.hasPostalCodes}%</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-purple-800">Unit numbers:</span>
+                          <span className="font-semibold text-purple-900">{fileInfo.comparison.hasUnitNumbers}%</span>
+                        </div>
+                      </>
+                    )}
+                    <div className="pt-2 border-t border-purple-300">
+                      <span className="text-xs text-purple-700 font-medium">Strategy: </span>
+                      <span className="text-xs text-purple-900">{fileInfo.comparison.matchingStrategy}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Matching Strategy Info */}
+            {(fileInfo.base || fileInfo.comparison) && (
+              <div className="mt-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <div className="flex items-start space-x-3">
+                  <svg className="h-5 w-5 text-yellow-600 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                  </svg>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-yellow-900">Matching Strategy</p>
+                    <p className="text-xs text-yellow-800 mt-1">
+                      {(!fileInfo.base?.hasAddressData || !fileInfo.comparison?.hasAddressData) ? (
+                        <>
+                          <strong>Name-only matching</strong> will be used because one or both files lack address details.
+                          The system will match clinics based on exact clinic name matches only.
+                        </>
+                      ) : (
+                        <>
+                          <strong>Enhanced multi-level matching</strong> will be used:
+                          <ul className="list-disc ml-4 mt-1 space-y-0.5">
+                            <li>Level 1: Exact clinic name match</li>
+                            <li>Level 2: Same postal code + unit number</li>
+                            <li>Level 3: Same block + unit number (fallback)</li>
+                          </ul>
+                        </>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Filter Options */}
         <div className="mt-6 pt-6 border-t border-gray-200">
