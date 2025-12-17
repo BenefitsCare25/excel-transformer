@@ -3324,13 +3324,18 @@ def validate_clinic_file():
             has_postal = sum(1 for c in clinics if c.has_valid_postal)
             has_units = sum(1 for c in clinics if c.has_unit_number)
             has_singapore = sum(1 for c in clinics if c.is_singapore)
+            has_visit_counts = sum(1 for c in clinics if c.visit_count is not None and c.visit_count > 0)
 
             # Determine if file has address data (>10% of records have postal codes)
             has_address_data = (has_postal / clinic_count * 100) > 10 if clinic_count > 0 else False
 
+            # Determine if file supports Top N filtering (>50% have visit counts)
+            supports_top_n = (has_visit_counts / clinic_count * 100) > 50 if clinic_count > 0 else False
+
             # Calculate percentages
             postal_percentage = round((has_postal / clinic_count * 100), 1) if clinic_count > 0 else 0
             unit_percentage = round((has_units / clinic_count * 100), 1) if clinic_count > 0 else 0
+            visit_count_percentage = round((has_visit_counts / clinic_count * 100), 1) if clinic_count > 0 else 0
 
             # Determine matching strategy
             if has_address_data:
@@ -3343,6 +3348,8 @@ def validate_clinic_file():
                 'has_address_data': has_address_data,
                 'has_postal_codes': postal_percentage,
                 'has_unit_numbers': unit_percentage,
+                'has_visit_counts': visit_count_percentage,
+                'supports_top_n_filter': supports_top_n,
                 'matching_strategy': matching_strategy,
                 'singapore_addresses': has_singapore
             })

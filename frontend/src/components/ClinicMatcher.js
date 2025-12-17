@@ -34,6 +34,8 @@ const ClinicMatcher = () => {
             hasAddressData: info.has_address_data,
             hasPostalCodes: info.has_postal_codes,
             hasUnitNumbers: info.has_unit_numbers,
+            hasVisitCounts: info.has_visit_counts,
+            supportsTopN: info.supports_top_n_filter,
             matchingStrategy: info.matching_strategy
           }
         }));
@@ -352,10 +354,26 @@ const ClinicMatcher = () => {
                         </div>
                       </>
                     )}
+                    <div className="flex justify-between">
+                      <span className="text-blue-800">Visit counts:</span>
+                      <span className={`font-semibold ${fileInfo.base.hasVisitCounts > 0 ? 'text-green-700' : 'text-gray-500'}`}>
+                        {fileInfo.base.hasVisitCounts}%
+                      </span>
+                    </div>
                     <div className="pt-2 border-t border-blue-300">
                       <span className="text-xs text-blue-700 font-medium">Strategy: </span>
                       <span className="text-xs text-blue-900">{fileInfo.base.matchingStrategy}</span>
                     </div>
+                    {fileInfo.base.supportsTopN && (
+                      <div className="mt-2 pt-2 border-t border-green-300">
+                        <div className="flex items-center space-x-1">
+                          <svg className="h-4 w-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                          </svg>
+                          <span className="text-xs text-green-700 font-medium">Top N filter supported</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -392,6 +410,12 @@ const ClinicMatcher = () => {
                         </div>
                       </>
                     )}
+                    <div className="flex justify-between">
+                      <span className="text-purple-800">Visit counts:</span>
+                      <span className={`font-semibold ${fileInfo.comparison.hasVisitCounts > 0 ? 'text-green-700' : 'text-gray-500'}`}>
+                        {fileInfo.comparison.hasVisitCounts}%
+                      </span>
+                    </div>
                     <div className="pt-2 border-t border-purple-300">
                       <span className="text-xs text-purple-700 font-medium">Strategy: </span>
                       <span className="text-xs text-purple-900">{fileInfo.comparison.matchingStrategy}</span>
@@ -486,13 +510,33 @@ const ClinicMatcher = () => {
           <p className="text-xs text-gray-500 mb-3">
             Select top N most visited clinics from base file for matching (filters applied first, then top N selected)
           </p>
+
+          {/* Warning if base file doesn't support Top N */}
+          {fileInfo.base && !fileInfo.base.supportsTopN && (
+            <div className="mb-3 bg-orange-50 border border-orange-200 rounded-lg p-3">
+              <div className="flex items-start space-x-2">
+                <svg className="h-5 w-5 text-orange-600 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-orange-900">Top N filter not available</p>
+                  <p className="text-xs text-orange-800 mt-1">
+                    Base file has insufficient visit count data ({fileInfo.base.hasVisitCounts}% of clinics).
+                    Need at least 50% to enable Top N filtering.
+                    {fileInfo.base.hasVisitCounts === 0 && " Upload a file with visit counts or transaction-level data (e.g., GP utilisation files)."}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-3">
-            <label className="flex items-start gap-3 cursor-pointer">
+            <label className={`flex items-start gap-3 ${(!fileInfo.base?.supportsTopN || isProcessing || topNFilter === 'top20') ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
               <input
                 type="checkbox"
                 checked={topNFilter === 'top10'}
                 onChange={(e) => setTopNFilter(e.target.checked ? 'top10' : null)}
-                disabled={isProcessing || topNFilter === 'top20'}
+                disabled={!fileInfo.base?.supportsTopN || isProcessing || topNFilter === 'top20'}
                 className="mt-1"
               />
               <div>
@@ -500,12 +544,12 @@ const ClinicMatcher = () => {
                 <p className="text-xs text-gray-500">Match only the top 10 most visited clinics from base file</p>
               </div>
             </label>
-            <label className="flex items-start gap-3 cursor-pointer">
+            <label className={`flex items-start gap-3 ${(!fileInfo.base?.supportsTopN || isProcessing || topNFilter === 'top10') ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
               <input
                 type="checkbox"
                 checked={topNFilter === 'top20'}
                 onChange={(e) => setTopNFilter(e.target.checked ? 'top20' : null)}
-                disabled={isProcessing || topNFilter === 'top10'}
+                disabled={!fileInfo.base?.supportsTopN || isProcessing || topNFilter === 'top10'}
                 className="mt-1"
               />
               <div>
