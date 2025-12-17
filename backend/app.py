@@ -3119,7 +3119,7 @@ def extract_clinics_with_visit_counts(file_path):
         logger.warning("Falling back to empty list (will use alphabetical ordering)")
         return []
 
-def generate_utilisation_report(file_path, exclude_polyclinics=False, exclude_hospitals=False):
+def generate_utilisation_report(file_path, exclude_polyclinics=False, exclude_hospitals=False, matched_clinics=None, top_n_clinic_names=None):
     """
     Generate utilisation report from Excel file with clinic visit and amount data.
 
@@ -3127,6 +3127,8 @@ def generate_utilisation_report(file_path, exclude_polyclinics=False, exclude_ho
         file_path: Path to the Excel file with utilization data
         exclude_polyclinics: Boolean to filter out polyclinics
         exclude_hospitals: Boolean to filter out government hospitals
+        matched_clinics: Set of normalized matched clinic names (optional)
+        top_n_clinic_names: Set of normalized top N clinic names (optional)
 
     Returns:
         tuple: (report_filename, total_visits, total_amount, clinic_count)
@@ -3237,6 +3239,22 @@ def generate_utilisation_report(file_path, exclude_polyclinics=False, exclude_ho
         # Reorder columns to match expected format
         utilisation_summary = utilisation_summary[['Clinic Name', 'Number of Visits', 'Total Utilisation Amount ($)']]
 
+        # Add Match Status column if matched_clinics provided
+        if matched_clinics is not None:
+            utilisation_summary['Match Status'] = utilisation_summary['Clinic Name'].apply(
+                lambda name: 'Matched' if normalize_clinic_name(name) in matched_clinics else 'Not Found'
+            )
+        else:
+            utilisation_summary['Match Status'] = 'N/A'
+
+        # Add In Top N column if top_n_clinic_names provided
+        if top_n_clinic_names is not None:
+            utilisation_summary['In Top N'] = utilisation_summary['Clinic Name'].apply(
+                lambda name: 'Yes' if normalize_clinic_name(name) in top_n_clinic_names else 'No'
+            )
+        else:
+            utilisation_summary['In Top N'] = 'N/A'
+
         # Sort by Number of Visits (descending)
         utilisation_summary = utilisation_summary.sort_values('Number of Visits', ascending=False)
 
@@ -3281,9 +3299,30 @@ def generate_utilisation_report(file_path, exclude_polyclinics=False, exclude_ho
                 ws.column_dimensions[column_letter].width = adjusted_width
 
             # Bold headers
-            from openpyxl.styles import Font
+            from openpyxl.styles import Font, PatternFill
             for cell in ws[1]:
                 cell.font = Font(bold=True)
+
+            # Apply conditional formatting for match status and top N
+            yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+            green_fill = PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid')
+            red_fill = PatternFill(start_color='FFB6C1', end_color='FFB6C1', fill_type='solid')
+
+            for row_idx in range(2, len(utilisation_summary) + 2):  # Start from row 2 (after header)
+                # Get values from columns D (Match Status) and E (In Top N)
+                match_status = ws[f'D{row_idx}'].value if ws[f'D{row_idx}'].value else ''
+                in_top_n = ws[f'E{row_idx}'].value if ws[f'E{row_idx}'].value else ''
+
+                # Highlight entire row if in top N (yellow background)
+                if in_top_n == 'Yes':
+                    for col in ['A', 'B', 'C', 'D', 'E']:
+                        ws[f'{col}{row_idx}'].fill = yellow_fill
+
+                # Color-code Match Status cell
+                if match_status == 'Matched':
+                    ws[f'D{row_idx}'].fill = green_fill
+                elif match_status == 'Not Found':
+                    ws[f'D{row_idx}'].fill = red_fill
 
         logger.info(f"Utilisation report saved: {report_filename}")
 
@@ -3498,8 +3537,22 @@ def match_clinics():
                 top_n_warning = f"Only {top_n_count} clinics available after filters (requested top {n_value})"
                 logger.warning(top_n_warning)
 
-            # Filter base clinics to only top N
-            base_clinics_filtered = top_n_clinics
+            # DO NOT filter base_clinics_filtered - we want to match ALL clinics
+            # Just track top N clinic details for response
+            top_n_clinic_details = []
+            for idx, clinic in enumerate(top_n_clinics, start=1):
+                top_n_clinic_details.append({
+                    'rank': idx,
+                    'clinic_name': clinic.name,
+                    'normalized_name': clinic.normalized_name,
+                    'visit_count': clinic.visit_count,
+                    'total_amount': 0.0,  # Will be populated from utilisation report
+                    'matched': False,  # Will be updated after matching
+                    'match_type': None,
+                    'matched_to': None
+                })
+        else:
+            top_n_clinic_details = []
 
         # Validate that we have clinics remaining
         if len(base_clinics_filtered) == 0 or len(comparison_clinics_filtered) == 0:
@@ -3524,13 +3577,35 @@ def match_clinics():
 
         logger.info(f"Match breakdown: {exact_name_count} exact name, {postal_unit_count} postal+unit, {block_unit_count} block+unit")
 
-        # Calculate top N matching if enabled (for response data)
-        top_n_matched_count = 0
-        top_n_unmatched_count = 0
+        # Calculate top N subset statistics if enabled (for response data)
+        top_n_results = None
         if top_n_filter and top_n_count > 0:
-            top_n_matched_count = len([m for m in matches if m.base_clinic.normalized_name in top_n_clinic_names])
-            top_n_unmatched_count = len([c for c in unmatched_base if c.normalized_name in top_n_clinic_names])
-            logger.info(f"Top {n_value} results: {top_n_matched_count} matched, {top_n_unmatched_count} unmatched")
+            # Update match status for each top N clinic
+            for detail in top_n_clinic_details:
+                # Check if this clinic was matched
+                matched_clinic = next(
+                    (m for m in matches if m.base_clinic.normalized_name == detail['normalized_name']),
+                    None
+                )
+                if matched_clinic:
+                    detail['matched'] = True
+                    detail['match_type'] = str(matched_clinic.match_type.value)
+                    detail['matched_to'] = matched_clinic.comparison_clinic.name
+
+            # Count matched/unmatched in top N
+            top_n_matched_count = sum(1 for d in top_n_clinic_details if d['matched'])
+            top_n_unmatched_count = len(top_n_clinic_details) - top_n_matched_count
+
+            top_n_results = {
+                'requested_count': n_value,
+                'actual_count': len(top_n_clinic_details),
+                'matched_count': top_n_matched_count,
+                'unmatched_count': top_n_unmatched_count,
+                'match_percentage': (top_n_matched_count / len(top_n_clinic_details) * 100) if top_n_clinic_details else 0,
+                'clinic_details': top_n_clinic_details
+            }
+
+            logger.info(f"Top {n_value} subset analysis: {top_n_matched_count}/{len(top_n_clinic_details)} matched ({top_n_results['match_percentage']:.1f}%)")
 
         # Generate enhanced Excel report with match details
         results_filename = f"clinic_match_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
@@ -3547,10 +3622,39 @@ def match_clinics():
         if generate_report:
             try:
                 logger.info("Generating utilisation report from base file...")
+                # Build matched clinic name set
+                matched_clinic_names = {m.base_clinic.normalized_name for m in matches}
+
+                # Generate report with match status
                 report_filename, total_visits, total_amount, clinic_count = generate_utilisation_report(
-                    base_path, exclude_polyclinics, exclude_hospitals
+                    base_path,
+                    exclude_polyclinics,
+                    exclude_hospitals,
+                    matched_clinics=matched_clinic_names,
+                    top_n_clinic_names=top_n_clinic_names if top_n_filter else None
                 )
                 logger.info(f"Utilisation report generated: {report_filename}")
+
+                # Populate total amounts for top N details from utilisation report
+                if report_filename and top_n_results:
+                    try:
+                        report_path = os.path.join(PROCESSED_FOLDER, report_filename)
+                        util_df = pd.read_excel(report_path, sheet_name='Clinic Summary')
+
+                        # Create lookup dictionary
+                        amount_lookup = {
+                            normalize_clinic_name(row['Clinic Name']): row['Total Utilisation Amount ($)']
+                            for _, row in util_df.iterrows()
+                        }
+
+                        # Update top N details with amounts
+                        for detail in top_n_results['clinic_details']:
+                            detail['total_amount'] = amount_lookup.get(detail['normalized_name'], 0.0)
+
+                        logger.info(f"Populated amounts for {len(top_n_results['clinic_details'])} top N clinics")
+                    except Exception as e:
+                        logger.warning(f"Could not populate amounts for top N: {e}")
+
             except Exception as report_error:
                 logger.error(f"Failed to generate utilisation report: {report_error}")
                 # Continue with matching results even if report generation fails
@@ -3598,12 +3702,10 @@ def match_clinics():
             response_data['clinic_count'] = clinic_count
 
         # Add top N matching data if enabled
-        if top_n_filter:
+        if top_n_filter and top_n_results:
             response_data['top_n_enabled'] = True
             response_data['top_n_filter_type'] = top_n_filter
-            response_data['top_n_count'] = top_n_count
-            response_data['top_n_matched_count'] = top_n_matched_count
-            response_data['top_n_unmatched_count'] = top_n_unmatched_count
+            response_data['top_n_details'] = top_n_results  # New detailed structure with clinic list
             if top_n_warning:
                 response_data['top_n_warning'] = top_n_warning
         else:
