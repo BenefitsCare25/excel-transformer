@@ -4490,8 +4490,12 @@ def extract_clinics_with_addresses(file_path: str) -> List[ClinicRecord]:
                                 geocoded_count += 1
                             else:
                                 geocode_failed_count += 1
+                                logger.warning(f"Geocoding returned no coordinates for '{clinic_name}' - Postal: '{normalized_postal}', Address: '{address_str}'")
+                        else:
+                            geocode_failed_count += 1
+                            logger.warning(f"Skipping geocoding for '{clinic_name}' - No postal code or address data available")
                     except Exception as e:
-                        logger.warning(f"Geocoding failed for {clinic_name}: {str(e)}")
+                        logger.warning(f"Geocoding exception for '{clinic_name}': {str(e)} - Postal: '{normalized_postal}', Road: '{road}'")
                         geocode_failed_count += 1
 
                     clinics.append(clinic)
