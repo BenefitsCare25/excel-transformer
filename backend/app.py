@@ -15,7 +15,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional, List, Set
 try:
     from concurrent.futures import ThreadPoolExecutor, as_completed
     CONCURRENT_SUPPORT = True
