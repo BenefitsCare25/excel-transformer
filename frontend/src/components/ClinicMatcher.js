@@ -290,9 +290,19 @@ const ClinicMatcher = () => {
             hasUnitNumbers: info.has_unit_numbers,
             hasVisitCounts: info.has_visit_counts,
             supportsTopN: info.supports_top_n_filter,
+            supportsUtilisationReport: info.supports_utilisation_report,
             matchingStrategy: info.matching_strategy
           }
         }));
+        // Reset dependent options if file doesn't support them
+        if (fileType === 'base') {
+          if (!info.supports_utilisation_report) {
+            setGenerateReport(false);
+          }
+          if (!info.supports_top_n_filter) {
+            setTopNFilter(null);
+          }
+        }
       }
     } catch (err) {
       console.error('File validation error:', err);
@@ -763,18 +773,23 @@ const ClinicMatcher = () => {
                 <p className="text-xs text-gray-500">Filter out 11 government hospitals (SGH, CGH, NUH, TTSH, etc.)</p>
               </div>
             </label>
-            <label className="flex items-start gap-3 cursor-pointer">
+            <label className={`flex items-start gap-3 ${(!fileInfo.base?.supportsUtilisationReport || isProcessing) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
               <input
                 type="checkbox"
                 checked={generateReport}
                 onChange={(e) => setGenerateReport(e.target.checked)}
-                disabled={isProcessing}
+                disabled={isProcessing || !fileInfo.base?.supportsUtilisationReport}
                 className="mt-1"
               />
               <div>
                 <span className="font-medium text-gray-800">Generate Full Utilisation Report (all clinics)</span>
                 <p className="text-xs text-gray-500">Create a summary report with all clinic names, visit counts, and total paid amounts</p>
-                {topNFilter && (
+                {fileInfo.base && !fileInfo.base.supportsUtilisationReport && (
+                  <p className="text-xs text-orange-600 mt-1">
+                    ⚠️ Base file does not contain paid amount data required for utilisation report
+                  </p>
+                )}
+                {topNFilter && fileInfo.base?.supportsUtilisationReport && (
                   <p className="text-xs text-blue-600 mt-1">
                     ℹ️ Note: When using Top N filter, a utilisation report is auto-generated for the top N clinics only
                   </p>

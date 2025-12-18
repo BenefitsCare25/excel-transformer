@@ -3513,6 +3513,25 @@ def validate_clinic_file():
             else:
                 matching_strategy = "Name-only matching"
 
+            # Check if file supports utilisation report (needs paid amount column)
+            supports_utilisation_report = False
+            try:
+                excel_file = pd.ExcelFile(temp_path)
+                for sheet_name in excel_file.sheet_names:
+                    df = pd.read_excel(temp_path, sheet_name=sheet_name)
+                    for col in df.columns:
+                        col_str = str(col).lower().strip().replace('\n', ' ')
+                        # Check for paid amount columns required for utilisation report
+                        if any(pattern in col_str for pattern in ['paid amt', 'paid amount', 'total paid']):
+                            supports_utilisation_report = True
+                            logger.debug(f"Found utilisation report column: '{col}' in sheet '{sheet_name}'")
+                            break
+                    if supports_utilisation_report:
+                        break
+            except Exception as util_check_error:
+                logger.warning(f"Error checking utilisation report support: {util_check_error}")
+                supports_utilisation_report = False
+
             return jsonify({
                 'clinic_count': clinic_count,
                 'has_address_data': has_address_data,
@@ -3520,6 +3539,7 @@ def validate_clinic_file():
                 'has_unit_numbers': unit_percentage,
                 'has_visit_counts': visit_count_percentage,
                 'supports_top_n_filter': supports_top_n,
+                'supports_utilisation_report': supports_utilisation_report,
                 'matching_strategy': matching_strategy,
                 'singapore_addresses': has_singapore
             })
@@ -3611,41 +3631,55 @@ def match_clinics():
         comparison_polyclinics_filtered = 0
         comparison_hospitals_filtered = 0
 
+        # Track excluded clinics for report
+        excluded_base_clinics = []
+        excluded_comparison_clinics = []
+
         # Filter base clinics
         base_clinics_filtered = []
         for clinic in base_clinics_full:
             exclude_this = False
+            exclude_reason = None
 
             # Check polyclinic filter
             if exclude_polyclinics and 'polyclinic' in clinic.normalized_name:
                 base_polyclinics_filtered += 1
                 exclude_this = True
+                exclude_reason = 'Polyclinic'
 
             # Check hospital filter
             if exclude_hospitals and any(hosp in clinic.normalized_name for hosp in GOVERNMENT_HOSPITALS):
                 base_hospitals_filtered += 1
                 exclude_this = True
+                exclude_reason = 'Government Hospital' if exclude_reason is None else exclude_reason + ', Government Hospital'
 
             if not exclude_this:
                 base_clinics_filtered.append(clinic)
+            else:
+                excluded_base_clinics.append((clinic, exclude_reason))
 
         # Filter comparison clinics
         comparison_clinics_filtered = []
         for clinic in comparison_clinics_full:
             exclude_this = False
+            exclude_reason = None
 
             # Check polyclinic filter
             if exclude_polyclinics and 'polyclinic' in clinic.normalized_name:
                 comparison_polyclinics_filtered += 1
                 exclude_this = True
+                exclude_reason = 'Polyclinic'
 
             # Check hospital filter
             if exclude_hospitals and any(hosp in clinic.normalized_name for hosp in GOVERNMENT_HOSPITALS):
                 comparison_hospitals_filtered += 1
                 exclude_this = True
+                exclude_reason = 'Government Hospital' if exclude_reason is None else exclude_reason + ', Government Hospital'
 
             if not exclude_this:
                 comparison_clinics_filtered.append(clinic)
+            else:
+                excluded_comparison_clinics.append((clinic, exclude_reason))
 
         logger.info(f"After filtering: Base={len(base_clinics_filtered)}, Comparison={len(comparison_clinics_filtered)}")
         logger.info(f"Base filtered out: {base_polyclinics_filtered} polyclinics, {base_hospitals_filtered} hospitals")
@@ -3844,7 +3878,11 @@ def match_clinics():
         results_filename = f"clinic_match_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         results_path = os.path.join(PROCESSED_FOLDER, results_filename)
 
-        generate_match_report_enhanced(matches, unmatched_base, unmatched_comparison, results_path, alternative_nearest_details, base_name, comparison_name)
+        generate_match_report_enhanced(
+            matches, unmatched_base, unmatched_comparison, results_path,
+            alternative_nearest_details, base_name, comparison_name,
+            excluded_base_clinics, excluded_comparison_clinics
+        )
 
         # Generate utilisation report if requested OR if Top N filter is enabled
         report_filename = None
@@ -4794,15 +4832,19 @@ def generate_match_report_enhanced(matches: List[ClinicMatch],
                                    output_path: str,
                                    alternative_nearest_details: Optional[dict] = None,
                                    base_name: str = 'Base',
-                                   comparison_name: str = 'Comparison') -> str:
+                                   comparison_name: str = 'Comparison',
+                                   excluded_base_clinics: Optional[List[tuple]] = None,
+                                   excluded_comparison_clinics: Optional[List[tuple]] = None) -> str:
     """
     Generate enhanced Excel report with match type breakdown and statistics.
 
-    Creates 4 sheets:
+    Creates up to 6 sheets:
     1. Matched Clinics - with match type, confidence, and address details
     2. Unmatched in {base_name} - clinics only in base file
     3. Unmatched in {comparison_name} - clinics only in comparison file
     4. Match Statistics - summary statistics and breakdown
+    5. Alternative Nearest - nearby alternatives for unmatched clinics (if available)
+    6. Excluded Clinics - clinics filtered out by polyclinic/hospital filters (if any)
 
     Args:
         matches: List of ClinicMatch objects
@@ -4812,6 +4854,8 @@ def generate_match_report_enhanced(matches: List[ClinicMatch],
         alternative_nearest_details: Optional dict with alternative clinic data
         base_name: Custom name for base file (default: 'Base')
         comparison_name: Custom name for comparison file (default: 'Comparison')
+        excluded_base_clinics: Optional list of (ClinicRecord, reason) tuples for excluded base clinics
+        excluded_comparison_clinics: Optional list of (ClinicRecord, reason) tuples for excluded comparison clinics
 
     Returns:
         Path to generated Excel file
@@ -5009,6 +5053,40 @@ def generate_match_report_enhanced(matches: List[ClinicMatch],
                 df_alternatives = pd.DataFrame(alt_data)
                 df_alternatives.to_excel(writer, sheet_name='Alternative Nearest', index=False)
                 logger.info(f"  - Alternative Nearest Clinics sheet: {len(alt_data)} rows")
+
+            # Sheet 6: Excluded Clinics (if any filters were applied)
+            if excluded_base_clinics or excluded_comparison_clinics:
+                excluded_data = []
+
+                # Add excluded base clinics
+                if excluded_base_clinics:
+                    for clinic, reason in excluded_base_clinics:
+                        excluded_data.append({
+                            'Source File': base_name,
+                            'Clinic Name': clinic.name,
+                            'Address': format_clinic_address(clinic),
+                            'Postal Code': clinic.postal_code or '',
+                            'Unit Number': clinic.unit_number or '',
+                            'Block': clinic.block or '',
+                            'Exclusion Reason': reason
+                        })
+
+                # Add excluded comparison clinics
+                if excluded_comparison_clinics:
+                    for clinic, reason in excluded_comparison_clinics:
+                        excluded_data.append({
+                            'Source File': comparison_name,
+                            'Clinic Name': clinic.name,
+                            'Address': format_clinic_address(clinic),
+                            'Postal Code': clinic.postal_code or '',
+                            'Unit Number': clinic.unit_number or '',
+                            'Block': clinic.block or '',
+                            'Exclusion Reason': reason
+                        })
+
+                df_excluded = pd.DataFrame(excluded_data)
+                df_excluded.to_excel(writer, sheet_name='Excluded Clinics', index=False)
+                logger.info(f"  - Excluded Clinics sheet: {len(excluded_data)} rows ({len(excluded_base_clinics or [])} from base, {len(excluded_comparison_clinics or [])} from comparison)")
 
         logger.info(f"Enhanced match report generated successfully: {output_path}")
         return output_path
