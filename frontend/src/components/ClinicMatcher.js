@@ -127,7 +127,7 @@ const TopNAnalysis = ({ topNData, filterType, reportFilename, onDownloadReport }
   );
 };
 
-// Alternative Nearest Clinics Component - shows geographic alternatives for unmatched Top N clinics
+// Alternative Nearest Clinics Component - shows geographic alternatives for unmatched clinics
 const AlternativeNearestClinics = ({ alternativeData }) => {
   if (!alternativeData || !alternativeData.alternatives || alternativeData.alternatives.length === 0) {
     return null;
@@ -138,7 +138,7 @@ const AlternativeNearestClinics = ({ alternativeData }) => {
       {/* Header */}
       <div className="mb-4">
         <h4 className="text-md font-semibold text-purple-900">
-          🗺️ Nearest Alternative Clinics for Unmatched Top N
+          🗺️ Nearest Alternative Clinics for Unmatched Clinics
         </h4>
         <p className="text-xs text-gray-600 mt-1">
           Geographic alternatives for {alternativeData.unmatched_clinic_count} unmatched clinic(s) based on proximity
@@ -787,10 +787,7 @@ const ClinicMatcher = () => {
               <input
                 type="checkbox"
                 checked={topNFilter === 'top10'}
-                onChange={(e) => {
-                  setTopNFilter(e.target.checked ? 'top10' : null);
-                  if (!e.target.checked) setFindAlternatives(false); // Reset when unchecked
-                }}
+                onChange={(e) => setTopNFilter(e.target.checked ? 'top10' : null)}
                 disabled={!fileInfo.base?.supportsTopN || isProcessing || topNFilter === 'top20'}
                 className="mt-1"
               />
@@ -803,10 +800,7 @@ const ClinicMatcher = () => {
               <input
                 type="checkbox"
                 checked={topNFilter === 'top20'}
-                onChange={(e) => {
-                  setTopNFilter(e.target.checked ? 'top20' : null);
-                  if (!e.target.checked) setFindAlternatives(false); // Reset when unchecked
-                }}
+                onChange={(e) => setTopNFilter(e.target.checked ? 'top20' : null)}
                 disabled={!fileInfo.base?.supportsTopN || isProcessing || topNFilter === 'top10'}
                 className="mt-1"
               />
@@ -816,27 +810,31 @@ const ClinicMatcher = () => {
               </div>
             </label>
 
-            {/* Find Alternatives Option - Only shown when Top N is selected */}
-            {topNFilter && (
-              <label className={`flex items-start gap-3 border-t border-gray-200 pt-3 mt-3 ${isProcessing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
-                <input
-                  type="checkbox"
-                  checked={findAlternatives}
-                  onChange={(e) => setFindAlternatives(e.target.checked)}
-                  disabled={isProcessing}
-                  className="mt-1"
-                />
-                <div>
-                  <span className="font-medium text-gray-800">Find Nearest Alternatives</span>
-                  <p className="text-xs text-gray-500">
-                    For unmatched top N clinics, find 5 nearest alternatives from comparison file based on geographic distance
-                  </p>
-                  <p className="text-xs text-blue-600 mt-1">
-                    ⚡ Adds ~25s processing time for geocoding
-                  </p>
-                </div>
-              </label>
-            )}
+            {/* Find Alternatives Option - Available for all unmatched clinics */}
+            <label className={`flex items-start gap-3 border-t border-gray-200 pt-3 mt-3 ${isProcessing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+              <input
+                type="checkbox"
+                checked={findAlternatives}
+                onChange={(e) => setFindAlternatives(e.target.checked)}
+                disabled={isProcessing}
+                className="mt-1"
+              />
+              <div>
+                <span className="font-medium text-gray-800">Find Nearest Alternatives</span>
+                <p className="text-xs text-gray-500">
+                  {topNFilter
+                    ? `For unmatched top ${topNFilter === 'top10' ? '10' : '20'} clinics, find 5 nearest alternatives from comparison file based on geographic distance`
+                    : 'For all unmatched clinics, find 5 nearest alternatives from comparison file based on geographic distance'
+                  }
+                </p>
+                <p className="text-xs text-blue-600 mt-1">
+                  {topNFilter
+                    ? '⚡ Adds ~25s processing time for geocoding'
+                    : '⚡ Processing time depends on number of unmatched clinics (may take longer for many clinics)'
+                  }
+                </p>
+              </div>
+            </label>
           </div>
         </div>
 

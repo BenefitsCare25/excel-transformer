@@ -3745,23 +3745,31 @@ def match_clinics():
 
             logger.info(f"Top {n_value} subset analysis: {top_n_matched_count}/{len(top_n_clinic_details)} matched ({top_n_results['match_percentage']:.1f}%)")
 
-        # Calculate nearest alternatives for unmatched top N clinics (if user opted in)
+        # Calculate nearest alternatives for unmatched clinics (if user opted in)
+        # Works for both Top N mode and all unmatched clinics mode
         alternative_nearest_details = None
-        if find_alternatives and top_n_filter and top_n_results and top_n_results['unmatched_count'] > 0:
-            logger.info("Calculating nearest alternatives for unmatched top N clinics...")
 
-            # Get unmatched top N clinics
-            unmatched_top_n = []
-            for detail in top_n_clinic_details:
-                if not detail['matched']:
-                    # Find the actual clinic object from base_clinics_filtered
-                    clinic_obj = next(
-                        (c for c in base_clinics_filtered if c.normalized_name == detail['normalized_name']),
-                        None
-                    )
-                    if clinic_obj:
-                        unmatched_top_n.append(clinic_obj)
+        # Determine which unmatched clinics to find alternatives for
+        unmatched_clinics_for_alternatives = []
 
+        if find_alternatives:
+            if top_n_filter and top_n_results and top_n_results['unmatched_count'] > 0:
+                # Top N mode: find alternatives for unmatched top N clinics only
+                logger.info("Calculating nearest alternatives for unmatched top N clinics...")
+                for detail in top_n_clinic_details:
+                    if not detail['matched']:
+                        clinic_obj = next(
+                            (c for c in base_clinics_filtered if c.normalized_name == detail['normalized_name']),
+                            None
+                        )
+                        if clinic_obj:
+                            unmatched_clinics_for_alternatives.append(clinic_obj)
+            elif len(unmatched_base) > 0:
+                # All clinics mode: find alternatives for ALL unmatched base clinics
+                logger.info(f"Calculating nearest alternatives for {len(unmatched_base)} unmatched clinics...")
+                unmatched_clinics_for_alternatives = list(unmatched_base)
+
+        if find_alternatives and unmatched_clinics_for_alternatives:
             # Build reverse lookup: comparison clinic -> base clinic
             comparison_to_base = {
                 m.comparison_clinic.normalized_name: m.base_clinic.name
@@ -3770,7 +3778,12 @@ def match_clinics():
 
             # Find alternatives for each unmatched clinic
             alternatives_by_clinic = {}
-            for clinic in unmatched_top_n:
+            total_to_process = len(unmatched_clinics_for_alternatives)
+
+            for idx, clinic in enumerate(unmatched_clinics_for_alternatives):
+                if (idx + 1) % 10 == 0 or idx == 0:
+                    logger.info(f"Processing alternatives: {idx + 1}/{total_to_process}")
+
                 alternatives = find_nearest_clinics(
                     target_clinic=clinic,
                     candidate_clinics=comparison_clinics_filtered,
@@ -3789,14 +3802,15 @@ def match_clinics():
             # Format for JSON response
             if alternatives_by_clinic:
                 alternative_nearest_details = {
-                    'unmatched_clinic_count': len(unmatched_top_n),
+                    'unmatched_clinic_count': len(unmatched_clinics_for_alternatives),
                     'clinics_with_alternatives': len(alternatives_by_clinic),
+                    'is_top_n_mode': bool(top_n_filter),
                     'alternatives': []
                 }
 
                 for clinic_name, alternatives in alternatives_by_clinic.items():
                     # Find the clinic object for metadata
-                    clinic = next(c for c in unmatched_top_n if c.normalized_name == clinic_name)
+                    clinic = next(c for c in unmatched_clinics_for_alternatives if c.normalized_name == clinic_name)
 
                     alternative_nearest_details['alternatives'].append({
                         'base_clinic_name': clinic.name,
