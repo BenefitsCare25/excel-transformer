@@ -3578,11 +3578,16 @@ def match_clinics():
         top_n_filter = request.form.get('top_n_filter', None)  # 'top10', 'top20', or None
         find_alternatives = request.form.get('find_alternatives', 'false').lower() == 'true'  # Find nearest alternatives for unmatched
 
+        # Get custom TPA names for sheet naming (optional, defaults to "Base"/"Comparison")
+        base_name = request.form.get('base_name', '').strip() or 'Base'
+        comparison_name = request.form.get('comparison_name', '').strip() or 'Comparison'
+
         logger.info(f"Matching clinics: Base='{base_file.filename}', Comparison='{comparison_file.filename}'")
         logger.info(f"Filters: exclude_polyclinics={exclude_polyclinics}, exclude_hospitals={exclude_hospitals}")
         logger.info(f"Generate utilisation report: {generate_report}")
         logger.info(f"Top N filter: {top_n_filter}")
         logger.info(f"Find alternatives: {find_alternatives}")
+        logger.info(f"TPA names: base='{base_name}', comparison='{comparison_name}'")
 
         # Extract clinic records with full address components
         logger.info("Using enhanced address-based matching...")
@@ -3839,7 +3844,7 @@ def match_clinics():
         results_filename = f"clinic_match_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         results_path = os.path.join(PROCESSED_FOLDER, results_filename)
 
-        generate_match_report_enhanced(matches, unmatched_base, unmatched_comparison, results_path, alternative_nearest_details)
+        generate_match_report_enhanced(matches, unmatched_base, unmatched_comparison, results_path, alternative_nearest_details, base_name, comparison_name)
 
         # Generate utilisation report if requested OR if Top N filter is enabled
         report_filename = None
@@ -4787,14 +4792,16 @@ def generate_match_report_enhanced(matches: List[ClinicMatch],
                                    unmatched_base: List[ClinicRecord],
                                    unmatched_comparison: List[ClinicRecord],
                                    output_path: str,
-                                   alternative_nearest_details: Optional[dict] = None) -> str:
+                                   alternative_nearest_details: Optional[dict] = None,
+                                   base_name: str = 'Base',
+                                   comparison_name: str = 'Comparison') -> str:
     """
     Generate enhanced Excel report with match type breakdown and statistics.
 
     Creates 4 sheets:
     1. Matched Clinics - with match type, confidence, and address details
-    2. Unmatched in Base - clinics only in base file
-    3. Unmatched in Comparison - clinics only in comparison file
+    2. Unmatched in {base_name} - clinics only in base file
+    3. Unmatched in {comparison_name} - clinics only in comparison file
     4. Match Statistics - summary statistics and breakdown
 
     Args:
@@ -4802,6 +4809,9 @@ def generate_match_report_enhanced(matches: List[ClinicMatch],
         unmatched_base: List of unmatched base clinics
         unmatched_comparison: List of unmatched comparison clinics
         output_path: Path for output Excel file
+        alternative_nearest_details: Optional dict with alternative clinic data
+        base_name: Custom name for base file (default: 'Base')
+        comparison_name: Custom name for comparison file (default: 'Comparison')
 
     Returns:
         Path to generated Excel file
@@ -4846,7 +4856,8 @@ def generate_match_report_enhanced(matches: List[ClinicMatch],
                 df_matched.to_excel(writer, sheet_name='Matched Clinics', index=False)
                 logger.info("  - Matched Clinics sheet: 0 rows (empty)")
 
-            # Sheet 2: Unmatched in Base
+            # Sheet 2: Unmatched in Base (using custom name)
+            base_sheet_name = f'Unmatched in {base_name}'
             if unmatched_base:
                 unmatched_base_data = []
                 for clinic in unmatched_base:
@@ -4863,17 +4874,18 @@ def generate_match_report_enhanced(matches: List[ClinicMatch],
                     })
 
                 df_unmatched_base = pd.DataFrame(unmatched_base_data)
-                df_unmatched_base.to_excel(writer, sheet_name='Unmatched in Base', index=False)
-                logger.info(f"  - Unmatched in Base sheet: {len(unmatched_base_data)} rows")
+                df_unmatched_base.to_excel(writer, sheet_name=base_sheet_name, index=False)
+                logger.info(f"  - {base_sheet_name} sheet: {len(unmatched_base_data)} rows")
             else:
                 df_unmatched_base = pd.DataFrame(columns=[
                     'Clinic Name', 'Address', 'Postal Code', 'Unit Number', 'Block',
                     'Road Name', 'Building Name', 'Visit Count', 'Is Singapore'
                 ])
-                df_unmatched_base.to_excel(writer, sheet_name='Unmatched in Base', index=False)
-                logger.info("  - Unmatched in Base sheet: 0 rows (empty)")
+                df_unmatched_base.to_excel(writer, sheet_name=base_sheet_name, index=False)
+                logger.info(f"  - {base_sheet_name} sheet: 0 rows (empty)")
 
-            # Sheet 3: Unmatched in Comparison
+            # Sheet 3: Unmatched in Comparison (using custom name)
+            comparison_sheet_name = f'Unmatched in {comparison_name}'
             if unmatched_comparison:
                 unmatched_comparison_data = []
                 for clinic in unmatched_comparison:
@@ -4889,15 +4901,15 @@ def generate_match_report_enhanced(matches: List[ClinicMatch],
                     })
 
                 df_unmatched_comparison = pd.DataFrame(unmatched_comparison_data)
-                df_unmatched_comparison.to_excel(writer, sheet_name='Unmatched in Comparison', index=False)
-                logger.info(f"  - Unmatched in Comparison sheet: {len(unmatched_comparison_data)} rows")
+                df_unmatched_comparison.to_excel(writer, sheet_name=comparison_sheet_name, index=False)
+                logger.info(f"  - {comparison_sheet_name} sheet: {len(unmatched_comparison_data)} rows")
             else:
                 df_unmatched_comparison = pd.DataFrame(columns=[
                     'Clinic Name', 'Address', 'Postal Code', 'Unit Number', 'Block',
                     'Road Name', 'Building Name', 'Is Singapore'
                 ])
-                df_unmatched_comparison.to_excel(writer, sheet_name='Unmatched in Comparison', index=False)
-                logger.info("  - Unmatched in Comparison sheet: 0 rows (empty)")
+                df_unmatched_comparison.to_excel(writer, sheet_name=comparison_sheet_name, index=False)
+                logger.info(f"  - {comparison_sheet_name} sheet: 0 rows (empty)")
 
             # Sheet 4: Match Statistics
             stats_data = []
@@ -4929,9 +4941,9 @@ def generate_match_report_enhanced(matches: List[ClinicMatch],
             stats_data.append({'Metric': '', 'Count': '', 'Percentage': ''})  # Blank row
 
             # Unmatched
-            stats_data.append({'Metric': 'Unmatched in Base', 'Count': len(unmatched_base),
+            stats_data.append({'Metric': f'Unmatched in {base_name}', 'Count': len(unmatched_base),
                              'Percentage': f"{len(unmatched_base)/total_base*100:.1f}%" if total_base > 0 else '0.0%'})
-            stats_data.append({'Metric': 'Unmatched in Comparison', 'Count': len(unmatched_comparison),
+            stats_data.append({'Metric': f'Unmatched in {comparison_name}', 'Count': len(unmatched_comparison),
                              'Percentage': f"{len(unmatched_comparison)/total_comparison*100:.1f}%" if total_comparison > 0 else '0.0%'})
 
             stats_data.append({'Metric': '', 'Count': '', 'Percentage': ''})  # Blank row

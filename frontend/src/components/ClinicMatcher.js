@@ -264,6 +264,8 @@ const ClinicMatcher = () => {
   const [topNFilter, setTopNFilter] = useState(null); // null, 'top10', or 'top20'
   const [findAlternatives, setFindAlternatives] = useState(false); // Find nearest alternatives for unmatched clinics
   const [fileInfo, setFileInfo] = useState({ base: null, comparison: null });
+  const [baseName, setBaseName] = useState(''); // Custom name for base file (e.g., "FHG")
+  const [comparisonName, setComparisonName] = useState(''); // Custom name for comparison file (e.g., "iXchange")
 
   // Validate and get file info from backend
   const validateFile = async (file, fileType) => {
@@ -365,6 +367,8 @@ const ClinicMatcher = () => {
       formData.append('top_n_filter', topNFilter);
     }
     formData.append('find_alternatives', findAlternatives);
+    formData.append('base_name', baseName);
+    formData.append('comparison_name', comparisonName);
 
     try {
       const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
@@ -409,6 +413,8 @@ const ClinicMatcher = () => {
     setGenerateReport(false);
     setTopNFilter(null);
     setFileInfo({ base: null, comparison: null });
+    setBaseName('');
+    setComparisonName('');
   };
 
   const downloadUtilisationReport = (filename) => {
@@ -439,7 +445,18 @@ const ClinicMatcher = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Base File Dropzone */}
           <div className="flex-1">
-            <h3 className="text-lg font-semibold text-gray-800 mb-3">Base File (Master List)</h3>
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">Base File (Master List)</h3>
+            <div className="mb-3">
+              <label className="block text-xs text-gray-600 mb-1">TPA Name (optional)</label>
+              <input
+                type="text"
+                value={baseName}
+                onChange={(e) => setBaseName(e.target.value)}
+                placeholder="e.g., FHG"
+                disabled={isProcessing}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+              />
+            </div>
             <div
               {...getBaseRootProps()}
               className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
@@ -500,7 +517,18 @@ const ClinicMatcher = () => {
 
           {/* Comparison File Dropzone */}
           <div className="flex-1">
-            <h3 className="text-lg font-semibold text-gray-800 mb-3">Comparison File</h3>
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">Comparison File</h3>
+            <div className="mb-3">
+              <label className="block text-xs text-gray-600 mb-1">TPA Name (optional)</label>
+              <input
+                type="text"
+                value={comparisonName}
+                onChange={(e) => setComparisonName(e.target.value)}
+                placeholder="e.g., iXchange"
+                disabled={isProcessing}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+              />
+            </div>
             <div
               {...getComparisonRootProps()}
               className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
