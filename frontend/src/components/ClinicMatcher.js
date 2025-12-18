@@ -429,19 +429,9 @@ const ClinicMatcher = () => {
         <h2 className="text-2xl font-bold text-gray-800 mb-4">
           Clinic Name Matcher
         </h2>
-        <p className="text-gray-600 mb-4">
+        <p className="text-gray-600">
           Upload two Excel files to compare clinic lists. The system will identify matching clinics and those that appear in only one file.
         </p>
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-gray-700">
-          <p className="font-medium text-blue-900 mb-2">How it works:</p>
-          <ul className="space-y-1 text-blue-800">
-            <li>• <strong>Base File (Left):</strong> Your master clinic list</li>
-            <li>• <strong>Comparison File (Right):</strong> Any Excel file with clinic names to compare</li>
-            <li>• The system extracts clinic names and performs case-insensitive matching</li>
-            <li>• Results show: Matched clinics, Unmatched in Base, Unmatched in Comparison</li>
-            <li>• Results automatically download as a single Excel file with 3 sheets</li>
-          </ul>
-        </div>
       </div>
 
       {/* Dual Upload Section */}
