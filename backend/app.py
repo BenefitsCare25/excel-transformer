@@ -5229,12 +5229,12 @@ def mc_process_files():
             )
 
             # Step 2: DL Comparison & ADC
-            processed_dl = dl_processor.process_step2_dl_comparison(
+            processed_dl, dl_stats = dl_processor.process_step2_dl_comparison(
                 new_dl_df, old_dl_df, processed_el
             )
 
             # Step 3: EL Comparison & ADC
-            processed_el = el_processor.process_step3_el_comparison(
+            processed_el, el_stats = el_processor.process_step3_el_comparison(
                 processed_el, old_el_df
             )
 
@@ -5251,13 +5251,47 @@ def mc_process_files():
             dl_count = len(processed_dl)
             adc_count = len(sheets.get('iXchange ADC', []))
 
+            # Calculate total changes
+            total_el_changes = sum(el_stats['changes'].values())
+
+            # Aggregate all warnings
+            total_warnings = (
+                el_stats['warnings']['terminated_no_lds'] +
+                el_stats['warnings']['fin_to_nric'] +
+                el_stats['warnings']['check_category'] +
+                el_stats['warnings']['has_inactive_date'] +
+                dl_stats['warnings']['check_with_hr']
+            )
+
             return jsonify({
                 'success': True,
                 'filename': output_filename,
                 'statistics': {
                     'employees_processed': el_count,
                     'dependants_processed': dl_count,
-                    'adc_records': adc_count
+                    'adc_records': adc_count,
+                    # EL breakdown
+                    'el_additions': el_stats['additions'],
+                    'el_deletions': el_stats['deletions'],
+                    'el_changes': el_stats['changes'],
+                    'el_total_changes': total_el_changes,
+                    # DL breakdown
+                    'dl_new_spouse': dl_stats['new_spouse'],
+                    'dl_new_child': dl_stats['new_child'],
+                    'dl_new_other': dl_stats['new_other'],
+                    'dl_deletions': dl_stats['deletions'],
+                    'dl_dropoffs': dl_stats['dropoffs'],
+                    # Validation warnings
+                    'warnings': {
+                        'terminated_no_lds': el_stats['warnings']['terminated_no_lds'],
+                        'fin_to_nric': el_stats['warnings']['fin_to_nric'],
+                        'check_category': el_stats['warnings']['check_category'],
+                        'has_inactive_date': el_stats['warnings']['has_inactive_date'],
+                        'dep_is_employee': dl_stats['warnings']['dep_is_employee'],
+                        'terminated_ee_coverage': dl_stats['warnings']['terminated_ee_coverage'],
+                        'check_with_hr': el_stats['warnings']['check_with_hr'] + dl_stats['warnings']['check_with_hr']
+                    },
+                    'total_warnings': total_warnings
                 }
             })
 

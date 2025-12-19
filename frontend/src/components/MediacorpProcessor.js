@@ -237,7 +237,7 @@ const MediacorpProcessor = () => {
             </h3>
           </div>
 
-          {/* Statistics */}
+          {/* Basic Statistics */}
           <div className="grid grid-cols-3 gap-4 mb-6">
             <div className="bg-blue-50 rounded-lg p-4 text-center">
               <div className="text-2xl font-bold text-blue-600">
@@ -259,6 +259,145 @@ const MediacorpProcessor = () => {
             </div>
           </div>
 
+          {/* Employee Listing Changes */}
+          <div className="bg-blue-50 rounded-lg p-4 mb-4">
+            <h4 className="text-sm font-semibold text-blue-800 mb-3 flex items-center">
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              Employee Listing Changes
+            </h4>
+            <div className="grid grid-cols-3 gap-3 mb-3">
+              <div className="bg-white rounded p-2 text-center">
+                <div className="text-lg font-bold text-green-600">{result.statistics?.el_additions || 0}</div>
+                <div className="text-xs text-gray-500">Additions</div>
+              </div>
+              <div className="bg-white rounded p-2 text-center">
+                <div className="text-lg font-bold text-red-600">{result.statistics?.el_deletions || 0}</div>
+                <div className="text-xs text-gray-500">Deletions</div>
+              </div>
+              <div className="bg-white rounded p-2 text-center">
+                <div className="text-lg font-bold text-blue-600">{result.statistics?.el_total_changes || 0}</div>
+                <div className="text-xs text-gray-500">Changes</div>
+              </div>
+            </div>
+            {result.statistics?.el_total_changes > 0 && (
+              <div className="bg-white rounded p-2">
+                <div className="text-xs text-gray-600 flex flex-wrap gap-2">
+                  {result.statistics?.el_changes?.entity > 0 && (
+                    <span className="bg-gray-100 px-2 py-1 rounded">Entity: {result.statistics.el_changes.entity}</span>
+                  )}
+                  {result.statistics?.el_changes?.name > 0 && (
+                    <span className="bg-gray-100 px-2 py-1 rounded">Name: {result.statistics.el_changes.name}</span>
+                  )}
+                  {result.statistics?.el_changes?.id_no > 0 && (
+                    <span className="bg-gray-100 px-2 py-1 rounded">ID No: {result.statistics.el_changes.id_no}</span>
+                  )}
+                  {result.statistics?.el_changes?.employment_type > 0 && (
+                    <span className="bg-gray-100 px-2 py-1 rounded">Emp Type: {result.statistics.el_changes.employment_type}</span>
+                  )}
+                  {result.statistics?.el_changes?.bank_account > 0 && (
+                    <span className="bg-gray-100 px-2 py-1 rounded">Bank Acct: {result.statistics.el_changes.bank_account}</span>
+                  )}
+                  {result.statistics?.el_changes?.overseas > 0 && (
+                    <span className="bg-gray-100 px-2 py-1 rounded">Overseas: {result.statistics.el_changes.overseas}</span>
+                  )}
+                  {result.statistics?.el_changes?.category > 0 && (
+                    <span className="bg-gray-100 px-2 py-1 rounded">Category: {result.statistics.el_changes.category}</span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Dependant Listing Changes */}
+          <div className="bg-purple-50 rounded-lg p-4 mb-4">
+            <h4 className="text-sm font-semibold text-purple-800 mb-3 flex items-center">
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+              Dependant Listing Changes
+            </h4>
+            <div className="grid grid-cols-5 gap-2">
+              <div className="bg-white rounded p-2 text-center">
+                <div className="text-lg font-bold text-pink-600">{result.statistics?.dl_new_spouse || 0}</div>
+                <div className="text-xs text-gray-500">New Spouse</div>
+              </div>
+              <div className="bg-white rounded p-2 text-center">
+                <div className="text-lg font-bold text-indigo-600">{result.statistics?.dl_new_child || 0}</div>
+                <div className="text-xs text-gray-500">New Child</div>
+              </div>
+              <div className="bg-white rounded p-2 text-center">
+                <div className="text-lg font-bold text-purple-600">{result.statistics?.dl_new_other || 0}</div>
+                <div className="text-xs text-gray-500">New Other</div>
+              </div>
+              <div className="bg-white rounded p-2 text-center">
+                <div className="text-lg font-bold text-red-600">{result.statistics?.dl_deletions || 0}</div>
+                <div className="text-xs text-gray-500">Deletions</div>
+              </div>
+              <div className="bg-white rounded p-2 text-center">
+                <div className="text-lg font-bold text-gray-600">{result.statistics?.dl_dropoffs || 0}</div>
+                <div className="text-xs text-gray-500">Dropoffs</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Validation Warnings */}
+          {result.statistics?.total_warnings > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+              <h4 className="text-sm font-semibold text-amber-800 mb-3 flex items-center">
+                <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+                Validation Warnings ({result.statistics?.total_warnings || 0} items - Check with HR)
+              </h4>
+              <div className="space-y-2">
+                {result.statistics?.warnings?.terminated_no_lds > 0 && (
+                  <div className="flex items-center text-sm bg-red-100 text-red-800 px-3 py-2 rounded">
+                    <span className="w-2 h-2 bg-red-500 rounded-full mr-2"></span>
+                    <span className="font-medium">{result.statistics.warnings.terminated_no_lds}</span>
+                    <span className="ml-2">Terminated but no LDS - Check with HR</span>
+                  </div>
+                )}
+                {result.statistics?.warnings?.fin_to_nric > 0 && (
+                  <div className="flex items-center text-sm bg-yellow-100 text-yellow-800 px-3 py-2 rounded">
+                    <span className="w-2 h-2 bg-yellow-500 rounded-full mr-2"></span>
+                    <span className="font-medium">{result.statistics.warnings.fin_to_nric}</span>
+                    <span className="ml-2">FIN to NRIC - Check Foreign Employment Pass</span>
+                  </div>
+                )}
+                {result.statistics?.warnings?.check_category > 0 && (
+                  <div className="flex items-center text-sm bg-yellow-100 text-yellow-800 px-3 py-2 rounded">
+                    <span className="w-2 h-2 bg-yellow-500 rounded-full mr-2"></span>
+                    <span className="font-medium">{result.statistics.warnings.check_category}</span>
+                    <span className="ml-2">Employment Type changed - Check Category/Designation</span>
+                  </div>
+                )}
+                {result.statistics?.warnings?.has_inactive_date > 0 && (
+                  <div className="flex items-center text-sm bg-yellow-100 text-yellow-800 px-3 py-2 rounded">
+                    <span className="w-2 h-2 bg-yellow-500 rounded-full mr-2"></span>
+                    <span className="font-medium">{result.statistics.warnings.has_inactive_date}</span>
+                    <span className="ml-2">New employee has Inactive Date - Check with HR</span>
+                  </div>
+                )}
+                {result.statistics?.warnings?.dep_is_employee > 0 && (
+                  <div className="flex items-center text-sm bg-blue-100 text-blue-800 px-3 py-2 rounded">
+                    <span className="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
+                    <span className="font-medium">{result.statistics.warnings.dep_is_employee}</span>
+                    <span className="ml-2">Dependant is also Employee - Check coverage</span>
+                  </div>
+                )}
+                {result.statistics?.warnings?.terminated_ee_coverage > 0 && (
+                  <div className="flex items-center text-sm bg-orange-100 text-orange-800 px-3 py-2 rounded">
+                    <span className="w-2 h-2 bg-orange-500 rounded-full mr-2"></span>
+                    <span className="font-medium">{result.statistics.warnings.terminated_ee_coverage}</span>
+                    <span className="ml-2">Terminated EE as DEP - Check coverage</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Output Information */}
           <div className="bg-gray-50 rounded-lg p-4 mb-4">
             <h4 className="text-sm font-medium text-gray-700 mb-2">Output File Contains:</h4>
@@ -273,7 +412,7 @@ const MediacorpProcessor = () => {
               </li>
               <li className="flex items-center">
                 <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
-                <strong>iXchange ADC</strong> - 13-column format for iXchange submission
+                <strong>iXchange ADC</strong> - 13-column format ({result.statistics?.adc_records || 0} records)
               </li>
             </ul>
           </div>

@@ -58,11 +58,37 @@ class ELProcessor:
         self,
         new_el_df: pd.DataFrame,
         old_el_df: pd.DataFrame
-    ) -> pd.DataFrame:
-        """Step 3: Compare new EL vs old EL and generate ADC remarks."""
+    ) -> tuple:
+        """Step 3: Compare new EL vs old EL and generate ADC remarks.
+
+        Returns:
+            tuple: (processed_df, statistics_dict)
+        """
         old_el_lookup = self._build_staff_lookup(old_el_df)
 
         adc_remarks = []
+
+        # Statistics tracking
+        stats = {
+            'additions': 0,
+            'deletions': 0,
+            'changes': {
+                'entity': 0,
+                'name': 0,
+                'id_no': 0,
+                'overseas': 0,
+                'employment_type': 0,
+                'category': 0,
+                'bank_account': 0
+            },
+            'warnings': {
+                'terminated_no_lds': 0,
+                'fin_to_nric': 0,
+                'check_category': 0,
+                'check_with_hr': 0,
+                'has_inactive_date': 0
+            }
+        }
 
         for idx, row in new_el_df.iterrows():
             staff_id = self._get_safe_value(row, self.COL_STAFF_ID)
@@ -74,32 +100,44 @@ class ELProcessor:
                 hire_date = self._get_safe_value(row, self.COL_HIRE_DATE)
                 date_str = format_date_ddmmyy(hire_date)
                 remarks.append(f"Addition wef {date_str}" if date_str else "Addition")
+                stats['additions'] += 1
 
                 inactive = self._get_safe_value(row, self.COL_INACTIVE)
                 if is_not_blank(inactive):
                     remarks.append("Has Inactive Date - Check with HR")
+                    stats['warnings']['has_inactive_date'] += 1
+                    stats['warnings']['check_with_hr'] += 1
             else:
                 old_row = old_el_lookup[staff_id_str]
-                change_remarks = self._detect_changes(row, old_row)
+                change_remarks, change_stats = self._detect_changes_with_stats(row, old_row)
                 remarks.extend(change_remarks)
+
+                # Aggregate change stats
+                for key, count in change_stats['changes'].items():
+                    stats['changes'][key] += count
+                for key, count in change_stats['warnings'].items():
+                    stats['warnings'][key] += count
 
                 new_lds = self._get_safe_value(row, self.COL_LDS)
                 old_lds = old_row.get('lds')
                 if is_not_blank(new_lds) and is_blank(old_lds):
                     date_str = format_date_ddmmyy(new_lds)
                     remarks.append(f"Deletion wef {date_str}" if date_str else "Deletion")
+                    stats['deletions'] += 1
 
             # Validate: Terminated category should have LDS date
             category = self._get_safe_value(row, self.COL_CATEGORY)
             new_lds = self._get_safe_value(row, self.COL_LDS)
             if self._is_terminated_category(category) and is_blank(new_lds):
                 remarks.append("Terminated but no LDS - Check with HR")
+                stats['warnings']['terminated_no_lds'] += 1
+                stats['warnings']['check_with_hr'] += 1
 
             adc_remarks.append('; '.join(remarks) if remarks else '')
 
         new_el_df['ADC Remarks'] = adc_remarks
 
-        return new_el_df
+        return new_el_df, stats
 
     def _build_staff_lookup(self, df: pd.DataFrame) -> Dict[str, Dict]:
         """Build a lookup dictionary from DataFrame by Staff ID."""
@@ -134,35 +172,62 @@ class ELProcessor:
 
     def _detect_changes(self, new_row: pd.Series, old_data: Dict) -> List[str]:
         """Detect changes between new and old row data."""
+        changes, _ = self._detect_changes_with_stats(new_row, old_data)
+        return changes
+
+    def _detect_changes_with_stats(self, new_row: pd.Series, old_data: Dict) -> tuple:
+        """Detect changes between new and old row data with statistics.
+
+        Returns:
+            tuple: (list of change remarks, stats dict)
+        """
         changes = []
+        stats = {
+            'changes': {
+                'entity': 0,
+                'name': 0,
+                'id_no': 0,
+                'overseas': 0,
+                'employment_type': 0,
+                'category': 0,
+                'bank_account': 0
+            },
+            'warnings': {
+                'fin_to_nric': 0,
+                'check_category': 0
+            }
+        }
 
         comparisons = [
-            (self.COL_ENTITY, 'Entity', 'entity', None),
-            (self.COL_NAME, 'Name', 'name', None),
-            (self.COL_ID_NO, 'Identification No.', 'id_no', 'fin_to_nric'),
-            (self.COL_OVERSEAS, 'Overseas Assignment', 'overseas', None),
-            (self.COL_EMP_TYPE, 'Employment Type', 'emp_type', 'check_category'),
-            (self.COL_CATEGORY, 'Category', 'category', None),
-            (self.COL_BANK_ACCT, 'Bank Account', 'bank_acct', None),
+            (self.COL_ENTITY, 'Entity', 'entity', None, 'entity'),
+            (self.COL_NAME, 'Name', 'name', None, 'name'),
+            (self.COL_ID_NO, 'Identification No.', 'id_no', 'fin_to_nric', 'id_no'),
+            (self.COL_OVERSEAS, 'Overseas Assignment', 'overseas', None, 'overseas'),
+            (self.COL_EMP_TYPE, 'Employment Type', 'emp_type', 'check_category', 'employment_type'),
+            (self.COL_CATEGORY, 'Category', 'category', None, 'category'),
+            (self.COL_BANK_ACCT, 'Bank Account', 'bank_acct', None, 'bank_account'),
         ]
 
-        for col_idx, field_name, old_key, special in comparisons:
+        for col_idx, field_name, old_key, special, stat_key in comparisons:
             new_val = self._get_safe_value(new_row, col_idx)
             old_val = old_data.get(old_key)
 
             if self._values_differ(new_val, old_val):
                 change_msg = f"{field_name} changed"
+                stats['changes'][stat_key] += 1
 
                 if special == 'fin_to_nric':
                     if self._is_fin_to_nric_change(old_val, new_val):
                         change_msg = "ID changed (FIN to NRIC) - Check Foreign Employment Pass"
+                        stats['warnings']['fin_to_nric'] += 1
 
                 if special == 'check_category':
                     change_msg = "Employment Type changed - Check Category/Designation"
+                    stats['warnings']['check_category'] += 1
 
                 changes.append(change_msg)
 
-        return changes
+        return changes, stats
 
     def _values_differ(self, new_val, old_val) -> bool:
         """Compare two values, handling NaN/None cases."""

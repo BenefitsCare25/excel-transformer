@@ -34,8 +34,12 @@ class DLProcessor:
         new_dl_df: pd.DataFrame,
         old_dl_df: pd.DataFrame,
         processed_el_df: pd.DataFrame
-    ) -> pd.DataFrame:
-        """Step 2: DL Comparison and ADC generation."""
+    ) -> tuple:
+        """Step 2: DL Comparison and ADC generation.
+
+        Returns:
+            tuple: (processed_df, statistics_dict)
+        """
         el_id_numbers = self._build_el_id_lookup(processed_el_df)
         el_staff_to_aia = self._build_staff_aia_lookup(processed_el_df)
         el_staff_to_lds = self._build_staff_lds_lookup(processed_el_df)
@@ -48,6 +52,20 @@ class DLProcessor:
             'DEP ID Check': [],
             'AIA Category': [],
             'Inspro ADC Remarks': [],
+        }
+
+        # Statistics tracking
+        stats = {
+            'new_spouse': 0,
+            'new_child': 0,
+            'new_other': 0,
+            'deletions': 0,
+            'dropoffs': 0,
+            'warnings': {
+                'dep_is_employee': 0,
+                'terminated_ee_coverage': 0,
+                'check_with_hr': 0
+            }
         }
 
         for idx, row in new_dl_df.iterrows():
@@ -63,12 +81,15 @@ class DLProcessor:
 
             is_employee = 'Yes' if dep_id_no_str in el_id_numbers else ''
             results['DEP is Employee'].append(is_employee)
+            if is_employee == 'Yes':
+                stats['warnings']['dep_is_employee'] += 1
 
             dep_who_are_ee = ''
             if is_employee == 'Yes':
                 ee_lds = el_staff_to_lds.get(dep_id_no_str)
                 if is_not_blank(ee_lds):
                     dep_who_are_ee = 'Terminated EE - Check coverage'
+                    stats['warnings']['terminated_ee_coverage'] += 1
 
             results['DEP who are EE'].append(dep_who_are_ee)
 
@@ -76,6 +97,7 @@ class DLProcessor:
             ee_lds = el_staff_to_lds.get(staff_id_str)
             if is_not_blank(ee_lds):
                 lds_check = format_date_ddmmyy(ee_lds)
+                stats['deletions'] += 1
 
             results['LDS Check'].append(lds_check)
 
@@ -86,7 +108,7 @@ class DLProcessor:
             aia_cat = el_staff_to_aia.get(staff_id_str, '')
             results['AIA Category'].append(aia_cat)
 
-            remarks = self._generate_adc_remarks(
+            remarks, remark_type = self._generate_adc_remarks_with_type(
                 is_new=is_new,
                 relationship=relationship,
                 effective_date=hire_date,
@@ -96,13 +118,23 @@ class DLProcessor:
             )
             results['Inspro ADC Remarks'].append(remarks)
 
+            # Track statistics by remark type
+            if remark_type == 'new_spouse':
+                stats['new_spouse'] += 1
+            elif remark_type == 'new_child':
+                stats['new_child'] += 1
+            elif remark_type == 'new_other':
+                stats['new_other'] += 1
+                stats['warnings']['check_with_hr'] += 1
+
         result_df = new_dl_df.copy()
         for col_name, values in results.items():
             result_df[col_name] = values
 
-        result_df = self._add_dropoff_data(result_df, new_dl_df, old_dl_df)
+        result_df, dropoff_count = self._add_dropoff_data_with_count(result_df, new_dl_df, old_dl_df)
+        stats['dropoffs'] = dropoff_count
 
-        return result_df
+        return result_df, stats
 
     def _build_el_id_lookup(self, el_df: pd.DataFrame) -> Set[str]:
         """Build set of all ID numbers from Employee Listing."""
@@ -161,8 +193,28 @@ class DLProcessor:
         dep_who_are_ee: str
     ) -> str:
         """Generate Inspro ADC Remarks based on dependant status."""
+        remarks, _ = self._generate_adc_remarks_with_type(
+            is_new, relationship, effective_date, lds_check, is_employee, dep_who_are_ee
+        )
+        return remarks
+
+    def _generate_adc_remarks_with_type(
+        self,
+        is_new: bool,
+        relationship: Optional[str],
+        effective_date,
+        lds_check: str,
+        is_employee: str,
+        dep_who_are_ee: str
+    ) -> tuple:
+        """Generate Inspro ADC Remarks with type classification.
+
+        Returns:
+            tuple: (remarks_string, remark_type)
+            remark_type: 'deletion', 'new_spouse', 'new_child', 'new_other', 'dep_employee', or None
+        """
         if lds_check:
-            return "Deletion"
+            return "Deletion", 'deletion'
 
         if is_new:
             date_str = format_date_ddmmyy(effective_date)
@@ -171,18 +223,18 @@ class DLProcessor:
             relationship_str = str(relationship).upper() if relationship else ''
 
             if 'SPOUSE' in relationship_str or 'WIFE' in relationship_str or 'HUSBAND' in relationship_str:
-                return f"New Spouse{wef_str}"
+                return f"New Spouse{wef_str}", 'new_spouse'
             elif 'CHILD' in relationship_str or 'SON' in relationship_str or 'DAUGHTER' in relationship_str:
-                return f"New Child{wef_str}"
+                return f"New Child{wef_str}", 'new_child'
             else:
-                return f"New Dependant{wef_str} - Check with HR"
+                return f"New Dependant{wef_str} - Check with HR", 'new_other'
 
         if is_employee == 'Yes':
             if dep_who_are_ee:
-                return dep_who_are_ee
-            return "DEP is also Employee - Check coverage"
+                return dep_who_are_ee, 'dep_employee'
+            return "DEP is also Employee - Check coverage", 'dep_employee'
 
-        return ''
+        return '', None
 
     def _add_dropoff_data(
         self,
@@ -191,6 +243,20 @@ class DLProcessor:
         old_dl_df: pd.DataFrame
     ) -> pd.DataFrame:
         """Add column to track records that dropped off."""
+        result_df, _ = self._add_dropoff_data_with_count(result_df, new_dl_df, old_dl_df)
+        return result_df
+
+    def _add_dropoff_data_with_count(
+        self,
+        result_df: pd.DataFrame,
+        new_dl_df: pd.DataFrame,
+        old_dl_df: pd.DataFrame
+    ) -> tuple:
+        """Add column to track records that dropped off with count.
+
+        Returns:
+            tuple: (result_df, dropoff_count)
+        """
         new_dep_ids = self._build_dep_id_set(new_dl_df)
 
         dropoffs = []
@@ -208,7 +274,7 @@ class DLProcessor:
 
         result_df.attrs['dropoffs'] = dropoffs
 
-        return result_df
+        return result_df, len(dropoffs)
 
 
 dl_processor = DLProcessor()
