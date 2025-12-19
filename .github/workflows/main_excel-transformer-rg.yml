@@ -33,6 +33,25 @@ jobs:
           source antenv/bin/activate
           pip install -r requirements.txt
 
+      # Build React frontend
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+
+      - name: Build React frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+        env:
+          REACT_APP_API_URL: https://excel-transformer-rg.azurewebsites.net
+
+      - name: Copy frontend to backend static folder
+        run: |
+          mkdir -p backend/static
+          cp -r frontend/build/* backend/static/
+
       # By default, when you enable GitHub CI/CD integration through the Azure portal, the platform automatically sets the SCM_DO_BUILD_DURING_DEPLOYMENT application setting to true. This triggers the use of Oryx, a build engine that handles application compilation and dependency installation (e.g., pip install) directly on the platform during deployment. Hence, we exclude the antenv virtual environment directory from the deployment artifact to reduce the payload size.
       - name: Upload artifact for deployment jobs
         uses: actions/upload-artifact@v4
@@ -63,4 +82,4 @@ jobs:
           app-name: 'excel-transformer-rg'
           slot-name: 'Production'
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_5B226EAFC9C04C9489E59C924562DD9E }}
-          package: ./backend
+          package: .

@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 import pandas as pd
 import os
@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
 
 # Configuration
@@ -5354,6 +5354,21 @@ def startup_check():
     except Exception as e:
         logger.error(f"Startup check failed: {e}")
         return False
+
+# Serve React frontend (only when static folder exists)
+@app.route('/')
+def serve_frontend():
+    """Serve the React frontend index.html"""
+    if app.static_folder and os.path.exists(os.path.join(app.static_folder, 'index.html')):
+        return send_from_directory(app.static_folder, 'index.html')
+    return jsonify({'message': 'Excel Transformer API', 'status': 'running'}), 200
+
+@app.errorhandler(404)
+def not_found(e):
+    """Serve index.html for SPA routing on 404"""
+    if app.static_folder and os.path.exists(os.path.join(app.static_folder, 'index.html')):
+        return send_from_directory(app.static_folder, 'index.html')
+    return jsonify({'error': 'Not found'}), 404
 
 # Perform startup check
 startup_check()
