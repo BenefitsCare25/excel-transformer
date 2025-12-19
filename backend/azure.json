@@ -1,0 +1,26 @@
+{
+  "version": "1.0.0",
+  "name": "excel-transformer-backend",
+  "description": "Excel Template Transformer - Backend API",
+  "runtime": {
+    "name": "python",
+    "version": "3.11"
+  },
+  "build": {
+    "commands": [
+      "pip install --upgrade pip",
+      "pip install -r requirements.txt"
+    ]
+  },
+  "deploy": {
+    "startup": {
+      "command": "bash startup.sh"
+    }
+  },
+  "environmentVariables": {
+    "FLASK_ENV": "production",
+    "FLASK_APP": "app.py",
+    "PYTHONUNBUFFERED": "1",
+    "SCM_DO_BUILD_DURING_DEPLOYMENT": "true"
+  }
+}
