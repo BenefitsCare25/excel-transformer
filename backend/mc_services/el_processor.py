@@ -116,21 +116,21 @@ class ELProcessor:
                 new_category = self._get_safe_value(row, self.COL_CATEGORY)
                 old_lds = old_row.get('lds')
                 is_termination = is_not_blank(new_lds) and is_blank(new_category)
+                has_category_change = "Category changed" in change_remarks
 
-                # If termination, replace "Category changed" with "Deletion wef xxx"
-                if is_termination:
+                # If termination AND category changed, replace "Category changed" with "Deletion wef xxx"
+                if is_termination and has_category_change:
                     date_str = format_date_ddmmyy(new_lds)
                     deletion_remark = f"Deletion wef {date_str}" if date_str else "Deletion"
 
-                    # Replace Category changed with Deletion, avoid duplicate deletions
+                    # Replace Category changed with Deletion
                     filtered_remarks = [r for r in change_remarks if r != "Category changed"]
-                    if deletion_remark not in filtered_remarks:
-                        filtered_remarks.append(deletion_remark)
+                    filtered_remarks.append(deletion_remark)
                     remarks.extend(filtered_remarks)
                     stats['deletions'] += 1
                 else:
                     remarks.extend(change_remarks)
-                    # Only add deletion if LDS changed from blank to value (non-termination case)
+                    # Add deletion if LDS changed from blank to value
                     if is_not_blank(new_lds) and is_blank(old_lds):
                         date_str = format_date_ddmmyy(new_lds)
                         remarks.append(f"Deletion wef {date_str}" if date_str else "Deletion")
