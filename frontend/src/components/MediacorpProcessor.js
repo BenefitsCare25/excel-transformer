@@ -1,0 +1,324 @@
+import React, { useState, useCallback } from 'react';
+import { useDropzone } from 'react-dropzone';
+import apiService from '../services/api';
+
+const FileUploadBox = ({ label, description, file, onDrop, isProcessing }) => {
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: {
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
+    },
+    multiple: false,
+    disabled: isProcessing
+  });
+
+  return (
+    <div className="flex-1">
+      <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
+      <div
+        {...getRootProps()}
+        className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
+          isDragActive
+            ? 'border-blue-500 bg-blue-50'
+            : file
+            ? 'border-green-400 bg-green-50'
+            : 'border-gray-300 hover:border-blue-400'
+        } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+      >
+        <input {...getInputProps()} />
+        {file ? (
+          <div className="flex items-center justify-center space-x-2">
+            <svg className="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+            </svg>
+            <span className="text-sm text-green-700 truncate max-w-[150px]">{file.name}</span>
+          </div>
+        ) : (
+          <div>
+            <svg className="w-8 h-8 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            </svg>
+            <p className="text-xs text-gray-500">{description}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const MediacorpProcessor = () => {
+  const [files, setFiles] = useState({
+    new_el: null,
+    old_el: null,
+    new_dl: null,
+    old_dl: null
+  });
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [progress, setProgress] = useState('');
+
+  const handleFileDrop = useCallback((key) => (acceptedFiles) => {
+    if (acceptedFiles.length > 0) {
+      setFiles(prev => ({ ...prev, [key]: acceptedFiles[0] }));
+      setError(null);
+    }
+  }, []);
+
+  const allFilesSelected = Object.values(files).every(f => f !== null);
+
+  const handleProcess = async () => {
+    if (!allFilesSelected) {
+      setError('Please upload all 4 required files');
+      return;
+    }
+
+    setIsProcessing(true);
+    setError(null);
+    setResult(null);
+    setProgress('Uploading files...');
+
+    try {
+      setProgress('Processing Employee Listings...');
+      const response = await apiService.processMCFiles(files);
+
+      if (response.success) {
+        setResult(response.data);
+        setProgress('');
+      } else {
+        setError(response.error || 'Processing failed');
+        setProgress('');
+      }
+    } catch (err) {
+      setError(err.message || 'An error occurred during processing');
+      setProgress('');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (result && result.filename) {
+      const downloadResult = await apiService.downloadMCFile(result.filename);
+      if (!downloadResult.success) {
+        setError(`Download failed: ${downloadResult.error}`);
+      }
+    }
+  };
+
+  const handleReset = () => {
+    setFiles({ new_el: null, old_el: null, new_dl: null, old_dl: null });
+    setResult(null);
+    setError(null);
+    setProgress('');
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Main Card */}
+      <div className="card">
+        <div className="mb-6">
+          <h2 className="text-xl font-semibold text-gray-800 mb-2">
+            Mediacorp ADC Processor
+          </h2>
+          <p className="text-sm text-gray-600">
+            Process Employee and Dependant Listings to generate ADC output with category mapping.
+          </p>
+        </div>
+
+        {/* Employee Listing Files */}
+        <div className="mb-6">
+          <h3 className="text-md font-medium text-gray-700 mb-3 flex items-center">
+            <svg className="w-5 h-5 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            Employee Listing Files
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <FileUploadBox
+              label="New Employee Listing"
+              description="Drop .xlsx file here"
+              file={files.new_el}
+              onDrop={handleFileDrop('new_el')}
+              isProcessing={isProcessing}
+            />
+            <FileUploadBox
+              label="Old Employee Listing"
+              description="Drop .xlsx file here"
+              file={files.old_el}
+              onDrop={handleFileDrop('old_el')}
+              isProcessing={isProcessing}
+            />
+          </div>
+        </div>
+
+        {/* Dependant Listing Files */}
+        <div className="mb-6">
+          <h3 className="text-md font-medium text-gray-700 mb-3 flex items-center">
+            <svg className="w-5 h-5 mr-2 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+            Dependant Listing Files
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <FileUploadBox
+              label="New Dependant Listing"
+              description="Drop .xlsx file here"
+              file={files.new_dl}
+              onDrop={handleFileDrop('new_dl')}
+              isProcessing={isProcessing}
+            />
+            <FileUploadBox
+              label="Old Dependant Listing"
+              description="Drop .xlsx file here"
+              file={files.old_dl}
+              onDrop={handleFileDrop('old_dl')}
+              isProcessing={isProcessing}
+            />
+          </div>
+        </div>
+
+        {/* Error Message */}
+        {error && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-start">
+              <svg className="w-5 h-5 text-red-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+              <div>
+                <p className="text-sm font-medium text-red-800">Error</p>
+                <p className="text-sm text-red-700">{typeof error === 'object' ? JSON.stringify(error) : error}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Progress Indicator */}
+        {isProcessing && (
+          <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-center">
+              <svg className="animate-spin w-5 h-5 text-blue-500 mr-3" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span className="text-sm text-blue-700">{progress}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Action Buttons */}
+        <div className="flex justify-end space-x-3">
+          <button
+            onClick={handleReset}
+            disabled={isProcessing}
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 disabled:opacity-50"
+          >
+            Reset
+          </button>
+          <button
+            onClick={handleProcess}
+            disabled={!allFilesSelected || isProcessing}
+            className="px-6 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isProcessing ? 'Processing...' : 'Process Files'}
+          </button>
+        </div>
+      </div>
+
+      {/* Results Card */}
+      {result && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-green-700 flex items-center">
+              <svg className="w-6 h-6 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+              </svg>
+              Processing Complete
+            </h3>
+          </div>
+
+          {/* Statistics */}
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="bg-blue-50 rounded-lg p-4 text-center">
+              <div className="text-2xl font-bold text-blue-600">
+                {result.statistics?.employees_processed || 0}
+              </div>
+              <div className="text-sm text-gray-600">Employees Processed</div>
+            </div>
+            <div className="bg-purple-50 rounded-lg p-4 text-center">
+              <div className="text-2xl font-bold text-purple-600">
+                {result.statistics?.dependants_processed || 0}
+              </div>
+              <div className="text-sm text-gray-600">Dependants Processed</div>
+            </div>
+            <div className="bg-green-50 rounded-lg p-4 text-center">
+              <div className="text-2xl font-bold text-green-600">
+                {result.statistics?.adc_records || 0}
+              </div>
+              <div className="text-sm text-gray-600">ADC Records</div>
+            </div>
+          </div>
+
+          {/* Output Information */}
+          <div className="bg-gray-50 rounded-lg p-4 mb-4">
+            <h4 className="text-sm font-medium text-gray-700 mb-2">Output File Contains:</h4>
+            <ul className="text-sm text-gray-600 space-y-1">
+              <li className="flex items-center">
+                <span className="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
+                <strong>Processed EL</strong> - Employee Listing with AIA Category, Flex Category, and ADC Remarks
+              </li>
+              <li className="flex items-center">
+                <span className="w-2 h-2 bg-purple-500 rounded-full mr-2"></span>
+                <strong>Processed DL</strong> - Dependant Listing with comparison columns
+              </li>
+              <li className="flex items-center">
+                <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+                <strong>iXchange ADC</strong> - 13-column format for iXchange submission
+              </li>
+            </ul>
+          </div>
+
+          {/* Download Button */}
+          <button
+            onClick={handleDownload}
+            className="w-full px-4 py-3 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 flex items-center justify-center"
+          >
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Download {result.filename}
+          </button>
+        </div>
+      )}
+
+      {/* Information Section */}
+      <div className="card">
+        <h3 className="text-lg font-semibold text-gray-800 mb-3">Processing Steps</h3>
+        <div className="grid md:grid-cols-4 gap-4">
+          <div className="text-center p-3 bg-gray-50 rounded-lg">
+            <div className="w-8 h-8 mx-auto mb-2 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold">1</div>
+            <h4 className="text-sm font-medium text-gray-700">Category Tagging</h4>
+            <p className="text-xs text-gray-500 mt-1">AIA Category & Flex Category assignment</p>
+          </div>
+          <div className="text-center p-3 bg-gray-50 rounded-lg">
+            <div className="w-8 h-8 mx-auto mb-2 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 font-bold">2</div>
+            <h4 className="text-sm font-medium text-gray-700">DL Comparison</h4>
+            <p className="text-xs text-gray-500 mt-1">Dependant listing analysis & ADC generation</p>
+          </div>
+          <div className="text-center p-3 bg-gray-50 rounded-lg">
+            <div className="w-8 h-8 mx-auto mb-2 bg-green-100 rounded-full flex items-center justify-center text-green-600 font-bold">3</div>
+            <h4 className="text-sm font-medium text-gray-700">EL Comparison</h4>
+            <p className="text-xs text-gray-500 mt-1">Employee listing comparison & ADC remarks</p>
+          </div>
+          <div className="text-center p-3 bg-gray-50 rounded-lg">
+            <div className="w-8 h-8 mx-auto mb-2 bg-orange-100 rounded-full flex items-center justify-center text-orange-600 font-bold">4</div>
+            <h4 className="text-sm font-medium text-gray-700">Output Generation</h4>
+            <p className="text-xs text-gray-500 mt-1">Combined Excel with 3 sheets</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default MediacorpProcessor;

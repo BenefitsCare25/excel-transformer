@@ -16,6 +16,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Optional, List, Set
+import tempfile
 try:
     from concurrent.futures import ThreadPoolExecutor, as_completed
     CONCURRENT_SUPPORT = True
@@ -23,6 +24,16 @@ except ImportError:
     # Fallback for environments without concurrent.futures
     CONCURRENT_SUPPORT = False
     import threading
+
+# Mediacorp ADC Processor imports
+from mc_services import (
+    ExcelHandler as MCExcelHandler,
+    ELProcessor, DLProcessor,
+    create_combined_output,
+    validate_el_file, validate_dl_file,
+    allowed_file as mc_allowed_file,
+    get_today_ddmmyy
+)
 
 # Configure logging
 logging.basicConfig(
@@ -5126,6 +5137,163 @@ def download_match_result(filename):
     except Exception as e:
         logger.error(f"Error downloading match result: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
+# Mediacorp ADC Processor Endpoints
+# ============================================================================
+
+@app.route('/api/mc/health', methods=['GET'])
+def mc_health_check():
+    """Health check endpoint for Mediacorp ADC Processor."""
+    return jsonify({
+        'status': 'healthy',
+        'service': 'Mediacorp ADC Processor',
+        'timestamp': datetime.now().isoformat()
+    })
+
+
+@app.route('/api/mc/process', methods=['POST'])
+def mc_process_files():
+    """
+    Main processing endpoint for Mediacorp ADC.
+
+    Accepts 4 Excel files:
+    - new_el: New Employee Listing
+    - old_el: Old Employee Listing
+    - new_dl: New Dependant Listing
+    - old_dl: Old Dependant Listing
+
+    Returns:
+    - Combined Excel file with 3 sheets (Processed EL, Processed DL, iXchange ADC)
+    """
+    try:
+        required_files = ['new_el', 'old_el', 'new_dl', 'old_dl']
+        files = {}
+
+        for file_key in required_files:
+            if file_key not in request.files:
+                return jsonify({
+                    'error': f'Missing file: {file_key}',
+                    'details': f'Please upload the {file_key.replace("_", " ").title()} file'
+                }), 400
+
+            file = request.files[file_key]
+            if file.filename == '':
+                return jsonify({
+                    'error': f'No file selected for: {file_key}',
+                    'details': f'Please select a file for {file_key.replace("_", " ").title()}'
+                }), 400
+
+            if not mc_allowed_file(file.filename):
+                return jsonify({
+                    'error': f'Invalid file type for {file_key}',
+                    'details': 'Only .xlsx files are supported'
+                }), 400
+
+            files[file_key] = file
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_paths = {}
+            for key, file in files.items():
+                from werkzeug.utils import secure_filename
+                safe_name = secure_filename(f"{key}_{file.filename}")
+                path = os.path.join(temp_dir, safe_name)
+                file.save(path)
+                file_paths[key] = path
+
+            excel_handler = MCExcelHandler()
+            el_processor = ELProcessor()
+            dl_processor = DLProcessor()
+
+            new_el_df, category_mapping_df = excel_handler.load_el_file(file_paths['new_el'])
+            old_el_df, _ = excel_handler.load_el_file(file_paths['old_el'])
+            new_dl_df = excel_handler.load_dl_file(file_paths['new_dl'])
+            old_dl_df = excel_handler.load_dl_file(file_paths['old_dl'])
+
+            validation_errors = []
+            validation_errors.extend(validate_el_file(new_el_df, 'New Employee Listing'))
+            validation_errors.extend(validate_el_file(old_el_df, 'Old Employee Listing'))
+            validation_errors.extend(validate_dl_file(new_dl_df, 'New Dependant Listing'))
+            validation_errors.extend(validate_dl_file(old_dl_df, 'Old Dependant Listing'))
+
+            if validation_errors:
+                return jsonify({
+                    'error': 'File validation failed',
+                    'details': validation_errors
+                }), 400
+
+            # Step 1: EL Category Tagging
+            processed_el = el_processor.process_step1_category_tagging(
+                new_el_df, category_mapping_df
+            )
+
+            # Step 2: DL Comparison & ADC
+            processed_dl = dl_processor.process_step2_dl_comparison(
+                new_dl_df, old_dl_df, processed_el
+            )
+
+            # Step 3: EL Comparison & ADC
+            processed_el = el_processor.process_step3_el_comparison(
+                processed_el, old_el_df
+            )
+
+            # Step 4: Generate Combined Output
+            sheets = create_combined_output(processed_el, processed_dl)
+
+            output_filename = f"Mediacorp_ADC_Output_{get_today_ddmmyy()}.xlsx"
+            output_path = os.path.join(PROCESSED_FOLDER, output_filename)
+
+            excel_handler.save_multi_sheet_excel(output_path, sheets)
+
+            # Get statistics
+            el_count = len(processed_el)
+            dl_count = len(processed_dl)
+            adc_count = len(sheets.get('iXchange ADC', []))
+
+            return jsonify({
+                'success': True,
+                'filename': output_filename,
+                'statistics': {
+                    'employees_processed': el_count,
+                    'dependants_processed': dl_count,
+                    'adc_records': adc_count
+                }
+            })
+
+    except Exception as e:
+        logger.error(f"Mediacorp ADC processing failed: {e}\n{traceback.format_exc()}")
+        return jsonify({
+            'error': 'Processing failed',
+            'details': str(e)
+        }), 500
+
+
+@app.route('/api/mc/download/<filename>', methods=['GET'])
+def mc_download_result(filename):
+    """Download Mediacorp ADC processing results."""
+    try:
+        file_path = os.path.join(PROCESSED_FOLDER, filename)
+
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found'}), 404
+
+        if '..' in filename or '/' in filename or '\\' in filename:
+            return jsonify({'error': 'Invalid filename'}), 400
+
+        threading.Timer(60.0, lambda: os.remove(file_path) if os.path.exists(file_path) else None).start()
+
+        return send_file(
+            file_path,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+    except Exception as e:
+        logger.error(f"Error downloading Mediacorp result: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 def startup_check():
     """Perform startup checks to ensure all dependencies are available"""

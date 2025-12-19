@@ -234,6 +234,74 @@ class ApiService {
       };
     }
   }
+
+  // Mediacorp ADC Processor API functions
+  async processMCFiles(files) {
+    const formData = new FormData();
+    formData.append('new_el', files.new_el);
+    formData.append('old_el', files.old_el);
+    formData.append('new_dl', files.new_dl);
+    formData.append('old_dl', files.old_dl);
+
+    try {
+      const response = await this.api.post('/api/mc/process', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 300000, // 5 minutes for processing
+      });
+
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Processing failed',
+        details: error.response?.data?.details || error.message,
+      };
+    }
+  }
+
+  async downloadMCFile(filename) {
+    try {
+      const response = await this.api.get(`/api/mc/download/${filename}`, {
+        responseType: 'blob',
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Download failed',
+      };
+    }
+  }
+
+  async mcHealthCheck() {
+    try {
+      const response = await this.api.get('/api/mc/health');
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: 'Mediacorp ADC service is not available',
+      };
+    }
+  }
 }
 
 const apiServiceInstance = new ApiService();

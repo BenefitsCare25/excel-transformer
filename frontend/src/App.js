@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import FileUpload from './components/FileUpload';
 import ProcessingStatus from './components/ProcessingStatus';
 import ClinicMatcher from './components/ClinicMatcher';
+import MediacorpProcessor from './components/MediacorpProcessor';
 import apiService from './services/api';
 import './index.css';
 
 function App() {
-  const [activeTab, setActiveTab] = useState('transformer'); // 'transformer' or 'matcher'
+  const [activeTab, setActiveTab] = useState('transformer'); // 'transformer', 'matcher', or 'mediacorp'
   const [processingStatus, setProcessingStatus] = useState('idle');
   const [result, setResult] = useState(null);
   const [backendHealth, setBackendHealth] = useState(null);
@@ -184,6 +185,16 @@ function App() {
               }`}
             >
               Clinic Matcher
+            </button>
+            <button
+              onClick={() => setActiveTab('mediacorp')}
+              className={`px-6 py-2 font-medium rounded-lg transition-colors ${
+                activeTab === 'mediacorp'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+              }`}
+            >
+              Mediacorp ADC
             </button>
           </div>
         </header>
@@ -404,6 +415,11 @@ function App() {
                   onReset={handleReset}
                 />
               )}
+            </>
+          ) : activeTab === 'mediacorp' ? (
+            <>
+              {/* Mediacorp ADC Processor Component */}
+              <MediacorpProcessor />
             </>
           ) : (
             <>
