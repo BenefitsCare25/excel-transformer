@@ -89,6 +89,12 @@ class ELProcessor:
                     date_str = format_date_ddmmyy(new_lds)
                     remarks.append(f"Deletion wef {date_str}" if date_str else "Deletion")
 
+            # Validate: Terminated category should have LDS date
+            category = self._get_safe_value(row, self.COL_CATEGORY)
+            new_lds = self._get_safe_value(row, self.COL_LDS)
+            if self._is_terminated_category(category) and is_blank(new_lds):
+                remarks.append("Terminated but no LDS - Check with HR")
+
             adc_remarks.append('; '.join(remarks) if remarks else '')
 
         new_el_df['ADC Remarks'] = adc_remarks
@@ -181,6 +187,13 @@ class ELProcessor:
         new_is_nric = new_str and new_str[0] in nric_prefixes
 
         return old_is_fin and new_is_nric
+
+    def _is_terminated_category(self, category) -> bool:
+        """Check if category indicates terminated status."""
+        if is_blank(category):
+            return False
+        cat_str = str(category).strip().lower()
+        return 'terminated' in cat_str
 
 
 el_processor = ELProcessor()
