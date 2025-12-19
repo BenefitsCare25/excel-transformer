@@ -40,7 +40,16 @@
       "Bash(npm run build:*)",
       "Bash(ls:*)",
       "Bash(cat:*)",
-      "Bash(where:*)"
+      "Bash(where:*)",
+      "Bash(git restore:*)",
+      "Bash(mkdir:*)",
+      "Bash(npx eslint:*)",
+      "Bash(start https://github.com/BenefitsCare25/excel-transformer/settings/secrets/actions)",
+      "Bash(npm install:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(start \"https://portal.azure.com/#@/resource/subscriptions/*/resourceGroups/*/providers/Microsoft.Web/sites/excel-transformer-rg/overview\")",
+      "Bash(start \"https://portal.azure.com/#browse/Microsoft.Web%2Fsites\")",
+      "Bash(start https://github.com/BenefitsCare25/excel-transformer/settings/secrets/actions/new)"
     ],
     "deny": [],
     "ask": []
