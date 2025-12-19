@@ -48,7 +48,6 @@ class DLProcessor:
         results = {
             'DEP is Employee': [],
             'DEP who are EE': [],
-            'LDS Check': [],
             'DEP ID Check': [],
             'AIA Category': [],
             'Inspro ADC Remarks': [],
@@ -93,13 +92,12 @@ class DLProcessor:
 
             results['DEP who are EE'].append(dep_who_are_ee)
 
+            # Check LDS for deletion tracking (used in remarks generation)
             lds_check = ''
             ee_lds = el_staff_to_lds.get(staff_id_str)
             if is_not_blank(ee_lds):
                 lds_check = format_date_ddmmyy(ee_lds)
                 stats['deletions'] += 1
-
-            results['LDS Check'].append(lds_check)
 
             is_new = dep_id_str and dep_id_str not in old_dep_ids
             dep_id_check = '#N/A' if is_new else ''
