@@ -57,7 +57,8 @@ PROCESSED_FOLDER = os.getenv('PROCESSED_FOLDER', 'processed')
 # Postal code master file paths (in order of preference)
 POSTAL_CODE_PATHS = [
     os.getenv('POSTAL_CODE_MASTER_FILE'),  # Environment variable (highest priority)
-    os.path.join('..', 'data', 'SG_postal.csv'),  # Full SG postal codes CSV (121K+ codes)
+    os.path.join('data', 'SG_postal.csv'),  # Azure deployment: data inside backend folder
+    os.path.join('..', 'data', 'SG_postal.csv'),  # Render/local: data at project root
     os.path.join('..', 'data', 'postal_code_master.xlsx'),  # Project data folder (fallback)
     os.getenv('POSTAL_CODE_FALLBACK_PATH'),  # Configurable fallback path
     'postal_code_master.xlsx',  # Current directory
