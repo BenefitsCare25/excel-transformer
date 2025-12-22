@@ -32,20 +32,17 @@
         if (event.data && event.data.type === 'chatWidgetResize') {
           var w = event.data.width;
           var h = event.data.height;
-          // Handle percentage or pixel values
+          // Handle percentage or pixel values (vw/vh/%)
           iframe.style.width = typeof w === 'string' ? w : w + 'px';
           iframe.style.height = typeof h === 'string' ? h : h + 'px';
-          // Full screen when open, corner position when closed
-          if (event.data.state === 'open') {
+          // Keep in corner - mobile may need edge positioning
+          var isMobile = window.innerWidth < 480;
+          if (event.data.state === 'open' && isMobile) {
             iframe.style.bottom = '0';
             iframe.style.right = '0';
-            iframe.style.top = '0';
-            iframe.style.left = '0';
           } else {
             iframe.style.bottom = '16px';
             iframe.style.right = '16px';
-            iframe.style.top = 'auto';
-            iframe.style.left = 'auto';
           }
         }
       });
