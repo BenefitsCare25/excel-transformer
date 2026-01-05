@@ -2815,9 +2815,9 @@ def download_specific_file(job_id, filename):
         sheet_part = filename.replace(f"{job_id}_", "").replace(".xlsx", "")
         download_name = f"transformed_{sheet_part}.xlsx"
 
-        # Schedule cleanup after file is sent
-        threading.Timer(2.0, lambda: cleanup_service.cleanup_job_files(job_id)).start()
-        
+        # NOTE: No immediate cleanup - rely on TTL-based cleanup (15 min)
+        # to allow users to download all files from multi-file jobs
+
         return send_file(
             output_path,
             as_attachment=True,
