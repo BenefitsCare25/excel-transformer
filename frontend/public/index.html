@@ -15,7 +15,7 @@
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
 
-    <!-- CBRE AI Chatbot Widget (Sandboxed Iframe) -->
+    <!-- CBRE AI Chatbot Widget -->
     <iframe
       id="chat-widget-iframe"
       src="https://app-aibot-api.azurewebsites.net/chat?company=9bc1ab0f-eff8-4d2d-b224-e097f4851a2a&color=%233b82f6"
@@ -25,28 +25,8 @@
       allowtransparency="true"
       title="CBRE Chat Widget">
     </iframe>
-    <script>
-    (function() {
-      var iframe = document.getElementById('chat-widget-iframe');
-      window.addEventListener('message', function(event) {
-        if (event.data && event.data.type === 'chatWidgetResize') {
-          var w = event.data.width;
-          var h = event.data.height;
-          // Handle percentage or pixel values (vw/vh/%)
-          iframe.style.width = typeof w === 'string' ? w : w + 'px';
-          iframe.style.height = typeof h === 'string' ? h : h + 'px';
-          // Keep in corner - mobile may need edge positioning
-          var isMobile = window.innerWidth < 480;
-          if (event.data.state === 'open' && isMobile) {
-            iframe.style.bottom = '0';
-            iframe.style.right = '0';
-          } else {
-            iframe.style.bottom = '16px';
-            iframe.style.right = '16px';
-          }
-        }
-      });
-    })();
-    </script>
+
+    <!-- Embed Helper Script (handles mobile fullscreen automatically) -->
+    <script src="https://app-aibot-api.azurewebsites.net/embed-helper.js"></script>
   </body>
 </html>
