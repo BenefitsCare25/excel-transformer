@@ -35,6 +35,15 @@ from mc_services import (
     get_today_ddmmyy
 )
 
+# GP Panel Comparison imports
+from gp_panel_services import (
+    extract_panel_clinics,
+    compare_panels,
+    generate_comparison_excel,
+    generate_email_draft,
+    SHEET_CONFIG
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -5327,6 +5336,151 @@ def mc_download_result(filename):
 
     except Exception as e:
         logger.error(f"Error downloading Mediacorp result: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
+# GP Panel Comparison Endpoints
+# ============================================================================
+
+@app.route('/api/gp-panel/health', methods=['GET'])
+def gp_panel_health_check():
+    """Health check endpoint for GP Panel Comparison."""
+    return jsonify({
+        'status': 'healthy',
+        'service': 'GP Panel Comparison',
+        'timestamp': datetime.now().isoformat()
+    })
+
+
+@app.route('/api/gp-panel/compare', methods=['POST'])
+def gp_panel_compare():
+    """
+    Compare two GP Panel Excel files.
+
+    Accepts 2 Excel files:
+    - previous: Previous month GP Panel listing
+    - current: Current month GP Panel listing
+
+    Returns:
+    - Summary statistics per panel type
+    - Detailed changes (added, removed, updated)
+    - Download filename for Excel report
+    - Email draft text
+    """
+    try:
+        required_files = ['previous', 'current']
+        files = {}
+
+        for file_key in required_files:
+            if file_key not in request.files:
+                return jsonify({
+                    'error': f'Missing file: {file_key}',
+                    'details': f'Please upload the {file_key} month GP Panel file'
+                }), 400
+
+            file = request.files[file_key]
+            if file.filename == '':
+                return jsonify({
+                    'error': f'No file selected for: {file_key}',
+                    'details': f'Please select a file for {file_key} month'
+                }), 400
+
+            if not file.filename.lower().endswith('.xlsx'):
+                return jsonify({
+                    'error': f'Invalid file type for {file_key}',
+                    'details': 'Only .xlsx files are supported'
+                }), 400
+
+            files[file_key] = file
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_paths = {}
+            for key, file in files.items():
+                from werkzeug.utils import secure_filename
+                safe_name = secure_filename(f"{key}_{file.filename}")
+                path = os.path.join(temp_dir, safe_name)
+                file.save(path)
+                file_paths[key] = path
+
+            prev_clinics = extract_panel_clinics(file_paths['previous'])
+            curr_clinics = extract_panel_clinics(file_paths['current'])
+
+            comparison = compare_panels(prev_clinics, curr_clinics)
+
+            summary = {}
+            for sheet_type, config in SHEET_CONFIG.items():
+                prev_count = len(prev_clinics.get(sheet_type, []))
+                curr_count = len(curr_clinics.get(sheet_type, []))
+                diff = curr_count - prev_count
+                change_str = f"+{diff}" if diff >= 0 else str(diff)
+                summary[sheet_type] = {
+                    'label': config['label'],
+                    'previous': prev_count,
+                    'current': curr_count,
+                    'change': change_str,
+                    'added': len(comparison[sheet_type].added),
+                    'removed': len(comparison[sheet_type].removed),
+                    'updated': len(comparison[sheet_type].updated)
+                }
+
+            changes = {
+                sheet_type: comparison[sheet_type].to_dict()
+                for sheet_type in SHEET_CONFIG.keys()
+            }
+
+            output_filename = f"GP_Panel_Comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            output_path = os.path.join(PROCESSED_FOLDER, output_filename)
+            generate_comparison_excel(comparison, prev_clinics, curr_clinics, output_path)
+
+            email_draft = generate_email_draft(comparison)
+
+            return jsonify({
+                'success': True,
+                'summary': summary,
+                'changes': changes,
+                'download_filename': output_filename,
+                'email_draft': email_draft
+            })
+
+    except ValueError as e:
+        logger.error(f"GP Panel comparison validation error: {e}")
+        return jsonify({
+            'error': 'Validation failed',
+            'details': str(e)
+        }), 400
+
+    except Exception as e:
+        logger.error(f"GP Panel comparison failed: {e}\n{traceback.format_exc()}")
+        return jsonify({
+            'error': 'Processing failed',
+            'details': str(e)
+        }), 500
+
+
+@app.route('/api/gp-panel/download/<filename>', methods=['GET'])
+def gp_panel_download(filename):
+    """Download GP Panel comparison report."""
+    try:
+        file_path = os.path.join(PROCESSED_FOLDER, filename)
+
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found'}), 404
+
+        if '..' in filename or '/' in filename or '\\' in filename:
+            return jsonify({'error': 'Invalid filename'}), 400
+
+        threading.Timer(60.0, lambda: os.remove(file_path) if os.path.exists(file_path) else None).start()
+
+        return send_file(
+            file_path,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+    except Exception as e:
+        logger.error(f"Error downloading GP Panel result: {e}")
         return jsonify({'error': str(e)}), 500
 
 

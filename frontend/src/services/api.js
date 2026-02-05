@@ -302,6 +302,72 @@ class ApiService {
       };
     }
   }
+
+  // GP Panel Comparison API functions
+  async compareGPPanels(previousFile, currentFile) {
+    const formData = new FormData();
+    formData.append('previous', previousFile);
+    formData.append('current', currentFile);
+
+    try {
+      const response = await this.api.post('/api/gp-panel/compare', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 300000, // 5 minutes for processing
+      });
+
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Comparison failed',
+        details: error.response?.data?.details || error.message,
+      };
+    }
+  }
+
+  async downloadGPPanelReport(filename) {
+    try {
+      const response = await this.api.get(`/api/gp-panel/download/${filename}`, {
+        responseType: 'blob',
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Download failed',
+      };
+    }
+  }
+
+  async gpPanelHealthCheck() {
+    try {
+      const response = await this.api.get('/api/gp-panel/health');
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: 'GP Panel service is not available',
+      };
+    }
+  }
 }
 
 const apiServiceInstance = new ApiService();

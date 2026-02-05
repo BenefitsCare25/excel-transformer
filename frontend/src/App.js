@@ -3,11 +3,12 @@ import FileUpload from './components/FileUpload';
 import ProcessingStatus from './components/ProcessingStatus';
 import ClinicMatcher from './components/ClinicMatcher';
 import MediacorpProcessor from './components/MediacorpProcessor';
+import GPPanelComparison from './components/GPPanelComparison';
 import apiService from './services/api';
 import './index.css';
 
 function App() {
-  const [activeTab, setActiveTab] = useState('transformer'); // 'transformer', 'matcher', or 'mediacorp'
+  const [activeTab, setActiveTab] = useState('transformer'); // 'transformer', 'matcher', 'mediacorp', or 'gppanel'
   const [processingStatus, setProcessingStatus] = useState('idle');
   const [result, setResult] = useState(null);
   const [backendHealth, setBackendHealth] = useState(null);
@@ -195,6 +196,16 @@ function App() {
               }`}
             >
               Mediacorp ADC
+            </button>
+            <button
+              onClick={() => setActiveTab('gppanel')}
+              className={`px-6 py-2 font-medium rounded-lg transition-colors ${
+                activeTab === 'gppanel'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+              }`}
+            >
+              GP Panel
             </button>
           </div>
         </header>
@@ -420,6 +431,11 @@ function App() {
             <>
               {/* Mediacorp ADC Processor Component */}
               <MediacorpProcessor />
+            </>
+          ) : activeTab === 'gppanel' ? (
+            <>
+              {/* GP Panel Comparison Component */}
+              <GPPanelComparison />
             </>
           ) : (
             <>
