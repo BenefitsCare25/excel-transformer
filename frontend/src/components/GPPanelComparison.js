@@ -240,7 +240,10 @@ const GPPanelComparison = () => {
       if (response.success) {
         setResult(response.data);
       } else {
-        setError(response.error || 'Comparison failed');
+        const errorMsg = response.details
+          ? `${response.error}: ${response.details}`
+          : response.error || 'Comparison failed';
+        setError(errorMsg);
       }
     } catch (err) {
       setError(err.message || 'An error occurred during comparison');

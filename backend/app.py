@@ -5403,8 +5403,15 @@ def gp_panel_compare():
                 file.save(path)
                 file_paths[key] = path
 
-            prev_clinics = extract_panel_clinics(file_paths['previous'])
-            curr_clinics = extract_panel_clinics(file_paths['current'])
+            try:
+                prev_clinics = extract_panel_clinics(file_paths['previous'])
+            except ValueError as e:
+                raise ValueError(f"Previous month file: {e}")
+
+            try:
+                curr_clinics = extract_panel_clinics(file_paths['current'])
+            except ValueError as e:
+                raise ValueError(f"Current month file: {e}")
 
             comparison = compare_panels(prev_clinics, curr_clinics)
 

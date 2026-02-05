@@ -175,13 +175,18 @@ def extract_panel_clinics(filepath: str) -> Dict[str, List[PanelClinic]]:
         logger.error(f"Failed to open workbook: {e}")
         raise ValueError(f"Cannot open Excel file: {e}")
 
+    logger.info(f"Opened workbook with sheets: {wb.sheetnames}")
+
+    sheets_found = []
     for sheet_type, config in SHEET_CONFIG.items():
         sheet_name = _find_sheet_by_pattern(wb, config['pattern'])
 
         if not sheet_name:
-            logger.warning(f"Sheet matching '{config['pattern']}' not found")
+            logger.warning(f"Sheet matching '{config['pattern']}' not found in {wb.sheetnames}")
             result[sheet_type] = []
             continue
+
+        sheets_found.append(sheet_name)
 
         ws = wb[sheet_name]
         clinics = []
@@ -225,7 +230,22 @@ def extract_panel_clinics(filepath: str) -> Dict[str, List[PanelClinic]]:
         result[sheet_type] = clinics
         logger.info(f"Extracted {len(clinics)} clinics from {sheet_name}")
 
+    all_sheet_names = list(wb.sheetnames)
     wb.close()
+
+    if not sheets_found:
+        raise ValueError(
+            f"No matching sheets found. Expected sheets containing 'GP (SGP)', 'GP (Msia)', or 'TCM'. "
+            f"Found sheets: {all_sheet_names}"
+        )
+
+    total_clinics = sum(len(v) for v in result.values())
+    if total_clinics == 0:
+        raise ValueError(
+            f"No clinics extracted from sheets: {sheets_found}. "
+            f"Please check the file format matches HSBC Fullerton GP Panel structure."
+        )
+
     return result
 
 
