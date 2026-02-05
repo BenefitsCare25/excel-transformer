@@ -480,65 +480,56 @@ def generate_email_draft(comparison: Dict[str, PanelComparison]) -> str:
     """
     lines = [
         "Hi All,",
-        "",
         "Please refer to attached for the latest GP Panel listing.",
-        "",
-        "Updates are as follows :-",
-        ""
+        "Updates are as follows :-"
     ]
 
+    # Malaysia GP
     msia_comp = comparison.get('gp_msia', PanelComparison())
-    lines.append("Msia GP :-")
-    lines.append("Added :-")
+    lines.append("Msia GP :")
     if msia_comp.added:
+        lines.append("Added :")
         for clinic in msia_comp.added:
             lines.append(f"- {clinic.clinic_name}")
     else:
-        lines.append("None")
-    lines.append("")
-    lines.append("Removed :-")
+        lines.append("Added :- None")
     if msia_comp.removed:
+        lines.append("Removed :")
         for clinic in msia_comp.removed:
             lines.append(f"- {clinic.clinic_name}")
     else:
-        lines.append("None")
-    lines.append("")
+        lines.append("Removed :- None")
 
+    # Singapore GP
     sgp_comp = comparison.get('gp_sgp', PanelComparison())
-    lines.append("Singapore GP :-")
-    lines.append("Added :-")
+    lines.append("Singapore GP :")
     if sgp_comp.added:
+        lines.append("Added :")
         for clinic in sgp_comp.added:
             lines.append(f"- {clinic.clinic_name}")
     else:
-        lines.append("None")
-    lines.append("")
-    lines.append("Removed :-")
+        lines.append("Added :- None")
     if sgp_comp.removed:
+        lines.append("Removed :")
         for clinic in sgp_comp.removed:
             lines.append(f"- {clinic.clinic_name}")
     else:
-        lines.append("None")
-    lines.append("")
+        lines.append("Removed :- None")
 
+    # TCM
     tcm_comp = comparison.get('tcm', PanelComparison())
-    if tcm_comp.added or tcm_comp.removed:
-        lines.append("TCM :-")
-        lines.append("Added :-")
-        if tcm_comp.added:
-            for clinic in tcm_comp.added:
-                lines.append(f"- {clinic.clinic_name}")
-        else:
-            lines.append("None")
-        lines.append("")
-        lines.append("Removed :-")
-        if tcm_comp.removed:
-            for clinic in tcm_comp.removed:
-                lines.append(f"- {clinic.clinic_name}")
-        else:
-            lines.append("None")
-        lines.append("")
-
-    lines.append("Thank you!")
+    lines.append("TCM:")
+    if tcm_comp.added:
+        lines.append("Added :")
+        for clinic in tcm_comp.added:
+            lines.append(f"- {clinic.clinic_name}")
+    else:
+        lines.append("Added :- None")
+    if tcm_comp.removed:
+        lines.append("Removed :")
+        for clinic in tcm_comp.removed:
+            lines.append(f"- {clinic.clinic_name}")
+    else:
+        lines.append("Removed :- None")
 
     return '\n'.join(lines)
