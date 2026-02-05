@@ -41,7 +41,7 @@ SHEET_CONFIG = {
     },
     'gp_msia': {
         'pattern': 'GP (Msia)',
-        'label': 'GP (Malaysia/JB)',
+        'label': 'GP (Malaysia-JB)',
         'header_row': 18,
         'data_start': 19,
         'columns': {
