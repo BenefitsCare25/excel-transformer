@@ -381,9 +381,12 @@ def generate_comparison_excel(
         ws_summary.cell(row=row, column=5, value=len(comp.removed)).border = thin_border
         ws_summary.cell(row=row, column=6, value=len(comp.updated)).border = thin_border
 
-        ws_summary.cell(row=row, column=4).fill = added_fill if comp.added else None
-        ws_summary.cell(row=row, column=5).fill = removed_fill if comp.removed else None
-        ws_summary.cell(row=row, column=6).fill = updated_fill if comp.updated else None
+        if comp.added:
+            ws_summary.cell(row=row, column=4).fill = added_fill
+        if comp.removed:
+            ws_summary.cell(row=row, column=5).fill = removed_fill
+        if comp.updated:
+            ws_summary.cell(row=row, column=6).fill = updated_fill
 
         row += 1
 
