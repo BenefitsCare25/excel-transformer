@@ -4,11 +4,12 @@ import ProcessingStatus from './components/ProcessingStatus';
 import ClinicMatcher from './components/ClinicMatcher';
 import MediacorpProcessor from './components/MediacorpProcessor';
 import GPPanelComparison from './components/GPPanelComparison';
+import RenewalComparison from './components/RenewalComparison';
 import apiService from './services/api';
 import './index.css';
 
 function App() {
-  const [activeTab, setActiveTab] = useState('transformer'); // 'transformer', 'matcher', 'mediacorp', or 'gppanel'
+  const [activeTab, setActiveTab] = useState('transformer'); // 'transformer', 'matcher', 'mediacorp', 'gppanel', or 'renewal'
   const [processingStatus, setProcessingStatus] = useState('idle');
   const [result, setResult] = useState(null);
   const [backendHealth, setBackendHealth] = useState(null);
@@ -206,6 +207,16 @@ function App() {
               }`}
             >
               GP Panel
+            </button>
+            <button
+              onClick={() => setActiveTab('renewal')}
+              className={`px-6 py-2 font-medium rounded-lg transition-colors ${
+                activeTab === 'renewal'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+              }`}
+            >
+              Renewal Comparison
             </button>
           </div>
         </header>
@@ -436,6 +447,11 @@ function App() {
             <>
               {/* GP Panel Comparison Component */}
               <GPPanelComparison />
+            </>
+          ) : activeTab === 'renewal' ? (
+            <>
+              {/* Renewal Comparison Component */}
+              <RenewalComparison />
             </>
           ) : (
             <>

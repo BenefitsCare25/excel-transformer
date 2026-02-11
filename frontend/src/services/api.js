@@ -354,6 +354,58 @@ class ApiService {
     }
   }
 
+  // Renewal Comparison API functions
+  async processRenewalComparison(file1, file2, proRataDivisor = 2) {
+    const formData = new FormData();
+    formData.append('file_1', file1);
+    formData.append('file_2', file2);
+    formData.append('pro_rata_divisor', proRataDivisor);
+
+    try {
+      const response = await this.api.post('/api/renewal/compare', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 300000,
+      });
+
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Comparison failed',
+        details: error.response?.data?.details || error.message,
+      };
+    }
+  }
+
+  async downloadRenewalReport(filename) {
+    try {
+      const response = await this.api.get(`/api/renewal/download/${filename}`, {
+        responseType: 'blob',
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Download failed',
+      };
+    }
+  }
+
   async gpPanelHealthCheck() {
     try {
       const response = await this.api.get('/api/gp-panel/health');

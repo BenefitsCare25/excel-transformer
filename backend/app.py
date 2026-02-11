@@ -44,6 +44,9 @@ from gp_panel_services import (
     SHEET_CONFIG
 )
 
+# Renewal Comparison imports
+from renewal_services import process_renewal_comparison
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -5488,6 +5491,123 @@ def gp_panel_download(filename):
 
     except Exception as e:
         logger.error(f"Error downloading GP Panel result: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ========== Renewal Comparison Routes ==========
+
+@app.route('/api/renewal/health', methods=['GET'])
+def renewal_health_check():
+    """Health check endpoint for Renewal Comparison."""
+    return jsonify({
+        'status': 'healthy',
+        'service': 'Renewal Comparison',
+        'timestamp': datetime.now().isoformat()
+    })
+
+
+@app.route('/api/renewal/compare', methods=['POST'])
+def renewal_compare():
+    """
+    Compare two renewal listing Excel files.
+
+    Accepts 2 Excel files (file_1, file_2) and optional pro_rata_divisor.
+    Auto-detects which is previous/current year.
+    Returns summary JSON + generates downloadable Excel report.
+    """
+    try:
+        for file_key in ['file_1', 'file_2']:
+            if file_key not in request.files:
+                return jsonify({
+                    'error': f'Missing file: {file_key}',
+                    'details': f'Please upload {file_key}'
+                }), 400
+
+            file = request.files[file_key]
+            if file.filename == '':
+                return jsonify({
+                    'error': f'No file selected for: {file_key}',
+                    'details': f'Please select a file for {file_key}'
+                }), 400
+
+            if not file.filename.lower().endswith('.xlsx'):
+                return jsonify({
+                    'error': f'Invalid file type for {file_key}',
+                    'details': 'Only .xlsx files are supported'
+                }), 400
+
+        pro_rata_divisor = int(request.form.get('pro_rata_divisor', 2))
+        if pro_rata_divisor < 1 or pro_rata_divisor > 12:
+            return jsonify({
+                'error': 'Invalid pro-rata divisor',
+                'details': 'Divisor must be between 1 and 12'
+            }), 400
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_paths = {}
+            file_names = {}
+            for key in ['file_1', 'file_2']:
+                file = request.files[key]
+                from werkzeug.utils import secure_filename
+                safe_name = secure_filename(f"{key}_{file.filename}")
+                path = os.path.join(temp_dir, safe_name)
+                file.save(path)
+                file_paths[key] = path
+                file_names[key] = file.filename
+
+            output_filename = f"Renewal_Comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            output_path = os.path.join(PROCESSED_FOLDER, output_filename)
+
+            result = process_renewal_comparison(
+                file1_path=file_paths['file_1'],
+                file2_path=file_paths['file_2'],
+                file1_name=file_names['file_1'],
+                file2_name=file_names['file_2'],
+                pro_rata_divisor=pro_rata_divisor,
+                output_path=output_path,
+            )
+
+            result['success'] = True
+            result['download_filename'] = output_filename
+            return jsonify(result)
+
+    except ValueError as e:
+        logger.error(f"Renewal comparison validation error: {e}")
+        return jsonify({
+            'error': 'Validation failed',
+            'details': str(e)
+        }), 400
+
+    except Exception as e:
+        logger.error(f"Renewal comparison failed: {e}\n{traceback.format_exc()}")
+        return jsonify({
+            'error': 'Processing failed',
+            'details': str(e)
+        }), 500
+
+
+@app.route('/api/renewal/download/<filename>', methods=['GET'])
+def renewal_download(filename):
+    """Download Renewal comparison report."""
+    try:
+        if '..' in filename or '/' in filename or '\\' in filename:
+            return jsonify({'error': 'Invalid filename'}), 400
+
+        file_path = os.path.join(PROCESSED_FOLDER, filename)
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found'}), 404
+
+        threading.Timer(60.0, lambda: os.remove(file_path) if os.path.exists(file_path) else None).start()
+
+        return send_file(
+            file_path,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+    except Exception as e:
+        logger.error(f"Error downloading renewal result: {e}")
         return jsonify({'error': str(e)}), 500
 
 
