@@ -271,6 +271,50 @@ def _find_employee_columns(ws) -> dict:
     return col_map
 
 
+def _merge_product_values(target: EmployeeRecord, source: EmployeeRecord):
+    """Merge source product_data into target, keeping max value per product."""
+    for pname, pdata in source.product_data.items():
+        if pname not in target.product_data:
+            target.product_data[pname] = pdata
+        elif pdata.get('value') is not None:
+            existing_val = target.product_data[pname].get('value')
+            if existing_val is None or pdata['value'] > existing_val:
+                target.product_data[pname] = pdata
+
+
+def _merge_family_rows(employees: Dict[str, EmployeeRecord]) -> Dict[str, EmployeeRecord]:
+    """Merge spouse/dependant rows (no DOB) into the employee row (with DOB).
+
+    Source files have one row per family member. The spouse row has the total
+    family premium but no DOB. The unique_key differs because DOB is empty,
+    so they end up as separate entries. This merges them into the real employee
+    record, keeping the max value per product (family premium > EO premium).
+    """
+    # Build name → key map for employees who have a DOB (real employee rows)
+    name_to_key: Dict[str, str] = {}
+    for key, emp in employees.items():
+        if emp.dob:
+            name_norm = emp.name.upper().strip()
+            if name_norm not in name_to_key:
+                name_to_key[name_norm] = key
+
+    keys_to_remove = []
+    for key, emp in employees.items():
+        if emp.dob:
+            continue  # real employee row — skip
+        name_norm = emp.name.upper().strip()
+        target_key = name_to_key.get(name_norm)
+        if target_key and target_key in employees:
+            _merge_product_values(employees[target_key], emp)
+            keys_to_remove.append(key)
+
+    for key in keys_to_remove:
+        del employees[key]
+
+    logger.info(f"Merged {len(keys_to_remove)} family/dependant rows into employee records")
+    return employees
+
+
 def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> Dict[str, EmployeeRecord]:
     """Extract employee records with per-product data."""
     employees = {}
@@ -282,7 +326,6 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> D
             continue
 
         dob_val = _normalize_date(ws.cell(row=row, column=emp_cols.get('dob', 8)).value)
-        # DOB preferred but not required — fall back to empty string so the row isn't dropped
 
         emp = EmployeeRecord(
             name=name_val,
@@ -315,17 +358,10 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> D
         if key not in employees:
             employees[key] = emp
         else:
-            # Merge product data: for employees with dependant rows, take the max
-            # value per product (family premium > employee-only premium)
-            for pname, pdata in emp.product_data.items():
-                if pname not in employees[key].product_data:
-                    employees[key].product_data[pname] = pdata
-                elif pdata.get('value') is not None:
-                    existing_val = employees[key].product_data[pname].get('value')
-                    if existing_val is None or pdata['value'] > existing_val:
-                        employees[key].product_data[pname] = pdata
+            # Same name+DOB appears twice — merge product data taking max values
+            _merge_product_values(employees[key], emp)
 
-    return employees
+    return _merge_family_rows(employees)
 
 
 def _generate_product_sheet(
