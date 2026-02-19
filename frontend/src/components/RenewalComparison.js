@@ -294,40 +294,60 @@ const RenewalComparison = () => {
             </div>
           </div>
 
-          {/* Adjustment Summary Table */}
+          {/* Product Sheet Breakdown */}
           <div className="card">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">Adjustment Summary</h3>
+            <h3 className="text-lg font-semibold text-gray-800 mb-1">Product Sheet Breakdown</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              Rows written to each product sheet in the generated Excel report.
+            </p>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Type</th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Prev HC</th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Curr HC</th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Prev Named</th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Curr Named</th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                      {result.previous_year} Rows
+                    </th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                      {result.current_year} Rows
+                    </th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Change</th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Named (Prev)</th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Named (Curr)</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {result.products.map((p, idx) => (
-                    <tr key={idx}>
-                      <td className="px-4 py-3 text-sm font-medium text-gray-900">{p.name}</td>
-                      <td className="px-4 py-3 text-sm text-center">
-                        <span className={`px-2 py-1 text-xs rounded-full ${
-                          p.type === 'Sum Insured'
-                            ? 'bg-purple-100 text-purple-800'
-                            : 'bg-blue-100 text-blue-800'
-                        }`}>
-                          {p.type}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-center text-gray-600">{p.prev_headcount}</td>
-                      <td className="px-4 py-3 text-sm text-center text-gray-600">{p.curr_headcount}</td>
-                      <td className="px-4 py-3 text-sm text-center text-gray-600">{p.prev_named}</td>
-                      <td className="px-4 py-3 text-sm text-center text-gray-600">{p.curr_named}</td>
-                    </tr>
-                  ))}
+                  {result.products.map((p, idx) => {
+                    const delta = (p.sheet_curr_rows ?? p.curr_headcount) - (p.sheet_prev_rows ?? p.prev_headcount);
+                    const prevRows = p.sheet_prev_rows ?? p.prev_headcount;
+                    const currRows = p.sheet_curr_rows ?? p.curr_headcount;
+                    return (
+                      <tr key={idx}>
+                        <td className="px-4 py-3 text-sm font-medium text-gray-900">{p.name}</td>
+                        <td className="px-4 py-3 text-sm text-center">
+                          <span className={`px-2 py-1 text-xs rounded-full ${
+                            p.type === 'Sum Insured'
+                              ? 'bg-purple-100 text-purple-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {p.type}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-center font-medium text-gray-800">{prevRows}</td>
+                        <td className="px-4 py-3 text-sm text-center font-medium text-gray-800">{currRows}</td>
+                        <td className="px-4 py-3 text-sm text-center">
+                          <span className={`font-semibold ${
+                            delta > 0 ? 'text-green-600' : delta < 0 ? 'text-red-600' : 'text-gray-500'
+                          }`}>
+                            {delta > 0 ? `+${delta}` : delta}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-center text-gray-500">{p.prev_named}</td>
+                        <td className="px-4 py-3 text-sm text-center text-gray-500">{p.curr_named}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

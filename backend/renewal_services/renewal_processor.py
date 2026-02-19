@@ -363,8 +363,8 @@ def _generate_product_sheet(
     curr_year: int,
     divisor: int,
     prev_rate: Optional[float] = None,
-):
-    """Generate a product adjustment sheet."""
+) -> Tuple[int, int]:
+    """Generate a product adjustment sheet. Returns (prev_rows, curr_rows) written."""
     sheet_name = product.name[:31]
     ws = wb.create_sheet(title=sheet_name)
 
@@ -499,7 +499,7 @@ def _generate_product_sheet(
     last_data_row = row_num - 1
 
     if last_data_row < data_start_row:
-        return
+        return len(prev_headcount), len(curr_headcount)
 
     row_num += 1
 
@@ -530,6 +530,8 @@ def _generate_product_sheet(
                   'G': 14, 'H': 18, 'I': 18, 'J': 18, 'K': 18, 'L': 18}
     for letter, width in col_widths.items():
         ws.column_dimensions[letter].width = width
+
+    return len(prev_headcount), len(curr_headcount)
 
 
 def _generate_summary_sheet(
@@ -805,15 +807,17 @@ def process_renewal_comparison(
         classification_changes, named_exclusions,
     )
 
+    sheet_row_counts = {}
     for product_name in all_product_names:
         product = products_map[product_name]
-        _generate_product_sheet(
+        result = _generate_product_sheet(
             out_wb, product,
             prev_employees, curr_employees,
             prev_year, curr_year,
             pro_rata_divisor,
             prev_rate=prev_rates_map.get(product_name),
         )
+        sheet_row_counts[product_name] = result if result else (0, 0)
 
     out_wb.save(output_path)
     out_wb.close()
@@ -837,6 +841,7 @@ def process_renewal_comparison(
                          if product_name in e.product_data
                          and e.product_data[product_name].get('admin_type', '').strip().lower() == 'named')
 
+        sheet_prev, sheet_curr = sheet_row_counts.get(product_name, (0, 0))
         product_summaries.append({
             'name': product_name,
             'type': 'Sum Insured' if product.product_type == 1 else 'Premium',
@@ -844,6 +849,8 @@ def process_renewal_comparison(
             'curr_headcount': curr_hc,
             'prev_named': prev_named,
             'curr_named': curr_named,
+            'sheet_prev_rows': sheet_prev,
+            'sheet_curr_rows': sheet_curr,
         })
 
     return {
