@@ -51,7 +51,6 @@ class EmployeeRecord:
     cost_centre: str
     department: str
     category: str = ''
-    terminated: bool = False  # row is highlighted as terminated/above-age in source
     product_data: Dict[str, dict] = field(default_factory=dict)
 
     def unique_key(self) -> str:
@@ -159,7 +158,7 @@ def _detect_products(ws) -> List[DetectedProduct]:
 
     merged_sections.sort(key=lambda x: x['col_start'])
 
-    # Pre-detect all "Type of Administration" columns (they sit just outside product sections)
+    # Pre-detect all "Type of Administration" columns (they sit just BEFORE each product section)
     admin_type_cols = []
     for col in range(1, ws.max_column + 1):
         header = _normalize(ws.cell(row=14, column=col).value).lower()
@@ -178,10 +177,10 @@ def _detect_products(ws) -> List[DetectedProduct]:
             col_end=section['col_end']
         )
 
-        # Assign admin type column: the first admin_type col that falls within
-        # 1-5 columns after the section end (it's always just outside the merged range)
+        # Assign admin type column: the admin_type col that falls within
+        # 1-4 columns BEFORE the section start (it precedes the product merged range)
         for atcol in admin_type_cols:
-            if section['col_end'] < atcol <= section['col_end'] + 5:
+            if section['col_start'] - 4 <= atcol < section['col_start']:
                 product.admin_type_col = atcol
                 break
 
@@ -236,86 +235,32 @@ def _detect_products(ws) -> List[DetectedProduct]:
     return products
 
 
-def _get_cell_fill_key(cell) -> Optional[tuple]:
-    """Return a comparable fill identifier for a cell's background color, or None."""
-    fill = cell.fill
-    if not fill or fill.fill_type in (None, 'none'):
-        return None
-    fg = fill.fgColor
-    if not fg or fg.type == 'auto':
-        return None
-    if fg.type == 'rgb':
-        rgb = fg.rgb
-        if rgb in ('00000000', 'FFFFFFFF', 'FF000000', '00FFFFFF'):
-            return None  # default/transparent
-        return ('rgb', rgb)
-    elif fg.type == 'theme':
-        return ('theme', fg.theme)  # match by theme index only
-    elif fg.type == 'indexed':
-        if fg.indexed in (64, 65):  # auto-fill sentinel values
-            return None
-        return ('indexed', fg.indexed)
-    return None
-
-
-def _detect_status_fills(ws) -> set:
-    """Read legend rows 11-12 to get fill keys used for excluded employees.
-
-    Row 11: Red  = Above Age or FCL
-    Row 12: Grey = Terminated
-    Both categories should be cancelled (appear in prev year block only) and
-    not re-enrolled (excluded from curr year block).
-    """
-    fills = set()
-    for legend_row in [11, 12]:
-        key = _get_cell_fill_key(ws.cell(row=legend_row, column=2))
-        if key:
-            fills.add(key)
-    logger.info(f"Status fill keys detected: {fills}")
-    return fills
-
 
 def _find_employee_columns(ws) -> dict:
-    """Find common employee data columns from row 14.
-
-    Scans two ranges:
-    - cols 1-20: employee section (name, dob, id, cost centre, dept, category)
-    - cols 1-40: also captures the employee-level admin_type column (~col 34,
-      between dependant section and the first product section). This is the
-      global "Headcount / Named Basis" column that overrides all product-level
-      admin types. Named employees at this level are excluded from ALL products.
-    """
+    """Find common employee data columns from row 14 (cols 1-20 only)."""
     col_map = {}
     name_fallback = None
 
-    for col in range(1, min(ws.max_column + 1, 40)):
+    for col in range(1, min(ws.max_column + 1, 21)):
         header = _normalize(ws.cell(row=14, column=col).value).lower()
         if not header:
             continue
 
-        # Employee section columns (cols 1-20 only)
-        if col <= 20:
-            if 'name' not in col_map and 'name' in header and ('surname' in header or 'first' in header):
-                col_map['name'] = col
-            elif name_fallback is None and 'name' in header and 'employee' not in header:
-                name_fallback = col
+        if 'name' not in col_map and 'name' in header and ('surname' in header or 'first' in header):
+            col_map['name'] = col
+        elif name_fallback is None and 'name' in header and 'employee' not in header:
+            name_fallback = col
 
-            if 'dob' not in col_map and ('date of birth' in header or header in ('dob', 'd.o.b', 'birth date', 'birthdate')):
-                col_map['dob'] = col
-            elif 'employee id' in header or 'emp id' in header or 'staff id' in header:
-                col_map['employee_id'] = col
-            elif 'cost centre' in header or 'cost center' in header:
-                col_map['cost_centre'] = col
-            elif 'department' in header:
-                col_map['department'] = col
-            elif 'category' in header and 'category' not in col_map:
-                col_map['category'] = col
-
-        # Employee-level admin type: first "Type of Administration" col before
-        # products start (cols 1-40). Product-specific ones are at 48+ so they
-        # won't be captured here.
-        if 'admin_type' not in col_map and 'type of administration' in header:
-            col_map['admin_type'] = col
+        if 'dob' not in col_map and ('date of birth' in header or header in ('dob', 'd.o.b', 'birth date', 'birthdate')):
+            col_map['dob'] = col
+        elif 'employee id' in header or 'emp id' in header or 'staff id' in header:
+            col_map['employee_id'] = col
+        elif 'cost centre' in header or 'cost center' in header:
+            col_map['cost_centre'] = col
+        elif 'department' in header:
+            col_map['department'] = col
+        elif 'category' in header and 'category' not in col_map:
+            col_map['category'] = col
 
     if 'name' not in col_map and name_fallback:
         col_map['name'] = name_fallback
@@ -373,32 +318,12 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> D
     employees = {}
     data_start = 15
 
-    # Detect fill colors used to mark terminated / above-age employees (legend rows 11-12)
-    status_fills = _detect_status_fills(ws)
-
-    named_skip_count = 0
     for row in range(data_start, ws.max_row + 1):
         name_val = _normalize(ws.cell(row=row, column=emp_cols.get('name', 2)).value)
         if not name_val:
             continue
 
-        # Skip employees on Named basis at the employee level (col ~34).
-        # These have a global "Named" designation that overrides all product-level
-        # admin types. The product-specific admin cols (48, 55, 62) may still show
-        # "Headcount" for these employees — that column should not be used for filtering.
-        if emp_cols.get('admin_type'):
-            emp_level_admin = _normalize(ws.cell(row=row, column=emp_cols['admin_type']).value).strip().lower()
-            if emp_level_admin == 'named':
-                named_skip_count += 1
-                continue
-
         dob_val = _normalize_date(ws.cell(row=row, column=emp_cols.get('dob', 8)).value)
-
-        # Detect if this row is highlighted as terminated / above-age via cell fill color
-        terminated = bool(
-            status_fills and
-            _get_cell_fill_key(ws.cell(row=row, column=2)) in status_fills
-        )
 
         emp = EmployeeRecord(
             name=name_val,
@@ -407,7 +332,6 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> D
             cost_centre=_normalize(ws.cell(row=row, column=emp_cols.get('cost_centre', 14)).value),
             department=_normalize(ws.cell(row=row, column=emp_cols.get('department', 15)).value),
             category=_normalize(ws.cell(row=row, column=emp_cols.get('category', 12)).value),
-            terminated=terminated,
         )
 
         for product in products:
@@ -435,7 +359,6 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> D
             # Same name+DOB appears twice — merge product data taking max values
             _merge_product_values(employees[key], emp)
 
-    logger.info(f"Skipped {named_skip_count} Named employees (employee-level admin type)")
     return _merge_family_rows(employees)
 
 
@@ -819,19 +742,6 @@ def process_renewal_comparison(
     # Extract employees
     prev_employees = _extract_employees(prev_ws, prev_products, prev_emp_cols)
     curr_employees = _extract_employees(curr_ws, curr_products, curr_emp_cols)
-
-    # Employees highlighted as terminated / above-age in the PREVIOUS year file
-    # should be cancelled (Renewal prev_year block) but NOT re-enrolled.
-    # The current year file may still list them if it wasn't cleaned up — remove them.
-    terminated_in_prev = {key for key, emp in prev_employees.items() if emp.terminated}
-    if terminated_in_prev:
-        removed = [k for k in terminated_in_prev if k in curr_employees]
-        for key in removed:
-            del curr_employees[key]
-        logger.info(
-            f"Removed {len(removed)} terminated/above-age employees from current year: "
-            + str([k.split('|')[0] for k in removed])
-        )
 
     logger.info(f"Previous year employees: {len(prev_employees)}")
     logger.info(f"Current year employees: {len(curr_employees)}")
