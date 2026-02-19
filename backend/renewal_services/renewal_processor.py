@@ -51,6 +51,7 @@ class EmployeeRecord:
     cost_centre: str
     department: str
     category: str = ''
+    terminated: bool = False  # row is highlighted as terminated/above-age in source
     product_data: Dict[str, dict] = field(default_factory=dict)
 
     def unique_key(self) -> str:
@@ -235,6 +236,45 @@ def _detect_products(ws) -> List[DetectedProduct]:
     return products
 
 
+def _get_cell_fill_key(cell) -> Optional[tuple]:
+    """Return a comparable fill identifier for a cell's background color, or None."""
+    fill = cell.fill
+    if not fill or fill.fill_type in (None, 'none'):
+        return None
+    fg = fill.fgColor
+    if not fg or fg.type == 'auto':
+        return None
+    if fg.type == 'rgb':
+        rgb = fg.rgb
+        if rgb in ('00000000', 'FFFFFFFF', 'FF000000', '00FFFFFF'):
+            return None  # default/transparent
+        return ('rgb', rgb)
+    elif fg.type == 'theme':
+        return ('theme', fg.theme)  # match by theme index only
+    elif fg.type == 'indexed':
+        if fg.indexed in (64, 65):  # auto-fill sentinel values
+            return None
+        return ('indexed', fg.indexed)
+    return None
+
+
+def _detect_status_fills(ws) -> set:
+    """Read legend rows 11-12 to get fill keys used for excluded employees.
+
+    Row 11: Red  = Above Age or FCL
+    Row 12: Grey = Terminated
+    Both categories should be cancelled (appear in prev year block only) and
+    not re-enrolled (excluded from curr year block).
+    """
+    fills = set()
+    for legend_row in [11, 12]:
+        key = _get_cell_fill_key(ws.cell(row=legend_row, column=2))
+        if key:
+            fills.add(key)
+    logger.info(f"Status fill keys detected: {fills}")
+    return fills
+
+
 def _find_employee_columns(ws) -> dict:
     """Find common employee data columns from row 14.
 
@@ -333,6 +373,9 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> D
     employees = {}
     data_start = 15
 
+    # Detect fill colors used to mark terminated / above-age employees (legend rows 11-12)
+    status_fills = _detect_status_fills(ws)
+
     named_skip_count = 0
     for row in range(data_start, ws.max_row + 1):
         name_val = _normalize(ws.cell(row=row, column=emp_cols.get('name', 2)).value)
@@ -351,6 +394,12 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> D
 
         dob_val = _normalize_date(ws.cell(row=row, column=emp_cols.get('dob', 8)).value)
 
+        # Detect if this row is highlighted as terminated / above-age via cell fill color
+        terminated = bool(
+            status_fills and
+            _get_cell_fill_key(ws.cell(row=row, column=2)) in status_fills
+        )
+
         emp = EmployeeRecord(
             name=name_val,
             dob=dob_val,
@@ -358,6 +407,7 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> D
             cost_centre=_normalize(ws.cell(row=row, column=emp_cols.get('cost_centre', 14)).value),
             department=_normalize(ws.cell(row=row, column=emp_cols.get('department', 15)).value),
             category=_normalize(ws.cell(row=row, column=emp_cols.get('category', 12)).value),
+            terminated=terminated,
         )
 
         for product in products:
@@ -769,6 +819,19 @@ def process_renewal_comparison(
     # Extract employees
     prev_employees = _extract_employees(prev_ws, prev_products, prev_emp_cols)
     curr_employees = _extract_employees(curr_ws, curr_products, curr_emp_cols)
+
+    # Employees highlighted as terminated / above-age in the PREVIOUS year file
+    # should be cancelled (Renewal prev_year block) but NOT re-enrolled.
+    # The current year file may still list them if it wasn't cleaned up — remove them.
+    terminated_in_prev = {key for key, emp in prev_employees.items() if emp.terminated}
+    if terminated_in_prev:
+        removed = [k for k in terminated_in_prev if k in curr_employees]
+        for key in removed:
+            del curr_employees[key]
+        logger.info(
+            f"Removed {len(removed)} terminated/above-age employees from current year: "
+            + str([k.split('|')[0] for k in removed])
+        )
 
     logger.info(f"Previous year employees: {len(prev_employees)}")
     logger.info(f"Current year employees: {len(curr_employees)}")
