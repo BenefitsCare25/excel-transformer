@@ -269,49 +269,6 @@ def _find_employee_columns(ws) -> dict:
     return col_map
 
 
-def _merge_product_values(target: EmployeeRecord, source: EmployeeRecord):
-    """Merge source product_data into target, keeping max value per product."""
-    for pname, pdata in source.product_data.items():
-        if pname not in target.product_data:
-            target.product_data[pname] = pdata
-        elif pdata.get('value') is not None:
-            existing_val = target.product_data[pname].get('value')
-            if existing_val is None or pdata['value'] > existing_val:
-                target.product_data[pname] = pdata
-
-
-def _merge_family_rows(employees: Dict[str, EmployeeRecord]) -> Dict[str, EmployeeRecord]:
-    """Merge spouse/dependant rows (no DOB) into the employee row (with DOB).
-
-    Source files have one row per family member. The spouse row has the total
-    family premium but no DOB. The unique_key differs because DOB is empty,
-    so they end up as separate entries. This merges them into the real employee
-    record, keeping the max value per product (family premium > EO premium).
-    """
-    # Build name → key map for employees who have a DOB (real employee rows)
-    name_to_key: Dict[str, str] = {}
-    for key, emp in employees.items():
-        if emp.dob:
-            name_norm = emp.name.upper().strip()
-            if name_norm not in name_to_key:
-                name_to_key[name_norm] = key
-
-    keys_to_remove = []
-    for key, emp in employees.items():
-        if emp.dob:
-            continue  # real employee row — skip
-        name_norm = emp.name.upper().strip()
-        target_key = name_to_key.get(name_norm)
-        if target_key and target_key in employees:
-            _merge_product_values(employees[target_key], emp)
-            keys_to_remove.append(key)
-
-    for key in keys_to_remove:
-        del employees[key]
-
-    logger.info(f"Merged {len(keys_to_remove)} family/dependant rows into employee records")
-    return employees
-
 
 def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> Dict[str, EmployeeRecord]:
     """Extract employee records with per-product data."""
@@ -356,10 +313,45 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> D
         if key not in employees:
             employees[key] = emp
         else:
-            # Same name+DOB appears twice — merge product data taking max values
-            _merge_product_values(employees[key], emp)
+            # Same name+DOB appears twice — keep max value per product
+            for pname, pdata in emp.product_data.items():
+                existing = employees[key].product_data
+                if pname not in existing:
+                    existing[pname] = pdata
+                elif pdata.get('value') is not None:
+                    ev = existing[pname].get('value')
+                    if ev is None or pdata['value'] > ev:
+                        existing[pname] = pdata
 
-    return _merge_family_rows(employees)
+    # Post-process: for family rows (no DOB), add type-2 (premium) product entries
+    # from the EO row if not already present. This handles products like Group Clinical
+    # where the family row has zero/None premium but still appears in the output.
+    # Type-1 (sum insured) products are excluded — only the employee is insured.
+    type2_names = {p.name for p in products if p.product_type == 2}
+    name_to_eo: Dict[str, EmployeeRecord] = {}
+    for emp in employees.values():
+        if emp.dob:
+            name_norm = emp.name.upper().strip()
+            if name_norm not in name_to_eo:
+                name_to_eo[name_norm] = emp
+
+    for emp in employees.values():
+        if emp.dob:
+            continue
+        eo_emp = name_to_eo.get(emp.name.upper().strip())
+        if not eo_emp:
+            continue
+        for pname in type2_names:
+            if pname in eo_emp.product_data and pname not in emp.product_data:
+                eo_pdata = eo_emp.product_data[pname]
+                if eo_pdata.get('admin_type', '').lower() != 'named':
+                    emp.product_data[pname] = {
+                        'admin_type': '',
+                        'category': eo_pdata.get('category', ''),
+                        'value': None,
+                    }
+
+    return employees
 
 
 def _generate_product_sheet(
@@ -416,11 +408,12 @@ def _generate_product_sheet(
         if not pdata:
             continue
         admin = pdata.get('admin_type', '').strip().lower()
-        # Exclude only explicitly "Named" employees; empty/headcount are both included
         if admin == 'named':
             continue
-        # Skip rows with no value (e.g. GMM NIL employees where admin_type is set but no premium)
-        if pdata.get('value') is None:
+        # Skip None-value rows unless it's a family row (no DOB) — family rows
+        # appear in all product sheets even with zero premium
+        is_family_row = not emp.dob
+        if pdata.get('value') is None and not is_family_row:
             continue
         prev_headcount.append((key, emp, pdata))
 
@@ -459,11 +452,18 @@ def _generate_product_sheet(
         if not pdata:
             continue
         admin = pdata.get('admin_type', '').strip().lower()
-        # Exclude only explicitly "Named" employees; empty/headcount are both included
         if admin == 'named':
-            continue
-        # Skip rows with no value (e.g. GMM NIL employees where admin_type is set but no premium)
-        if pdata.get('value') is None:
+            # Only exclude if Named in both years (permanent Named employee).
+            # If they were Headcount in prev year (classification change), include.
+            prev_emp = prev_employees.get(key)
+            if prev_emp is None:
+                continue  # new Named employee → exclude
+            prev_admin = prev_emp.product_data.get(product.name, {}).get('admin_type', '').strip().lower()
+            if prev_admin == 'named':
+                continue  # both years Named → exclude
+            # else: switched from HC to Named → include in both blocks
+        is_family_row = not emp.dob
+        if pdata.get('value') is None and not is_family_row:
             continue
         curr_headcount.append((key, emp, pdata))
 
