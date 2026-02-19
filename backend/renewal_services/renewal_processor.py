@@ -233,18 +233,31 @@ def _find_employee_columns(ws) -> dict:
     (dependant 'Name' and 'Date of Birth' headers appear around col 26-32).
     """
     col_map = {}
+    name_fallback = None
+
     for col in range(1, min(ws.max_column + 1, 20)):
         header = _normalize(ws.cell(row=14, column=col).value).lower()
+        if not header:
+            continue
+
         if 'name' not in col_map and 'name' in header and ('surname' in header or 'first' in header):
             col_map['name'] = col
-        elif 'dob' not in col_map and ('date of birth' in header):
+        elif name_fallback is None and 'name' in header and 'employee' not in header:
+            name_fallback = col
+
+        if 'dob' not in col_map and ('date of birth' in header or header in ('dob', 'd.o.b', 'birth date', 'birthdate')):
             col_map['dob'] = col
-        elif 'employee id' in header:
+        elif 'employee id' in header or 'emp id' in header or 'staff id' in header:
             col_map['employee_id'] = col
-        elif 'cost centre' in header:
+        elif 'cost centre' in header or 'cost center' in header:
             col_map['cost_centre'] = col
         elif 'department' in header:
             col_map['department'] = col
+
+    if 'name' not in col_map and name_fallback:
+        col_map['name'] = name_fallback
+
+    logger.info(f"Employee column map: {col_map}")
     return col_map
 
 
@@ -258,9 +271,8 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> D
         if not name_val:
             continue
 
-        dob_val = _normalize_date(ws.cell(row=row, column=emp_cols.get('dob', 8)).value)
-        if not dob_val:
-            continue
+        dob_val = _normalize_date(ws.cell(row=row, column=emp_cols.get('dob', 3)).value)
+        # DOB preferred but not required — fall back to empty string so the row isn't dropped
 
         emp = EmployeeRecord(
             name=name_val,
