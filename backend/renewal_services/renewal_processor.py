@@ -170,19 +170,35 @@ def _detect_products(ws) -> List[DetectedProduct]:
         )
 
         has_sum_insured = False
-        for col in range(section['col_start'], section['col_end'] + 1):
+        eligible_si_col = None
+        # Admin type column sits 1-3 cols before the product section; scan wider
+        scan_start = max(1, section['col_start'] - 3)
+
+        for col in range(scan_start, section['col_end'] + 1):
             header = _normalize(ws.cell(row=14, column=col).value).lower()
 
             if 'type of administration' in header or header == 'type':
                 product.admin_type_col = col
-            elif 'category' in header:
+
+            # Category and value cols must be within the product section
+            if col < section['col_start']:
+                continue
+
+            if 'category' in header:
                 product.category_col = col
-            elif 'sum insured' in header or 'eligible sum insured' in header:
-                product.value_col = col
+            elif 'eligible sum insured' in header:
+                eligible_si_col = col
+                has_sum_insured = True
+            elif 'sum insured' in header and 'pending' not in header:
+                if not eligible_si_col:
+                    product.value_col = col
                 has_sum_insured = True
             elif 'premium' in header and 'gst' not in header:
                 if not has_sum_insured:
                     product.value_col = col
+
+        if eligible_si_col:
+            product.value_col = eligible_si_col
 
         if has_sum_insured:
             product.product_type = 1
@@ -212,13 +228,16 @@ def _detect_products(ws) -> List[DetectedProduct]:
 
 
 def _find_employee_columns(ws) -> dict:
-    """Find common employee data columns from row 14."""
+    """Find common employee data columns from row 14.
+    Only scan up to col 20 to avoid picking up dependant section columns
+    (dependant 'Name' and 'Date of Birth' headers appear around col 26-32).
+    """
     col_map = {}
-    for col in range(1, min(ws.max_column + 1, 30)):
+    for col in range(1, min(ws.max_column + 1, 20)):
         header = _normalize(ws.cell(row=14, column=col).value).lower()
-        if 'name' in header and ('surname' in header or 'first' in header):
+        if 'name' not in col_map and 'name' in header and ('surname' in header or 'first' in header):
             col_map['name'] = col
-        elif header == 'date of birth' or 'date of birth' in header:
+        elif 'dob' not in col_map and ('date of birth' in header):
             col_map['dob'] = col
         elif 'employee id' in header:
             col_map['employee_id'] = col
