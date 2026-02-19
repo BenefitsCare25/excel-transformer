@@ -302,31 +302,35 @@ def _generate_product_sheet(
     curr_employees: Dict[str, EmployeeRecord],
     prev_year: int,
     curr_year: int,
-    divisor: int
+    divisor: int,
+    prev_rate: Optional[float] = None,
 ):
     """Generate a product adjustment sheet."""
     sheet_name = product.name[:31]
     ws = wb.create_sheet(title=sheet_name)
 
     is_type1 = product.product_type == 1
-    rate = product.premium_rate if is_type1 else None
+    # Use prev year rate for all rows to match reference convention
+    rate = (prev_rate or product.premium_rate) if is_type1 else None
 
-    col_h_label = f"{product.name} {prev_year}"
-    col_i_label = f"{product.name} {curr_year}"
-    col_j_label = f"{product.name} (difference)"
+    # Short product abbreviation for column headers
+    name = product.name
+    col_h_label = f"{name} {prev_year}"
+    col_i_label = f"{name} {curr_year}"
 
     if is_type1:
-        col_k_label = "Adj Rate Premium"
+        col_j_label = f"{name}\n(sum insured)"
+        col_k_label = f"{name} Annual Premium"
         col_l_label = "Adj Premium"
-        headers = ["Remarks", "Name (Surname, First Name)", "NRIC No. or FIN No.",
-                    "EMP ID", "Cost Centre", "Department", "Category",
-                    col_h_label, col_i_label, col_j_label, col_k_label, col_l_label]
     else:
-        col_k_label = "GST (9%)"
-        col_l_label = "Adj Premium"
-        headers = ["Remarks", "Name (Surname, First Name)", "NRIC No. or FIN No.",
-                    "EMP ID", "Cost Centre", "Department", "Category",
-                    col_h_label, col_i_label, col_j_label, col_k_label, col_l_label]
+        col_j_label = f"{name} Annual Premium"
+        col_k_label = "GST 9%"
+        col_l_label = "Adj Premium / 2"
+
+    headers = ["Remarks", "Name \n(Surname, First Name) ", "NRIC No. or FIN No.\n(eg. S1234567F)",
+                "EMP ID", "Cost Centre", "Department",
+                "Category                        \n(Pls Select Basis Accordingly)",
+                col_h_label, col_i_label, col_j_label, col_k_label, col_l_label]
 
     header_font = Font(bold=True, size=11)
     header_align = Alignment(wrap_text=True, vertical='center')
@@ -349,7 +353,8 @@ def _generate_product_sheet(
             continue
         prev_headcount.append((key, emp, pdata))
 
-    prev_headcount.sort(key=lambda x: x[1].name.upper())
+    # Sort by cost centre then name (matches reference grouping by department)
+    prev_headcount.sort(key=lambda x: (x[1].cost_centre or '', x[1].name.upper()))
 
     for key, emp, pdata in prev_headcount:
         ws.cell(row=row_num, column=1, value=f"Renewal {prev_year}")
@@ -363,8 +368,7 @@ def _generate_product_sheet(
         val = pdata.get('value')
         if val is not None:
             ws.cell(row=row_num, column=8, value=val)
-        # Col I empty for prev year
-        # Col J = I - H
+        # Col I empty for prev year; Col J = I - H
         ws.cell(row=row_num, column=10).value = f"=I{row_num}-H{row_num}"
 
         if is_type1 and rate:
@@ -389,7 +393,7 @@ def _generate_product_sheet(
             continue
         curr_headcount.append((key, emp, pdata))
 
-    curr_headcount.sort(key=lambda x: x[1].name.upper())
+    curr_headcount.sort(key=lambda x: (x[1].cost_centre or '', x[1].name.upper()))
 
     for key, emp, pdata in curr_headcount:
         ws.cell(row=row_num, column=1, value=f"Renewal {curr_year}")
@@ -400,11 +404,10 @@ def _generate_product_sheet(
         ws.cell(row=row_num, column=6, value=emp.department)
         ws.cell(row=row_num, column=7, value=pdata.get('category', ''))
 
-        # Col H empty for curr year
+        # Col H empty for curr year; Col J = I - H
         val = pdata.get('value')
         if val is not None:
             ws.cell(row=row_num, column=9, value=val)
-        # Col J = I - H
         ws.cell(row=row_num, column=10).value = f"=I{row_num}-H{row_num}"
 
         if is_type1 and rate:
@@ -426,31 +429,28 @@ def _generate_product_sheet(
 
     row_num += 1
 
+    bold_font = Font(bold=True)
     if is_type1:
-        ws.cell(row=row_num, column=1, value="Adjustment Breakdown")
-        ws.cell(row=row_num, column=1).font = Font(bold=True)
+        ws.cell(row=row_num, column=11, value="Adjustment Breakdown").font = bold_font
         ws.cell(row=row_num, column=12).value = f"=SUM(L{data_start_row}:L{last_data_row})"
         ws.cell(row=row_num, column=12).number_format = ACCOUNTING_FORMAT
-        ws.cell(row=row_num, column=12).font = Font(bold=True)
+        ws.cell(row=row_num, column=12).font = bold_font
     else:
-        ws.cell(row=row_num, column=1, value="Adjustment Premium")
-        ws.cell(row=row_num, column=1).font = Font(bold=True)
+        ws.cell(row=row_num, column=11, value="Adjustment Premium").font = bold_font
         ws.cell(row=row_num, column=12).value = f"=SUM(L{data_start_row}:L{last_data_row})"
         ws.cell(row=row_num, column=12).number_format = ACCOUNTING_FORMAT
-        ws.cell(row=row_num, column=12).font = Font(bold=True)
+        ws.cell(row=row_num, column=12).font = bold_font
 
         row_num += 1
-        ws.cell(row=row_num, column=1, value="GST (9%)")
-        ws.cell(row=row_num, column=1).font = Font(bold=True)
+        ws.cell(row=row_num, column=11, value="GST").font = bold_font
         ws.cell(row=row_num, column=12).value = f"=L{row_num-1}*0.09"
         ws.cell(row=row_num, column=12).number_format = ACCOUNTING_FORMAT
 
         row_num += 1
-        ws.cell(row=row_num, column=1, value="Adjustment Premium with GST")
-        ws.cell(row=row_num, column=1).font = Font(bold=True)
+        ws.cell(row=row_num, column=11, value="Adjustment Premium with GST").font = bold_font
         ws.cell(row=row_num, column=12).value = f"=L{row_num-2}+L{row_num-1}"
         ws.cell(row=row_num, column=12).number_format = ACCOUNTING_FORMAT
-        ws.cell(row=row_num, column=12).font = Font(bold=True)
+        ws.cell(row=row_num, column=12).font = bold_font
 
     col_widths = {'A': 18, 'B': 30, 'C': 18, 'D': 12, 'E': 14, 'F': 20,
                   'G': 14, 'H': 18, 'I': 18, 'J': 18, 'K': 18, 'L': 18}
@@ -646,12 +646,16 @@ def process_renewal_comparison(
         wb2.close()
         raise ValueError("No products detected in either file. Check row 13/14 headers.")
 
-    # Use current year products as primary, fall back to previous
+    # Use current year products as primary for structure; track prev rates separately
     products_map = {}
+    prev_rates_map: Dict[str, Optional[float]] = {}
     for p in prev_products:
         products_map[p.name] = p
+        prev_rates_map[p.name] = p.premium_rate
     for p in curr_products:
         products_map[p.name] = p
+        if p.name not in prev_rates_map:
+            prev_rates_map[p.name] = p.premium_rate
 
     all_product_names = list(products_map.keys())
     logger.info(f"Products detected: {all_product_names}")
@@ -733,6 +737,7 @@ def process_renewal_comparison(
             prev_employees, curr_employees,
             prev_year, curr_year,
             pro_rata_divisor,
+            prev_rate=prev_rates_map.get(product_name),
         )
 
     out_wb.save(output_path)
