@@ -157,6 +157,13 @@ def _detect_products(ws) -> List[DetectedProduct]:
 
     merged_sections.sort(key=lambda x: x['col_start'])
 
+    # Pre-detect all "Type of Administration" columns (they sit just outside product sections)
+    admin_type_cols = []
+    for col in range(1, ws.max_column + 1):
+        header = _normalize(ws.cell(row=14, column=col).value).lower()
+        if 'type of administration' in header:
+            admin_type_cols.append(col)
+
     for section in merged_sections:
         name_lower = section['name'].lower()
         if any(skip in name_lower for skip in SKIP_SECTIONS):
@@ -169,19 +176,19 @@ def _detect_products(ws) -> List[DetectedProduct]:
             col_end=section['col_end']
         )
 
+        # Assign admin type column: the first admin_type col that falls within
+        # 1-5 columns after the section end (it's always just outside the merged range)
+        for atcol in admin_type_cols:
+            if section['col_end'] < atcol <= section['col_end'] + 5:
+                product.admin_type_col = atcol
+                break
+
         has_sum_insured = False
         eligible_si_col = None
-        # Admin type column sits 1-3 cols before the product section; scan wider
-        scan_start = max(1, section['col_start'] - 3)
 
-        for col in range(scan_start, section['col_end'] + 1):
+        for col in range(section['col_start'], section['col_end'] + 1):
             header = _normalize(ws.cell(row=14, column=col).value).lower()
-
-            if 'type of administration' in header or header == 'type':
-                product.admin_type_col = col
-
-            # Category and value cols must be within the product section
-            if col < section['col_start']:
+            if not header:
                 continue
 
             if 'category' in header:
@@ -271,7 +278,7 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> D
         if not name_val:
             continue
 
-        dob_val = _normalize_date(ws.cell(row=row, column=emp_cols.get('dob', 3)).value)
+        dob_val = _normalize_date(ws.cell(row=row, column=emp_cols.get('dob', 8)).value)
         # DOB preferred but not required — fall back to empty string so the row isn't dropped
 
         emp = EmployeeRecord(
@@ -361,7 +368,8 @@ def _generate_product_sheet(
         if not pdata:
             continue
         admin = pdata.get('admin_type', '').strip().lower()
-        if admin != 'headcount':
+        # Exclude only explicitly "Named" employees; empty/headcount are both included
+        if admin == 'named':
             continue
         prev_headcount.append((key, emp, pdata))
 
@@ -401,7 +409,8 @@ def _generate_product_sheet(
         if not pdata:
             continue
         admin = pdata.get('admin_type', '').strip().lower()
-        if admin != 'headcount':
+        # Exclude only explicitly "Named" employees; empty/headcount are both included
+        if admin == 'named':
             continue
         curr_headcount.append((key, emp, pdata))
 
@@ -510,12 +519,13 @@ def _generate_summary_sheet(
 
     for product in products:
         ptype = "Sum Insured" if product.product_type == 1 else "Premium"
+        # Headcount = all with the product who are not explicitly 'named'
         prev_hc = sum(1 for e in prev_employees.values()
                       if product.name in e.product_data
-                      and e.product_data[product.name].get('admin_type', '').strip().lower() == 'headcount')
+                      and e.product_data[product.name].get('admin_type', '').strip().lower() != 'named')
         curr_hc = sum(1 for e in curr_employees.values()
                       if product.name in e.product_data
-                      and e.product_data[product.name].get('admin_type', '').strip().lower() == 'headcount')
+                      and e.product_data[product.name].get('admin_type', '').strip().lower() != 'named')
         prev_named = sum(1 for e in prev_employees.values()
                          if product.name in e.product_data
                          and e.product_data[product.name].get('admin_type', '').strip().lower() == 'named')
@@ -763,10 +773,10 @@ def process_renewal_comparison(
         product = products_map[product_name]
         prev_hc = sum(1 for e in prev_employees.values()
                       if product_name in e.product_data
-                      and e.product_data[product_name].get('admin_type', '').strip().lower() == 'headcount')
+                      and e.product_data[product_name].get('admin_type', '').strip().lower() != 'named')
         curr_hc = sum(1 for e in curr_employees.values()
                       if product_name in e.product_data
-                      and e.product_data[product_name].get('admin_type', '').strip().lower() == 'headcount')
+                      and e.product_data[product_name].get('admin_type', '').strip().lower() != 'named')
         prev_named = sum(1 for e in prev_employees.values()
                          if product_name in e.product_data
                          and e.product_data[product_name].get('admin_type', '').strip().lower() == 'named')
