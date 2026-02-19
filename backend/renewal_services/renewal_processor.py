@@ -50,6 +50,7 @@ class EmployeeRecord:
     employee_id: str
     cost_centre: str
     department: str
+    category: str = ''
     product_data: Dict[str, dict] = field(default_factory=dict)
 
     def unique_key(self) -> str:
@@ -260,6 +261,8 @@ def _find_employee_columns(ws) -> dict:
             col_map['cost_centre'] = col
         elif 'department' in header:
             col_map['department'] = col
+        elif 'category' in header and 'category' not in col_map:
+            col_map['category'] = col
 
     if 'name' not in col_map and name_fallback:
         col_map['name'] = name_fallback
@@ -287,6 +290,7 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> D
             employee_id=_normalize(ws.cell(row=row, column=emp_cols.get('employee_id', 13)).value),
             cost_centre=_normalize(ws.cell(row=row, column=emp_cols.get('cost_centre', 14)).value),
             department=_normalize(ws.cell(row=row, column=emp_cols.get('department', 15)).value),
+            category=_normalize(ws.cell(row=row, column=emp_cols.get('category', 12)).value),
         )
 
         for product in products:
@@ -310,6 +314,16 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> D
         key = emp.unique_key()
         if key not in employees:
             employees[key] = emp
+        else:
+            # Merge product data: for employees with dependant rows, take the max
+            # value per product (family premium > employee-only premium)
+            for pname, pdata in emp.product_data.items():
+                if pname not in employees[key].product_data:
+                    employees[key].product_data[pname] = pdata
+                elif pdata.get('value') is not None:
+                    existing_val = employees[key].product_data[pname].get('value')
+                    if existing_val is None or pdata['value'] > existing_val:
+                        employees[key].product_data[pname] = pdata
 
     return employees
 
@@ -371,10 +385,12 @@ def _generate_product_sheet(
         # Exclude only explicitly "Named" employees; empty/headcount are both included
         if admin == 'named':
             continue
+        # Skip rows with no value (e.g. GMM NIL employees where admin_type is set but no premium)
+        if pdata.get('value') is None:
+            continue
         prev_headcount.append((key, emp, pdata))
 
-    # Sort by cost centre then name (matches reference grouping by department)
-    prev_headcount.sort(key=lambda x: (x[1].cost_centre or '', x[1].name.upper()))
+    prev_headcount.sort(key=lambda x: (x[1].department.lower(), x[1].name.upper()))
 
     for key, emp, pdata in prev_headcount:
         ws.cell(row=row_num, column=1, value=f"Renewal {prev_year}")
@@ -383,7 +399,7 @@ def _generate_product_sheet(
         ws.cell(row=row_num, column=4, value=emp.employee_id)
         ws.cell(row=row_num, column=5, value=emp.cost_centre)
         ws.cell(row=row_num, column=6, value=emp.department)
-        ws.cell(row=row_num, column=7, value=pdata.get('category', ''))
+        ws.cell(row=row_num, column=7, value=emp.category)
 
         val = pdata.get('value')
         if val is not None:
@@ -412,9 +428,12 @@ def _generate_product_sheet(
         # Exclude only explicitly "Named" employees; empty/headcount are both included
         if admin == 'named':
             continue
+        # Skip rows with no value (e.g. GMM NIL employees where admin_type is set but no premium)
+        if pdata.get('value') is None:
+            continue
         curr_headcount.append((key, emp, pdata))
 
-    curr_headcount.sort(key=lambda x: (x[1].cost_centre or '', x[1].name.upper()))
+    curr_headcount.sort(key=lambda x: (x[1].department.lower(), x[1].name.upper()))
 
     for key, emp, pdata in curr_headcount:
         ws.cell(row=row_num, column=1, value=f"Renewal {curr_year}")
@@ -423,7 +442,7 @@ def _generate_product_sheet(
         ws.cell(row=row_num, column=4, value=emp.employee_id)
         ws.cell(row=row_num, column=5, value=emp.cost_centre)
         ws.cell(row=row_num, column=6, value=emp.department)
-        ws.cell(row=row_num, column=7, value=pdata.get('category', ''))
+        ws.cell(row=row_num, column=7, value=emp.category)
 
         # Col H empty for curr year; Col J = I - H
         val = pdata.get('value')
