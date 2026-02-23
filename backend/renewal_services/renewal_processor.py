@@ -177,12 +177,11 @@ def _detect_products(ws) -> List[DetectedProduct]:
             col_end=section['col_end']
         )
 
-        # Assign admin type column: the admin_type col that falls within
-        # 1-4 columns BEFORE the section start (it precedes the product merged range)
-        for atcol in admin_type_cols:
-            if section['col_start'] - 4 <= atcol < section['col_start']:
-                product.admin_type_col = atcol
-                break
+        # Assign admin type column: nearest admin_type col to the left of this
+        # section (handles both per-product and shared employee-level admin columns)
+        candidates = [c for c in admin_type_cols if c < section['col_start']]
+        if candidates:
+            product.admin_type_col = max(candidates)
 
         has_sum_insured = False
         eligible_si_col = None
