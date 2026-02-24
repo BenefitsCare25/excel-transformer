@@ -1,0 +1,47 @@
+{
+  "template_name": "GP Panel Comparison",
+  "slug": "gp_panel",
+  "description": "Compares GP clinic panel lists across two files to identify additions, removals, and operating hour changes.",
+  "sheet_config": {
+    "file_a_sheet": "GP",
+    "file_b_sheet": "GP",
+    "header_row": 0
+  },
+  "column_mapping": {
+    "unique_key": ["Provider Code"],
+    "compare_fields": ["Clinic Name", "Address", "Tel", "Operating Hours", "Saturday Hours", "Sunday Hours"],
+    "formula_fields": {},
+    "ignored_fields": [],
+    "display_fields": ["Provider Code", "Clinic Name", "Address"]
+  },
+  "rules": [
+    {
+      "rule_type": "ROW_MATCH",
+      "config": {
+        "method": "exact",
+        "fuzzy_threshold": 0.8
+      }
+    },
+    {
+      "rule_type": "PRESENCE_RULE",
+      "config": {
+        "only_in_file_b": {"outcome_label": "Panel Addition", "color": "#C6EFCE"},
+        "only_in_file_a": {"outcome_label": "Panel Removal", "color": "#FFC7CE"}
+      }
+    },
+    {
+      "rule_type": "CHANGE_RULE",
+      "config": {
+        "fields": ["Clinic Name", "Address", "Tel", "Operating Hours"],
+        "outcome_label": "Info Changed",
+        "color": "#FFEB9C"
+      }
+    }
+  ],
+  "output_config": {
+    "add_remarks_column": true,
+    "include_summary_sheet": true,
+    "highlight_changed_cells": true,
+    "output_filename_template": "GP_Panel_Comparison_{date}"
+  }
+}

@@ -62,6 +62,9 @@ load_dotenv()
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
 
+from intelligence import intel_bp
+app.register_blueprint(intel_bp)
+
 # Configuration
 UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'uploads')
 PROCESSED_FOLDER = os.getenv('PROCESSED_FOLDER', 'processed')

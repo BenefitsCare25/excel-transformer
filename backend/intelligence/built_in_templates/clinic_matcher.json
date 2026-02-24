@@ -1,0 +1,47 @@
+{
+  "template_name": "Clinic Matcher",
+  "slug": "clinic_matcher",
+  "description": "Fuzzy-matches clinic lists to identify panel coverage gaps.",
+  "sheet_config": {
+    "file_a_sheet": "Panel List",
+    "file_b_sheet": "Panel List",
+    "header_row": 0
+  },
+  "column_mapping": {
+    "unique_key": ["Clinic Name"],
+    "compare_fields": ["Address", "Postal Code", "Tel", "Panel Type"],
+    "formula_fields": {},
+    "ignored_fields": [],
+    "display_fields": ["Clinic Name", "Address", "Postal Code"]
+  },
+  "rules": [
+    {
+      "rule_type": "ROW_MATCH",
+      "config": {
+        "method": "fuzzy",
+        "fuzzy_threshold": 0.6
+      }
+    },
+    {
+      "rule_type": "PRESENCE_RULE",
+      "config": {
+        "only_in_file_b": {"outcome_label": "New Panel Clinic", "color": "#C6EFCE"},
+        "only_in_file_a": {"outcome_label": "Panel Gap (Not in New List)", "color": "#FFC7CE"}
+      }
+    },
+    {
+      "rule_type": "CHANGE_RULE",
+      "config": {
+        "fields": ["Address", "Postal Code", "Tel"],
+        "outcome_label": "Details Changed",
+        "color": "#FFEB9C"
+      }
+    }
+  ],
+  "output_config": {
+    "add_remarks_column": true,
+    "include_summary_sheet": true,
+    "highlight_changed_cells": true,
+    "output_filename_template": "Clinic_Comparison_{date}"
+  }
+}

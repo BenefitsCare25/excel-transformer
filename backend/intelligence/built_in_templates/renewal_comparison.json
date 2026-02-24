@@ -1,0 +1,48 @@
+{
+  "template_name": "Renewal Comparison",
+  "slug": "renewal_comparison",
+  "description": "Compares insurance renewal files to identify plan changes, premium differences, and employee movements.",
+  "sheet_config": {
+    "file_a_sheet": "Employee Listing",
+    "file_b_sheet": "Employee Listing",
+    "header_row": 0
+  },
+  "column_mapping": {
+    "unique_key": ["NRIC", "Staff ID"],
+    "compare_fields": ["Employee Name", "Plan", "Product", "Premium", "Sum Insured", "Category"],
+    "formula_fields": {},
+    "ignored_fields": [],
+    "display_fields": ["NRIC", "Staff ID", "Employee Name"]
+  },
+  "rules": [
+    {
+      "rule_type": "PRESENCE_RULE",
+      "config": {
+        "only_in_file_b": {"outcome_label": "Addition", "color": "#C6EFCE"},
+        "only_in_file_a": {"outcome_label": "Deletion", "color": "#FFC7CE"}
+      }
+    },
+    {
+      "rule_type": "CHANGE_RULE",
+      "config": {
+        "fields": ["Plan", "Product", "Premium", "Sum Insured"],
+        "outcome_label": "Plan Changed",
+        "color": "#FFEB9C"
+      }
+    },
+    {
+      "rule_type": "CHANGE_RULE",
+      "config": {
+        "fields": ["Category"],
+        "outcome_label": "Category Changed",
+        "color": "#FCE4D6"
+      }
+    }
+  ],
+  "output_config": {
+    "add_remarks_column": true,
+    "include_summary_sheet": true,
+    "highlight_changed_cells": true,
+    "output_filename_template": "Renewal_Comparison_{date}"
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "template_name": "Mediacorp Employee ADC",
+  "slug": "mediacorp_el",
+  "description": "Compares Mediacorp employee listing files to generate ADC additions/deletions.",
+  "sheet_config": {
+    "file_a_sheet": "Employee Listing",
+    "file_b_sheet": "Employee Listing",
+    "header_row": 0
+  },
+  "column_mapping": {
+    "unique_key": ["Staff ID"],
+    "compare_fields": ["Entity", "Employee Name", "NRIC / FIN", "Category", "Grade", "Department", "Last Day of Service"],
+    "formula_fields": {},
+    "ignored_fields": [],
+    "display_fields": ["Staff ID", "Employee Name", "Entity"]
+  },
+  "rules": [
+    {
+      "rule_type": "PRESENCE_RULE",
+      "config": {
+        "only_in_file_b": {"outcome_label": "Addition", "color": "#C6EFCE"},
+        "only_in_file_a": {"outcome_label": "Deletion", "color": "#FFC7CE"}
+      }
+    },
+    {
+      "rule_type": "CONDITION_RULE",
+      "config": {
+        "conditions": [
+          {"field": "Last Day of Service", "operator": "is_not_empty"},
+          {"field": "Category", "operator": "is_empty"}
+        ],
+        "condition_join": "AND",
+        "outcome_label": "Deletion wef {Last Day of Service}",
+        "color": "#FFC7CE"
+      }
+    },
+    {
+      "rule_type": "CONDITION_RULE",
+      "config": {
+        "conditions": [
+          {"field": "NRIC / FIN", "operator": "changed_from_pattern", "value": "^[A-Z][0-9]{7}[A-Z]$"},
+          {"field": "NRIC / FIN", "operator": "changed_to_pattern", "value": "^[A-Z][0-9]{7}[A-Z]$"}
+        ],
+        "condition_join": "AND",
+        "outcome_label": "FIN → NRIC conversion for {Employee Name}",
+        "color": "#FFEB9C"
+      }
+    },
+    {
+      "rule_type": "CHANGE_RULE",
+      "config": {
+        "fields": ["Entity", "Category", "Grade", "Department"],
+        "outcome_label": "Changed",
+        "color": "#FFEB9C"
+      }
+    }
+  ],
+  "output_config": {
+    "add_remarks_column": true,
+    "include_summary_sheet": true,
+    "highlight_changed_cells": true,
+    "output_filename_template": "Mediacorp_ADC_{date}"
+  }
+}
