@@ -1708,6 +1708,12 @@ class ExcelTransformer:
             # Clinic ID with smart fallback
             if 'clinic_id' in col_map:
                 df_transformed['Code'] = df_source[col_map['clinic_id']]
+                # If Code column contains zone names instead of real IDs, replace with sequential S/N
+                _zone_kw = {'NORTH', 'SOUTH', 'EAST', 'WEST', 'CENTRAL', 'NORTHEAST', 'NORTHWEST', 'SOUTHEAST', 'SOUTHWEST'}
+                _code_vals = df_transformed['Code'].dropna().astype(str).str.upper().str.strip()
+                if len(_code_vals) > 0 and _code_vals.apply(lambda v: v in _zone_kw).mean() > 0.5:
+                    df_transformed['Code'] = range(1, len(df_transformed) + 1)
+                    logger.info(f"Code column detected as zone values — replaced with sequential S/N 1-{len(df_transformed)}")
             else:
                 df_transformed['Code'] = ExcelTransformer.smart_column_fallback(df_source, col_map, 'clinic_id')
                 logger.info(f"Generated auto clinic IDs for {len(df_source)} records")
