@@ -8,7 +8,6 @@ const ROLE_LABELS = {
 };
 
 function ColumnChip({ col, role, onRoleChange }) {
-  const roleInfo = ROLE_LABELS[role] || ROLE_LABELS.display_fields;
   const colorClass = {
     blue: 'bg-blue-100 border-blue-300 text-blue-800',
     green: 'bg-green-100 border-green-300 text-green-800',
@@ -89,7 +88,7 @@ export default function Step3_ColumnMapper({ wizard }) {
       allColumns.forEach(col => { next[col.name] = prev[col.name] || 'display_fields'; });
       return next;
     });
-  }, [selectedSheet?.name]);
+  }, [selectedSheet?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRoleChange = (colName, newRole) => {
     setRoleMap(prev => ({ ...prev, [colName]: newRole }));

@@ -1,9 +1,9 @@
 import React from 'react';
-import Step1_Upload from './Step1_Upload';
-import Step2_SheetSelector from './Step2_SheetSelector';
-import Step3_ColumnMapper from './Step3_ColumnMapper';
-import Step4_RuleBuilder from './Step4_RuleBuilder';
-import Step5_OutputConfig from './Step5_OutputConfig';
+import StepUpload from './Step1_Upload';
+import StepSheetSelector from './Step2_SheetSelector';
+import StepColumnMapper from './Step3_ColumnMapper';
+import StepRuleBuilder from './Step4_RuleBuilder';
+import StepOutputConfig from './Step5_OutputConfig';
 
 const STEPS = [
   { num: 1, label: 'Upload' },
@@ -54,11 +54,11 @@ export default function WizardContainer({ wizard, aiConfig }) {
     <div>
       <StepIndicator currentStep={state.step} onGoTo={goToStep} />
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-        {state.step === 1 && <Step1_Upload {...stepProps} />}
-        {state.step === 2 && <Step2_SheetSelector {...stepProps} />}
-        {state.step === 3 && <Step3_ColumnMapper {...stepProps} />}
-        {state.step === 4 && <Step4_RuleBuilder {...stepProps} />}
-        {state.step === 5 && <Step5_OutputConfig {...stepProps} />}
+        {state.step === 1 && <StepUpload {...stepProps} />}
+        {state.step === 2 && <StepSheetSelector {...stepProps} />}
+        {state.step === 3 && <StepColumnMapper {...stepProps} />}
+        {state.step === 4 && <StepRuleBuilder {...stepProps} />}
+        {state.step === 5 && <StepOutputConfig {...stepProps} />}
       </div>
     </div>
   );

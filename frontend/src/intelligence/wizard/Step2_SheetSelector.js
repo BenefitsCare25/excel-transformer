@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { aiSuggestTemplate, getTemplate } from '../services/intelApi';
+import React, { useEffect, useMemo, useState } from 'react';
+import { getTemplate } from '../services/intelApi';
 import AISuggestionBanner from '../ai/AISuggestionBanner';
 
 function SheetCard({ sheet, selected, onSelect }) {
@@ -38,8 +38,8 @@ function SheetCard({ sheet, selected, onSelect }) {
 export default function Step2_SheetSelector({ wizard, aiConfig }) {
   const { state, update } = wizard;
   const analysis = state.analysis || {};
-  const sheetsA = analysis.file_a?.sheets || [];
-  const sheetsB = analysis.file_b?.sheets || [];
+  const sheetsA = useMemo(() => analysis.file_a?.sheets || [], [analysis.file_a]);
+  const sheetsB = useMemo(() => analysis.file_b?.sheets || [], [analysis.file_b]);
   const hasBothFiles = sheetsB.length > 0;
 
   const [suggestion, setSuggestion] = useState(null);
@@ -59,7 +59,7 @@ export default function Step2_SheetSelector({ wizard, aiConfig }) {
     if (sheetsA.length > 0 && !state.selectedSheets.file_a) {
       update({ selectedSheets: { file_a: sheetsA[0].name, file_b: sheetsB[0]?.name || sheetsA[0].name } });
     }
-  }, [sheetsA, sheetsB]);
+  }, [sheetsA, sheetsB, state.selectedSheets.file_a, update]);
 
   const handleApplyTemplate = async (slug) => {
     try {
