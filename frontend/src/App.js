@@ -5,12 +5,11 @@ import ClinicMatcher from './components/ClinicMatcher';
 import MediacorpProcessor from './components/MediacorpProcessor';
 import GPPanelComparison from './components/GPPanelComparison';
 import RenewalComparison from './components/RenewalComparison';
-import IntelligencePlatform from './intelligence/IntelligencePlatform';
 import apiService from './services/api';
 import './index.css';
 
 function App() {
-  const [activeTab, setActiveTab] = useState('transformer'); // 'transformer', 'matcher', 'mediacorp', 'gppanel', 'renewal', or 'intelligence'
+  const [activeTab, setActiveTab] = useState('transformer'); // 'transformer', 'matcher', 'mediacorp', 'gppanel', 'renewal'
   const [processingStatus, setProcessingStatus] = useState('idle');
   const [result, setResult] = useState(null);
   const [backendHealth, setBackendHealth] = useState(null);
@@ -218,16 +217,6 @@ function App() {
               }`}
             >
               Renewal Comparison
-            </button>
-            <button
-              onClick={() => setActiveTab('intelligence')}
-              className={`px-6 py-2 font-medium rounded-lg transition-colors ${
-                activeTab === 'intelligence'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
-              }`}
-            >
-              ✨ Intelligence
             </button>
           </div>
         </header>
@@ -463,11 +452,6 @@ function App() {
             <>
               {/* Renewal Comparison Component */}
               <RenewalComparison />
-            </>
-          ) : activeTab === 'intelligence' ? (
-            <>
-              {/* Intelligence Platform */}
-              <IntelligencePlatform />
             </>
           ) : (
             <>
