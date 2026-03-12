@@ -491,7 +491,7 @@ def _generate_product_sheet(
     prev_rate: Optional[float] = None,
 ) -> Tuple[int, int]:
     """Generate a product adjustment sheet. Returns (prev_rows, curr_rows) written."""
-    sheet_name = product.name[:31]
+    sheet_name = re.sub(r'[\\/*?:\[\]&]', '', product.name)[:31]
     ws = wb.create_sheet(title=sheet_name)
 
     is_type1 = product.product_type == 1
