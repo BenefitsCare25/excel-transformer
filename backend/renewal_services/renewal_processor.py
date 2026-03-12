@@ -140,24 +140,29 @@ def _to_float(value) -> Optional[float]:
 
 
 def _detect_year(ws) -> Optional[int]:
-    """Detect year from row 12 date values or cell H12."""
-    for col in range(1, ws.max_column + 1):
-        val = ws.cell(row=12, column=col).value
+    """Detect policy year from row 12 date values. Only accepts years 2000-2100
+    to avoid false matches from legacy Excel serial dates or inception dates."""
+
+    def _year_from_val(val) -> Optional[int]:
         if isinstance(val, datetime):
-            return val.year
-        if val and re.search(r'20\d{2}', str(val)):
+            if 2000 <= val.year <= 2100:
+                return val.year
+            return None  # skip dates outside policy year range (e.g. 1974 serial misreads)
+        if val:
             match = re.search(r'(20\d{2})', str(val))
             if match:
                 return int(match.group(1))
+        return None
+
+    for col in range(1, ws.max_column + 1):
+        year = _year_from_val(ws.cell(row=12, column=col).value)
+        if year:
+            return year
     for row in [11, 13, 10]:
         for col in range(1, min(ws.max_column + 1, 30)):
-            val = ws.cell(row=row, column=col).value
-            if isinstance(val, datetime):
-                return val.year
-            if val and re.search(r'20\d{2}', str(val)):
-                match = re.search(r'(20\d{2})', str(val))
-                if match:
-                    return int(match.group(1))
+            year = _year_from_val(ws.cell(row=row, column=col).value)
+            if year:
+                return year
     return None
 
 
