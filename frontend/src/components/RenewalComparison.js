@@ -2,6 +2,18 @@ import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import apiService from '../services/api';
 
+const PRODUCTS = [
+  { abbr: 'GTL', name: 'Group Term Life',                          type: 1 },
+  { abbr: 'GDD', name: 'Group Dread Disease',                      type: 1 },
+  { abbr: 'GPA', name: 'Group Personal Accident',                  type: 1 },
+  { abbr: 'GDI', name: 'Group Disability Income Benefit',          type: 1 },
+  { abbr: 'GHS', name: 'Group Hospital & Surgical',                type: 2 },
+  { abbr: 'GMM', name: 'Group Major Medical',                      type: 2 },
+  { abbr: 'GP',  name: 'Group Clinical General Practitioner',      type: 2 },
+  { abbr: 'SP',  name: 'Group Clinical Specialist Insurance',      type: 2 },
+  { abbr: 'GD',  name: 'Group Dental Insurance',                   type: 2 },
+];
+
 const FileUploadBox = ({ label, description, file, onDrop, isProcessing }) => {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -54,6 +66,7 @@ const RenewalComparison = () => {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [showNamed, setShowNamed] = useState(false);
+  const [showRequirements, setShowRequirements] = useState(false);
 
   const handleFile1Drop = useCallback((acceptedFiles) => {
     if (acceptedFiles.length > 0) {
@@ -120,16 +133,138 @@ const RenewalComparison = () => {
 
   return (
     <div className="space-y-6">
-      {/* Instructions Card */}
+      {/* Header Card */}
       <div className="card">
         <div className="mb-4">
-          <h2 className="text-xl font-semibold text-gray-800 mb-2">
-            Renewal Comparison
-          </h2>
+          <h2 className="text-xl font-semibold text-gray-800 mb-1">Renewal Comparison</h2>
           <p className="text-sm text-gray-600">
-            Compare insurance renewal listing files between two years to generate an Adjustment Breakdown report.
-            Auto-detects products and year from file headers. Only Headcount employees are included in the adjustment.
+            Compare insurance renewal listing files between two policy years to generate an Adjustment Breakdown report.
+            Products and years are auto-detected from headers. Only Headcount employees are included.
           </p>
+        </div>
+
+        {/* File Requirements Panel */}
+        <div className="mb-6 border border-blue-200 rounded-lg overflow-hidden">
+          <button
+            onClick={() => setShowRequirements(!showRequirements)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-blue-50 hover:bg-blue-100 transition-colors text-left"
+          >
+            <div className="flex items-center space-x-2">
+              <svg className="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+              </svg>
+              <span className="text-sm font-medium text-blue-800">File Requirements & Supported Products</span>
+            </div>
+            <svg
+              className={`w-4 h-4 text-blue-600 transition-transform ${showRequirements ? 'rotate-180' : ''}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {showRequirements && (
+            <div className="px-4 py-4 bg-white space-y-5">
+
+              {/* Sheet Name Requirement */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-700 mb-2">Required Sheet Name</h4>
+                <div className="flex items-center space-x-2">
+                  <span className="inline-flex items-center px-3 py-1 bg-gray-900 text-green-400 text-xs font-mono rounded">
+                    Employee Listing
+                  </span>
+                  <span className="text-xs text-gray-500">— The workbook must contain a sheet with this exact name</span>
+                </div>
+              </div>
+
+              {/* Excel Structure */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-700 mb-2">Expected Excel Structure</h4>
+                <div className="overflow-x-auto">
+                  <table className="text-xs border-collapse w-full">
+                    <thead>
+                      <tr className="bg-gray-100">
+                        <th className="border border-gray-300 px-2 py-1 text-left font-medium text-gray-600 w-16">Row</th>
+                        <th className="border border-gray-300 px-2 py-1 text-left font-medium text-gray-600">Content</th>
+                        <th className="border border-gray-300 px-2 py-1 text-left font-medium text-gray-600">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">12</td>
+                        <td className="border border-gray-300 px-2 py-1">Dates / Premium Rates</td>
+                        <td className="border border-gray-300 px-2 py-1 text-gray-500">Year auto-detected from date values; Type 1 rate (e.g. 0.003) read per product column</td>
+                      </tr>
+                      <tr className="bg-yellow-50">
+                        <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">13</td>
+                        <td className="border border-gray-300 px-2 py-1 font-semibold">Product Headers <span className="text-yellow-700">(merged cells)</span></td>
+                        <td className="border border-gray-300 px-2 py-1 text-gray-500">Each product spans its columns as a merged cell, e.g. "GTL", "GHS", "GP"</td>
+                      </tr>
+                      <tr className="bg-blue-50">
+                        <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">14</td>
+                        <td className="border border-gray-300 px-2 py-1 font-semibold">Sub-headers <span className="text-blue-700">(column names)</span></td>
+                        <td className="border border-gray-300 px-2 py-1 text-gray-500">Must include "Category", "Sum Insured" or "Annual Premium", "Type of Administration"</td>
+                      </tr>
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">15+</td>
+                        <td className="border border-gray-300 px-2 py-1">Employee Data</td>
+                        <td className="border border-gray-300 px-2 py-1 text-gray-500">One row per employee/dependent</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Supported Products */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-700 mb-2">Supported Products</h4>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <p className="text-xs font-medium text-purple-700 mb-1 uppercase tracking-wide">
+                      Type 1 — Sum Insured × Rate
+                    </p>
+                    <div className="space-y-1">
+                      {PRODUCTS.filter(p => p.type === 1).map(p => (
+                        <div key={p.abbr} className="flex items-center space-x-2">
+                          <span className="inline-block w-10 text-center px-1 py-0.5 bg-purple-100 text-purple-800 text-xs font-bold rounded">
+                            {p.abbr}
+                          </span>
+                          <span className="text-xs text-gray-600">{p.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-blue-700 mb-1 uppercase tracking-wide">
+                      Type 2 — Annual Premium + GST
+                    </p>
+                    <div className="space-y-1">
+                      {PRODUCTS.filter(p => p.type === 2).map(p => (
+                        <div key={p.abbr} className="flex items-center space-x-2">
+                          <span className="inline-block w-10 text-center px-1 py-0.5 bg-blue-100 text-blue-800 text-xs font-bold rounded">
+                            {p.abbr}
+                          </span>
+                          <span className="text-xs text-gray-600">{p.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Admin Type Note */}
+              <div className="bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                <p className="text-xs text-amber-800">
+                  <span className="font-semibold">Type of Administration:</span> Employees with{' '}
+                  <span className="font-mono bg-amber-100 px-1 rounded">Named</span> administration are excluded from
+                  the Headcount adjustment. Employees with{' '}
+                  <span className="font-mono bg-amber-100 px-1 rounded">Headcount</span> are included.
+                  Classification changes between years are flagged in the Summary sheet.
+                </p>
+              </div>
+
+            </div>
+          )}
         </div>
 
         {/* File Upload Section */}

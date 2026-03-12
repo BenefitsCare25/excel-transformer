@@ -5,8 +5,19 @@ Compares insurance renewal listing Excel files between two years and generates
 an Adjustment Breakdown Excel report using Cancel and Re-enroll method.
 
 Product types:
-- Type 1 (Sum Insured): GTL, GDD, GPA, GDIB — uses Sum Insured x Premium Rate
-- Type 2 (Premium): GHS, GMM, GP Clinical, GP Specialist, Dental — uses Annual Premium + GST
+- Type 1 (Sum Insured): GTL, GDD, GPA, GDI — uses Sum Insured x Premium Rate
+- Type 2 (Premium): GHS, GMM, GP, SP, GD — uses Annual Premium + GST
+
+Abbreviations:
+  GTL  = Group Term Life
+  GDD  = Group Dread Disease
+  GPA  = Group Personal Accident
+  GDI  = Group Disability Income Benefit
+  GHS  = Group Hospital & Surgical
+  GMM  = Group Major Medical
+  GP   = Group Clinical General Practitioner Insurance
+  SP   = Group Clinical Specialist Insurance
+  GD   = Group Dental Insurance
 """
 
 import openpyxl
@@ -27,6 +38,32 @@ SKIP_SECTIONS = {
     "employee", "dependant", "termination", "re-employment",
     "remarks", "internal", "re-enrolment"
 }
+
+# Known product type hints — used as fallback when column headers are ambiguous.
+# Maps lowercase name patterns → product type (1 = Sum Insured, 2 = Premium)
+# Product abbreviations: GTL, GDD, GPA, GDI, GHS, GMM, GP, SP, GD
+PRODUCT_TYPE_HINTS: dict = {
+    # Type 1 — Sum Insured based
+    'gtl': 1, 'term life': 1,
+    'gdd': 1, 'dread disease': 1,
+    'gpa': 1, 'personal accident': 1,
+    'gdi': 1, 'disability income': 1,
+    # Type 2 — Premium based
+    'ghs': 2, 'hospital': 2, 'surgical': 2,
+    'gmm': 2, 'major medical': 2,
+    'clinical': 2, 'general practitioner': 2,
+    'sp': 2, 'specialist': 2,
+    'gd': 2, 'dental': 2,
+}
+
+
+def _infer_product_type_from_name(name: str) -> int:
+    """Return product type (1 or 2) from known name patterns, 0 if unrecognised."""
+    name_lower = name.lower()
+    for pattern, ptype in PRODUCT_TYPE_HINTS.items():
+        if pattern in name_lower:
+            return ptype
+    return 0
 
 ACCOUNTING_FORMAT = '_(* #,##0.00_);_(* (#,##0.00);_(* "-"??_);_(@_)'
 
@@ -216,6 +253,26 @@ def _detect_products(ws) -> List[DetectedProduct]:
                     break
         elif product.value_col:
             product.product_type = 2
+
+        # Fallback: infer type from product name if column headers were ambiguous
+        if product.product_type == 0:
+            hinted = _infer_product_type_from_name(product.name)
+            if hinted > 0:
+                product.product_type = hinted
+                logger.info(
+                    f"Product type for '{product.name}' inferred from name hint: Type {hinted}"
+                )
+                # If value_col still not found, scan broadly for first non-label column
+                if not product.value_col:
+                    skip_keywords = {'category', 'name', 'type', 'administration', 'nric', 'id', 'dob', 'date'}
+                    for col in range(section['col_start'], section['col_end'] + 1):
+                        header = _normalize(ws.cell(row=14, column=col).value).lower()
+                        if header and not any(kw in header for kw in skip_keywords):
+                            product.value_col = col
+                            logger.info(
+                                f"Value col for '{product.name}' set by broad scan: col {col} ('{header}')"
+                            )
+                            break
 
         if product.product_type > 0 and product.value_col:
             products.append(product)
@@ -478,7 +535,13 @@ def _generate_product_sheet(
         ws.cell(row=row_num, column=7, value=emp.category)
 
         # Col H empty for curr year; Col J = I - H
-        val = pdata.get('value')
+        # For renewal employees (in both years), use prev year premium so that
+        # rate changes are not captured in the adjustment (billed separately at renewal)
+        if key in prev_employees:
+            prev_pdata = prev_employees[key].product_data.get(product.name, {})
+            val = prev_pdata.get('value')
+        else:
+            val = pdata.get('value')
         if val is not None:
             ws.cell(row=row_num, column=9, value=val)
         ws.cell(row=row_num, column=10).value = f"=I{row_num}-H{row_num}"
