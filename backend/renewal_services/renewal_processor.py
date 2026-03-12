@@ -139,41 +139,101 @@ def _to_float(value) -> Optional[float]:
         return None
 
 
-def _detect_year(ws) -> Optional[int]:
-    """Detect policy year from row 12 date values. Only accepts years 2000-2100
-    to avoid false matches from legacy Excel serial dates or inception dates."""
-
-    def _year_from_val(val) -> Optional[int]:
-        if isinstance(val, datetime):
-            if 2000 <= val.year <= 2100:
-                return val.year
-            return None  # skip dates outside policy year range (e.g. 1974 serial misreads)
-        if val:
-            match = re.search(r'(20\d{2})', str(val))
-            if match:
-                return int(match.group(1))
+def _year_from_val(val) -> Optional[int]:
+    """Extract a plausible policy year (2000-2100) from a cell value."""
+    if isinstance(val, datetime):
+        if 2000 <= val.year <= 2100:
+            return val.year
         return None
-
-    for col in range(1, ws.max_column + 1):
-        year = _year_from_val(ws.cell(row=12, column=col).value)
-        if year:
-            return year
-    for row in [11, 13, 10]:
-        for col in range(1, min(ws.max_column + 1, 30)):
-            year = _year_from_val(ws.cell(row=row, column=col).value)
-            if year:
-                return year
+    if val:
+        match = re.search(r'(20\d{2})', str(val))
+        if match:
+            return int(match.group(1))
     return None
 
 
-def _detect_products(ws) -> List[DetectedProduct]:
-    """Detect products from row 13 merged cells and row 14 headers."""
+def _detect_header_rows(ws) -> Tuple[int, int, int]:
+    """
+    Dynamically locate (product_header_row, subheader_row, data_start_row).
+
+    Strategy:
+    1. Find the row whose merged cells contain the most product keywords
+       (e.g. 'GTL', 'GHS', 'term life', 'hospital') → product_header_row.
+    2. subheader_row  = product_header_row + 1
+    3. data_start_row = product_header_row + 2
+
+    Falls back to (13, 14, 15) when nothing is found.
+    """
+    PRODUCT_KEYWORDS = {
+        'gtl', 'gdd', 'gpa', 'gdi', 'ghs', 'gmm', 'sp', 'gd',
+        'term life', 'dread disease', 'personal accident', 'disability income',
+        'hospital', 'surgical', 'major medical', 'dental', 'specialist', 'clinical',
+        'group term', 'group dread', 'group hospital', 'group major',
+    }
+    row_scores: Dict[int, int] = {}
+    for mr in ws.merged_cells.ranges:
+        val = ws.cell(row=mr.min_row, column=mr.min_col).value
+        if val:
+            val_lower = str(val).lower()
+            if any(kw in val_lower for kw in PRODUCT_KEYWORDS):
+                row_scores[mr.min_row] = row_scores.get(mr.min_row, 0) + 1
+
+    if not row_scores:
+        logger.warning("Could not auto-detect product header row; defaulting to row 13/14/15")
+        return 13, 14, 15
+
+    product_header_row = max(row_scores, key=row_scores.get)
+    logger.info(f"Auto-detected product header row: {product_header_row} (scores={row_scores})")
+    return product_header_row, product_header_row + 1, product_header_row + 2
+
+
+def _detect_year(ws, product_header_row: int = 13) -> Optional[int]:
+    """
+    Detect policy year by scanning metadata rows BEFORE the product/data area.
+    Only rows 1..(product_header_row-1) are scanned so employee DOBs and hire
+    dates (which live in the data rows) are never mistaken for the policy year.
+    Falls back to a full-sheet scan if nothing found in the metadata rows.
+    """
+    # Phase 1: metadata rows only (safest)
+    for row in range(1, product_header_row):
+        for col in range(1, ws.max_column + 1):
+            year = _year_from_val(ws.cell(row=row, column=col).value)
+            if year:
+                logger.info(f"Year {year} detected at R{row}C{col}")
+                return year
+
+    # Phase 2: scan the header rows themselves
+    for row in range(product_header_row, product_header_row + 3):
+        for col in range(1, ws.max_column + 1):
+            year = _year_from_val(ws.cell(row=row, column=col).value)
+            if year:
+                logger.info(f"Year {year} detected (header row scan) at R{row}C{col}")
+                return year
+
+    return None
+
+
+def _detect_products(ws, product_header_row: int = 13, subheader_row: int = 14) -> List[DetectedProduct]:
+    """
+    Detect products dynamically using merged cells on product_header_row and
+    column sub-headers on subheader_row.
+
+    Key behaviours:
+    - Each section's col_end is extended to just before the next section's
+      col_start so that 'orphan' premium columns outside a merged range are
+      captured (common when only the label columns are merged).
+    - admin_type_col is assigned as the nearest 'Type of Administration'
+      column to the LEFT of each section.
+    - Premium rate (Type-1) is read from the row immediately above the
+      product_header_row.
+    """
     products = []
     merged_sections = []
+    rate_row = product_header_row - 1  # row that holds premium rates for Type-1 products
 
     for merged_range in ws.merged_cells.ranges:
-        if merged_range.min_row == 13 and merged_range.max_row == 13:
-            cell_val = ws.cell(row=13, column=merged_range.min_col).value
+        if merged_range.min_row == product_header_row and merged_range.max_row == product_header_row:
+            cell_val = ws.cell(row=product_header_row, column=merged_range.min_col).value
             if cell_val:
                 merged_sections.append({
                     'name': str(cell_val).strip(),
@@ -183,27 +243,34 @@ def _detect_products(ws) -> List[DetectedProduct]:
 
     if not merged_sections:
         for col in range(1, ws.max_column + 1):
-            val = ws.cell(row=13, column=col).value
+            val = ws.cell(row=product_header_row, column=col).value
             if val:
                 name = str(val).strip()
-                is_merged = False
-                for mr in ws.merged_cells.ranges:
-                    if mr.min_row <= 13 <= mr.max_row and mr.min_col <= col <= mr.max_col:
-                        is_merged = True
-                        break
+                is_merged = any(
+                    mr.min_row <= product_header_row <= mr.max_row and
+                    mr.min_col <= col <= mr.max_col
+                    for mr in ws.merged_cells.ranges
+                )
                 if not is_merged:
-                    merged_sections.append({
-                        'name': name,
-                        'col_start': col,
-                        'col_end': col
-                    })
+                    merged_sections.append({'name': name, 'col_start': col, 'col_end': col})
 
     merged_sections.sort(key=lambda x: x['col_start'])
 
-    # Pre-detect all "Type of Administration" columns (they sit just BEFORE each product section)
+    # Extend each section's col_end to just before the next section starts so
+    # orphan value columns (Premium, Sum Insured) outside the merge are included
+    for i, section in enumerate(merged_sections):
+        if i + 1 < len(merged_sections):
+            next_start = merged_sections[i + 1]['col_start']
+            if next_start - 1 > section['col_end']:
+                section['col_end'] = next_start - 1
+        else:
+            if ws.max_column > section['col_end']:
+                section['col_end'] = ws.max_column
+
+    # Pre-detect all "Type of Administration" columns across the subheader row
     admin_type_cols = []
     for col in range(1, ws.max_column + 1):
-        header = _normalize(ws.cell(row=14, column=col).value).lower()
+        header = _normalize(ws.cell(row=subheader_row, column=col).value).lower()
         if 'type of administration' in header:
             admin_type_cols.append(col)
 
@@ -219,8 +286,7 @@ def _detect_products(ws) -> List[DetectedProduct]:
             col_end=section['col_end']
         )
 
-        # Assign admin type column: nearest admin_type col to the left of this
-        # section (handles both per-product and shared employee-level admin columns)
+        # Assign nearest admin_type col to the LEFT of this section
         candidates = [c for c in admin_type_cols if c < section['col_start']]
         if candidates:
             product.admin_type_col = max(candidates)
@@ -229,7 +295,7 @@ def _detect_products(ws) -> List[DetectedProduct]:
         eligible_si_col = None
 
         for col in range(section['col_start'], section['col_end'] + 1):
-            header = _normalize(ws.cell(row=14, column=col).value).lower()
+            header = _normalize(ws.cell(row=subheader_row, column=col).value).lower()
             if not header:
                 continue
 
@@ -242,7 +308,7 @@ def _detect_products(ws) -> List[DetectedProduct]:
                 if not eligible_si_col:
                     product.value_col = col
                 has_sum_insured = True
-            elif 'premium' in header and 'gst' not in header:
+            elif 'premium' in header and 'gst' not in header and 'w/' not in header:
                 if not has_sum_insured:
                     product.value_col = col
 
@@ -251,32 +317,30 @@ def _detect_products(ws) -> List[DetectedProduct]:
 
         if has_sum_insured:
             product.product_type = 1
-            for col in range(section['col_start'], section['col_end'] + 1):
-                rate_val = _to_float(ws.cell(row=12, column=col).value)
-                if rate_val is not None and 0 < rate_val < 1:
-                    product.premium_rate = rate_val
-                    break
+            if rate_row >= 1:
+                for col in range(section['col_start'], section['col_end'] + 1):
+                    rate_val = _to_float(ws.cell(row=rate_row, column=col).value)
+                    if rate_val is not None and 0 < rate_val < 1:
+                        product.premium_rate = rate_val
+                        break
         elif product.value_col:
             product.product_type = 2
 
-        # Fallback: infer type from product name if column headers were ambiguous
+        # Fallback: infer type from product name when column headers are ambiguous
         if product.product_type == 0:
             hinted = _infer_product_type_from_name(product.name)
             if hinted > 0:
                 product.product_type = hinted
-                logger.info(
-                    f"Product type for '{product.name}' inferred from name hint: Type {hinted}"
-                )
-                # If value_col still not found, scan broadly for first non-label column
+                logger.info(f"Product type for '{product.name}' inferred from name hint: Type {hinted}")
                 if not product.value_col:
-                    skip_keywords = {'category', 'name', 'type', 'administration', 'nric', 'id', 'dob', 'date'}
+                    skip_kw = {'category', 'name', 'type', 'administration', 'nric', 'id', 'dob', 'date',
+                               'sex', 'age', 'marital', 'nationality', 'designation', 'employment',
+                               'mu status', 'mu decision', 'pending', 'acceptance', 'last accepted'}
                     for col in range(section['col_start'], section['col_end'] + 1):
-                        header = _normalize(ws.cell(row=14, column=col).value).lower()
-                        if header and not any(kw in header for kw in skip_keywords):
+                        header = _normalize(ws.cell(row=subheader_row, column=col).value).lower()
+                        if header and not any(kw in header for kw in skip_kw):
                             product.value_col = col
-                            logger.info(
-                                f"Value col for '{product.name}' set by broad scan: col {col} ('{header}')"
-                            )
+                            logger.info(f"Value col for '{product.name}' set by broad scan: col {col} ('{header}')")
                             break
 
         if product.product_type > 0 and product.value_col:
@@ -297,24 +361,25 @@ def _detect_products(ws) -> List[DetectedProduct]:
 
 
 
-def _find_employee_columns(ws) -> dict:
-    """Find common employee data columns from row 14 (cols 1-20 only)."""
+def _find_employee_columns(ws, subheader_row: int = 14) -> dict:
+    """Find common employee data columns by scanning the subheader row."""
     col_map = {}
     name_fallback = None
 
-    for col in range(1, min(ws.max_column + 1, 21)):
-        header = _normalize(ws.cell(row=14, column=col).value).lower()
+    # Scan all columns — employee headers can be anywhere in the subheader row
+    for col in range(1, ws.max_column + 1):
+        header = _normalize(ws.cell(row=subheader_row, column=col).value).lower()
         if not header:
             continue
 
         if 'name' not in col_map and 'name' in header and ('surname' in header or 'first' in header):
             col_map['name'] = col
-        elif name_fallback is None and 'name' in header and 'employee' not in header:
+        elif name_fallback is None and 'name' in header and 'employee' not in header and 'dependant' not in header:
             name_fallback = col
 
         if 'dob' not in col_map and ('date of birth' in header or header in ('dob', 'd.o.b', 'birth date', 'birthdate')):
             col_map['dob'] = col
-        elif 'employee id' in header or 'emp id' in header or 'staff id' in header:
+        elif 'employee id' in header or 'emp id' in header or 'staff id' in header or 'employee id no' in header:
             col_map['employee_id'] = col
         elif 'cost centre' in header or 'cost center' in header:
             col_map['cost_centre'] = col
@@ -326,17 +391,17 @@ def _find_employee_columns(ws) -> dict:
     if 'name' not in col_map and name_fallback:
         col_map['name'] = name_fallback
 
-    logger.info(f"Employee column map: {col_map}")
+    logger.info(f"Employee column map (subheader_row={subheader_row}): {col_map}")
     return col_map
 
 
 
-def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict) -> Dict[str, EmployeeRecord]:
+def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict,
+                       data_start_row: int = 15) -> Dict[str, EmployeeRecord]:
     """Extract employee records with per-product data."""
     employees = {}
-    data_start = 15
 
-    for row in range(data_start, ws.max_row + 1):
+    for row in range(data_start_row, ws.max_row + 1):
         name_val = _normalize(ws.cell(row=row, column=emp_cols.get('name', 2)).value)
         if not name_val:
             continue
@@ -752,8 +817,14 @@ def process_renewal_comparison(
     ws1 = wb1[EMPLOYEE_LISTING_SHEET]
     ws2 = wb2[EMPLOYEE_LISTING_SHEET]
 
-    year1 = _detect_year(ws1)
-    year2 = _detect_year(ws2)
+    # Auto-detect row structure for each file independently (formats vary by client)
+    ph1, sh1, ds1 = _detect_header_rows(ws1)
+    ph2, sh2, ds2 = _detect_header_rows(ws2)
+    logger.info(f"File1 rows — product_header:{ph1} subheader:{sh1} data_start:{ds1}")
+    logger.info(f"File2 rows — product_header:{ph2} subheader:{sh2} data_start:{ds2}")
+
+    year1 = _detect_year(ws1, ph1)
+    year2 = _detect_year(ws2, ph2)
 
     if year1 is None or year2 is None:
         wb1.close()
@@ -761,7 +832,8 @@ def process_renewal_comparison(
         raise ValueError(
             f"Could not detect year from files. "
             f"File1 year: {year1}, File2 year: {year2}. "
-            f"Expected date values in row 12."
+            f"Ensure the year appears as text (e.g. 'YEAR : 2025') or as a date "
+            f"in the rows above the product headers."
         )
 
     if year1 == year2:
@@ -773,22 +845,29 @@ def process_renewal_comparison(
         prev_ws, curr_ws = ws1, ws2
         prev_year, curr_year = year1, year2
         prev_filename, curr_filename = file1_name, file2_name
+        prev_ph, prev_sh, prev_ds = ph1, sh1, ds1
+        curr_ph, curr_sh, curr_ds = ph2, sh2, ds2
     else:
         prev_ws, curr_ws = ws2, ws1
         prev_year, curr_year = year2, year1
         prev_filename, curr_filename = file2_name, file1_name
+        prev_ph, prev_sh, prev_ds = ph2, sh2, ds2
+        curr_ph, curr_sh, curr_ds = ph1, sh1, ds1
 
     logger.info(f"Previous year: {prev_year} ({prev_filename})")
     logger.info(f"Current year: {curr_year} ({curr_filename})")
 
-    # Detect products from both files and merge
-    prev_products = _detect_products(prev_ws)
-    curr_products = _detect_products(curr_ws)
+    # Detect products from both files using their respective row structures
+    prev_products = _detect_products(prev_ws, prev_ph, prev_sh)
+    curr_products = _detect_products(curr_ws, curr_ph, curr_sh)
 
     if not prev_products and not curr_products:
         wb1.close()
         wb2.close()
-        raise ValueError("No products detected in either file. Check row 13/14 headers.")
+        raise ValueError(
+            "No products detected in either file. "
+            "Ensure product names (e.g. GTL, GHS) appear as merged cell headers above the column headers."
+        )
 
     # Use current year products as primary for structure; track prev rates separately
     products_map = {}
@@ -804,13 +883,13 @@ def process_renewal_comparison(
     all_product_names = list(products_map.keys())
     logger.info(f"Products detected: {all_product_names}")
 
-    # Find employee columns
-    prev_emp_cols = _find_employee_columns(prev_ws)
-    curr_emp_cols = _find_employee_columns(curr_ws)
+    # Find employee columns using the detected subheader row for each file
+    prev_emp_cols = _find_employee_columns(prev_ws, prev_sh)
+    curr_emp_cols = _find_employee_columns(curr_ws, curr_sh)
 
-    # Extract employees
-    prev_employees = _extract_employees(prev_ws, prev_products, prev_emp_cols)
-    curr_employees = _extract_employees(curr_ws, curr_products, curr_emp_cols)
+    # Extract employees using the detected data start row for each file
+    prev_employees = _extract_employees(prev_ws, prev_products, prev_emp_cols, prev_ds)
+    curr_employees = _extract_employees(curr_ws, curr_products, curr_emp_cols, curr_ds)
 
     logger.info(f"Previous year employees: {len(prev_employees)}")
     logger.info(f"Current year employees: {len(curr_employees)}")
