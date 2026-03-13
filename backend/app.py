@@ -1716,6 +1716,26 @@ class ExcelTransformer:
                 df_transformed['Code'] = ExcelTransformer.smart_column_fallback(df_source, col_map, 'clinic_id')
                 logger.info(f"Generated auto clinic IDs for {len(df_source)} records")
 
+            # Deduplicate clinic codes: append -1, -2, -3 for all instances of duplicates
+            _code_series = df_transformed['Code'].apply(
+                lambda v: str(v).strip() if pd.notna(v) and v is not None else None
+            )
+            _code_value_counts = _code_series.value_counts()
+            _dup_codes = set(_code_value_counts[_code_value_counts > 1].index)
+            if _dup_codes:
+                _dup_tracker = {}
+                _new_codes = []
+                for val in _code_series:
+                    if val is None:
+                        _new_codes.append(val)
+                    elif val in _dup_codes:
+                        _dup_tracker[val] = _dup_tracker.get(val, 0) + 1
+                        _new_codes.append(f"{val}-{_dup_tracker[val]}")
+                    else:
+                        _new_codes.append(val)
+                df_transformed['Code'] = _new_codes
+                logger.info(f"Deduplicated {len(_dup_codes)} clinic codes with suffixes")
+
             # Clinic Name (required field)
             df_transformed['Name'] = df_source[col_map['clinic_name']]
 

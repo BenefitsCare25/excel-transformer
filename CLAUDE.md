@@ -78,6 +78,13 @@ cd frontend && npm start                 # Run React (port 3000)
 - Triggered when >50% of non-null values match known zone keywords
 - Logic in `ExcelTransformer.transform_sheet()` around the `clinic_id` mapping block
 
+### Duplicate Clinic Code Suffixing
+- After the Code column is populated, duplicate codes are detected and suffixed with `-1`, `-2`, `-3` etc.
+- All instances of a duplicate code get suffixed (e.g. `FHG123` appearing 3 times → `FHG123-1`, `FHG123-2`, `FHG123-3`)
+- Unique codes remain unchanged
+- Runs after zone-keyword detection, so sequential S/N values are unaffected
+- Logic in `ExcelTransformer.transform_sheet()` immediately after the clinic_id mapping block (~line 1719)
+
 ### File Handling
 - Auto-cleanup after 15 minutes (cleanup_service.py)
 - Job IDs via UUID for tracking uploads
@@ -167,3 +174,24 @@ POSTAL_CODE_MASTER_FILE=path   # Optional override
 ```bash
 python test_backend.py         # Backend tests
 ```
+
+## Deployment
+
+- **Platform**: Azure Web App (`excel-transformer-rg`)
+- **CI/CD**: GitHub Actions → `.github/workflows/main_excel-transformer-rg.yml`
+- **Trigger**: Push to `main` branch or manual `workflow_dispatch`
+- **Build**: Installs Python deps in venv, builds React frontend, copies static files to `backend/static/`, deploys `./backend` folder to Azure
+- **Deploy action**: `azure/webapps-deploy@v3` with publish profile secret `AZUREAPPSERVICE_PUBLISHPROFILE_5B226EAFC9C04C9489E59C924562DD9E`
+- **Live URL**: https://excel-transformer-rg.azurewebsites.net
+
+### GitHub Actions Permissions Required
+```yaml
+permissions:
+  contents: read
+  id-token: write   # Required for azure/webapps-deploy@v3
+```
+
+### Deployment Troubleshooting
+- **401 Unauthorized downloading action**: Usually transient GitHub issue — re-run the workflow. If persistent, check org action permissions at `GitHub Org → Settings → Actions → General`
+- **Publish profile missing**: Ensure secret `AZUREAPPSERVICE_PUBLISHPROFILE_...` is set in repo secrets
+- **Frontend not updating**: Confirm `REACT_APP_API_URL` env var points to the Azure URL, not localhost
