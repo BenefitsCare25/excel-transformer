@@ -93,7 +93,10 @@ cd frontend && npm start                 # Run React (port 3000)
 ## Renewal Comparison — Key Design Notes
 
 ### Required Sheet Name
-The uploaded Excel files **must** contain a sheet named exactly `"Employee Listing"`.
+Each uploaded Excel file **must** contain a sheet named `"Employee Listing YYYY"` where YYYY is the 4-digit policy year — e.g. `"Employee Listing 2025"` and `"Employee Listing 2026"`.
+- The year is extracted **directly from the sheet name** (not from cell values)
+- A sheet named just `"Employee Listing"` (without year) is rejected with a clear error
+- Detection logic: `_find_employee_listing_sheet()` in `renewal_processor.py`
 
 ### Supported Products
 | Abbr | Full Name | Type |
@@ -116,11 +119,18 @@ Excel layouts vary by client — row numbers are **never hardcoded**. The proces
 
 This means files with headers at row 8 (e.g. Technetics format) and row 13 (standard format) both work without any changes.
 
-### Year Detection (`_detect_year`)
-- Scans only rows **before** the product_header_row (metadata area)
-- Only accepts years 2000–2100
-- This prevents employee DOBs and hire dates (which live in data rows) from being mistaken for the policy year
-- Typical sources: `'YEAR : 2025'` text cell, `'Period Of Insurance : 01/01/2025'`, or a date value in a legend row
+### Year Detection (`_find_employee_listing_sheet`)
+- Year is read from the sheet tab name: `"Employee Listing 2025"` → year `2025`
+- The lower year becomes previous year, the higher year becomes current year
+- No cell scanning for year — eliminates false matches from date ranges in metadata rows
+
+### Employee Matching (`EmployeeRecord.unique_key`)
+Employees are matched across years using this priority:
+1. **NRIC** (primary) — column header containing `nric`, `ic no`, `id no`, `passport`, `fin`, `nric/fin`, `nric/passport`
+2. **Email** (fallback) — column header containing `email`, `e-mail`, `e mail`
+3. **Name + DOB** (last resort) — name normalised (uppercased, collapsed whitespace); DOB normalised to `dd/mm/yyyy` across all common formats
+
+Key format examples: `NRIC|S1234567A`, `EMAIL|john@example.com`, `NAME|JOHN TAN|01/01/1980`
 
 ### Product Detection (`_detect_products`)
 - Reads merged cells on product_header_row for section names
@@ -134,12 +144,24 @@ This means files with headers at row 8 (e.g. Technetics format) and row 13 (stan
 - Employees with `Type of Administration = Named` are excluded from the Headcount adjustment
 - Classification changes (HC ↔ Named between years) are flagged in the Summary sheet output
 
+### Employee Overview (Summary Sheet)
+| Label | Meaning |
+|-------|---------|
+| Previous year employees | Total unique employees in the previous year file |
+| Current year employees | Total unique employees in the current year file |
+| Common (matched) | Employees found in **both** years (same NRIC/email/name+DOB) |
+| New employees | In current year but **not** in previous — re-enrolled as NEW in adjustment |
+| Left employees | In previous year but **not** in current — cancelled in adjustment |
+
+Formula: `New = Current − Common`, `Left = Previous − Common`
+
 ## Common Issues
 
 1. **openpyxl Fill Error**: Create new `PatternFill()` objects instead of copying
 2. **Sheet Name Invalid Chars**: Product names from merged cell headers may contain `&`, `:`, etc. (e.g. "Group Life & Medical"). Always strip with `re.sub(r'[\\/*?:\[\]&]', '', name)[:31]` — fixed in `renewal_processor.py:_generate_product_sheet`
 3. **Memory on Large Files**: Use chunked processing for >10MB files
-4. **Wrong Year Detected**: Year detection only scans rows before the product header — if the year is missing from the metadata rows, add it as text (e.g. `YEAR : 2025`) anywhere in rows 1 to product_header_row-1
+4. **Common = 0 (no matches)**: Check server logs for `Sample key:` lines to see which key strategy is being used. Most likely cause: NRIC/email column header not detected — check it matches one of the supported labels. Fallback is name+DOB which requires consistent formatting across both files.
+5. **Wrong year assigned**: Ensure sheet tabs are named `"Employee Listing YYYY"` — the year comes from the sheet name, not cell content.
 
 ## API Endpoints
 
