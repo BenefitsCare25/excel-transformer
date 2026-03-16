@@ -163,6 +163,14 @@ Key format examples: `NRIC|S1234567A`, `EMAIL|john@example.com`, `NAME|JOHN TAN|
 **Type 2 premium output (GHS, GMM, GP, SP, GD):**
 - Annual premium read directly from source; GST calculated as 9% in output Column K.
 - Adjustment column (L) = `J / divisor` (pro-rated by divisor entered by user).
+- Each Type 2 product sheet includes 3 summary rows (Col L) below the data:
+  - **Adjustment Premium** = `SUM(L data rows)`
+  - **GST** = `Adjustment Premium × 9%`
+  - **Adjustment Premium with GST** = `Adjustment Premium + GST`
+- Type 1 product sheets have only one summary row: **Adjustment Breakdown** = `SUM(L data rows)` (no GST rows).
+
+**Type 1 renewal SI changes:**
+- For renewal employees (in both years), the current year Sum Insured is always used in Col I. If SI is unchanged, J = I − H = 0 → cancel and re-enroll nets to zero. If SI changed, J captures the difference and Col K reflects the updated annual premium automatically.
 
 ### Named vs Headcount
 - Employees with `Type of Administration = Named` are excluded from the Headcount adjustment

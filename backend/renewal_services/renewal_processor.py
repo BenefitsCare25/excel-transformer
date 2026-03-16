@@ -571,16 +571,18 @@ def _generate_product_sheet(
     if is_type1:
         col_j_label = f"{name}\n(sum insured)"
         col_k_label = f"{name} Annual Premium"
-        col_l_label = "Adj Premium"
+        col_l_label = "GST 9%"
+        col_m_label = "Adj Premium"
     else:
         col_j_label = f"{name} Annual Premium"
         col_k_label = "GST 9%"
         col_l_label = "Adj Premium / 2"
 
-    headers = ["Remarks", "Name \n(Surname, First Name) ", "NRIC No. or FIN No.\n(eg. S1234567F)",
-                "EMP ID", "Cost Centre", "Department",
-                "Category                        \n(Pls Select Basis Accordingly)",
-                col_h_label, col_i_label, col_j_label, col_k_label, col_l_label]
+    base_headers = ["Remarks", "Name \n(Surname, First Name) ", "NRIC No. or FIN No.\n(eg. S1234567F)",
+                    "EMP ID", "Cost Centre", "Department",
+                    "Category                        \n(Pls Select Basis Accordingly)",
+                    col_h_label, col_i_label, col_j_label, col_k_label, col_l_label]
+    headers = base_headers + [col_m_label] if is_type1 else base_headers
 
     header_font = Font(bold=True, size=11)
     header_align = Alignment(wrap_text=True, vertical='center')
@@ -613,7 +615,7 @@ def _generate_product_sheet(
     for key, emp, pdata in prev_headcount:
         ws.cell(row=row_num, column=1, value=f"Renewal {prev_year}")
         ws.cell(row=row_num, column=2, value=emp.name)
-        ws.cell(row=row_num, column=3, value='')
+        ws.cell(row=row_num, column=3, value=emp.nric)
         ws.cell(row=row_num, column=4, value=emp.employee_id)
         ws.cell(row=row_num, column=5, value=emp.cost_centre)
         ws.cell(row=row_num, column=6, value=emp.department)
@@ -631,12 +633,14 @@ def _generate_product_sheet(
                 ws.cell(row=row_num, column=11, value=-ap)  # cancel = negative
             elif rate:
                 ws.cell(row=row_num, column=11).value = f"=J{row_num}*{rate}"
-            ws.cell(row=row_num, column=12).value = f"=K{row_num}/{divisor}"
+            ws.cell(row=row_num, column=12).value = f"=K{row_num}*0.09"   # GST
+            ws.cell(row=row_num, column=13).value = f"=K{row_num}/{divisor}"  # Adj Premium
         else:
             ws.cell(row=row_num, column=11).value = f"=J{row_num}*0.09"
             ws.cell(row=row_num, column=12).value = f"=J{row_num}/{divisor}"
 
-        for c in range(8, 13):
+        fmt_end = 14 if is_type1 else 13
+        for c in range(8, fmt_end):
             ws.cell(row=row_num, column=c).number_format = ACCOUNTING_FORMAT
 
         row_num += 1
@@ -667,16 +671,19 @@ def _generate_product_sheet(
     for key, emp, pdata in curr_headcount:
         ws.cell(row=row_num, column=1, value=f"Renewal {curr_year}")
         ws.cell(row=row_num, column=2, value=emp.name)
-        ws.cell(row=row_num, column=3, value='')
+        ws.cell(row=row_num, column=3, value=emp.nric)
         ws.cell(row=row_num, column=4, value=emp.employee_id)
         ws.cell(row=row_num, column=5, value=emp.cost_centre)
         ws.cell(row=row_num, column=6, value=emp.department)
         ws.cell(row=row_num, column=7, value=pdata.get('category') or emp.category)
 
         # Col H empty for curr year; Col J = I - H
-        # For renewal employees (in both years), use prev year premium so that
-        # rate changes are not captured in the adjustment (billed separately at renewal)
-        if key in prev_employees:
+        # Type 1 (sum insured): always use curr year value so SI changes are captured.
+        # Type 2 (premium): use prev year value for renewals so rate-only changes are
+        #   excluded from the adjustment (billed separately at renewal).
+        if is_type1:
+            val = pdata.get('value')
+        elif key in prev_employees:
             prev_pdata = prev_employees[key].product_data.get(product.name, {})
             val = prev_pdata.get('value')
         else:
@@ -686,19 +693,22 @@ def _generate_product_sheet(
         ws.cell(row=row_num, column=10).value = f"=I{row_num}-H{row_num}"
 
         if is_type1:
-            # Renewals use prev year premium (mirrors cancel → net = 0); new employees use curr year
-            ap_pdata = prev_employees[key].product_data.get(product.name, {}) if key in prev_employees else pdata
-            ap = ap_pdata.get('annual_premium')
+            # Always use curr year annual premium so SI changes flow through correctly.
+            # For unchanged SI: curr_premium == prev_premium → cancel+re-enroll nets to 0.
+            # For changed SI: curr_premium reflects new SI → adjustment is captured.
+            ap = pdata.get('annual_premium')
             if ap is not None:
                 ws.cell(row=row_num, column=11, value=ap)  # enroll = positive
             elif rate:
                 ws.cell(row=row_num, column=11).value = f"=J{row_num}*{rate}"
-            ws.cell(row=row_num, column=12).value = f"=K{row_num}/{divisor}"
+            ws.cell(row=row_num, column=12).value = f"=K{row_num}*0.09"   # GST
+            ws.cell(row=row_num, column=13).value = f"=K{row_num}/{divisor}"  # Adj Premium
         else:
             ws.cell(row=row_num, column=11).value = f"=J{row_num}*0.09"
             ws.cell(row=row_num, column=12).value = f"=J{row_num}/{divisor}"
 
-        for c in range(8, 13):
+        fmt_end = 14 if is_type1 else 13
+        for c in range(8, fmt_end):
             ws.cell(row=row_num, column=c).number_format = ACCOUNTING_FORMAT
 
         row_num += 1
@@ -712,10 +722,21 @@ def _generate_product_sheet(
 
     bold_font = Font(bold=True)
     if is_type1:
-        ws.cell(row=row_num, column=11, value="Adjustment Breakdown").font = bold_font
-        ws.cell(row=row_num, column=12).value = f"=SUM(L{data_start_row}:L{last_data_row})"
-        ws.cell(row=row_num, column=12).number_format = ACCOUNTING_FORMAT
-        ws.cell(row=row_num, column=12).font = bold_font
+        ws.cell(row=row_num, column=12, value="Adjustment Breakdown").font = bold_font
+        ws.cell(row=row_num, column=13).value = f"=SUM(M{data_start_row}:M{last_data_row})"
+        ws.cell(row=row_num, column=13).number_format = ACCOUNTING_FORMAT
+        ws.cell(row=row_num, column=13).font = bold_font
+
+        row_num += 1
+        ws.cell(row=row_num, column=12, value="GST").font = bold_font
+        ws.cell(row=row_num, column=13).value = f"=M{row_num-1}*0.09"
+        ws.cell(row=row_num, column=13).number_format = ACCOUNTING_FORMAT
+
+        row_num += 1
+        ws.cell(row=row_num, column=12, value="Adjustment Breakdown with GST").font = bold_font
+        ws.cell(row=row_num, column=13).value = f"=M{row_num-2}+M{row_num-1}"
+        ws.cell(row=row_num, column=13).number_format = ACCOUNTING_FORMAT
+        ws.cell(row=row_num, column=13).font = bold_font
     else:
         ws.cell(row=row_num, column=11, value="Adjustment Premium").font = bold_font
         ws.cell(row=row_num, column=12).value = f"=SUM(L{data_start_row}:L{last_data_row})"
@@ -735,6 +756,8 @@ def _generate_product_sheet(
 
     col_widths = {'A': 18, 'B': 30, 'C': 18, 'D': 12, 'E': 14, 'F': 20,
                   'G': 14, 'H': 18, 'I': 18, 'J': 18, 'K': 18, 'L': 18}
+    if is_type1:
+        col_widths['M'] = 18
     for letter, width in col_widths.items():
         ws.column_dimensions[letter].width = width
 
