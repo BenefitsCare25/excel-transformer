@@ -169,11 +169,21 @@ const RenewalComparison = () => {
               {/* Sheet Name Requirement */}
               <div>
                 <h4 className="text-sm font-semibold text-gray-700 mb-2">Required Sheet Name</h4>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-2 mb-2">
                   <span className="inline-flex items-center px-3 py-1 bg-gray-900 text-green-400 text-xs font-mono rounded">
-                    Employee Listing
+                    Employee Listing 2025
                   </span>
-                  <span className="text-xs text-gray-500">— The workbook must contain a sheet with this exact name</span>
+                  <span className="text-xs text-gray-500">— Sheet name must end with the 4-digit policy year</span>
+                </div>
+                <div className="bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mt-1">
+                  <p className="text-xs text-amber-800">
+                    <span className="font-semibold">Important:</span> The sheet tab in each Excel file must be named{' '}
+                    <span className="font-mono bg-amber-100 px-1 rounded">Employee Listing YYYY</span> where YYYY is the policy year
+                    (e.g. <span className="font-mono bg-amber-100 px-1 rounded">Employee Listing 2025</span> and{' '}
+                    <span className="font-mono bg-amber-100 px-1 rounded">Employee Listing 2026</span>).
+                    The year in the sheet name is used to determine which file is previous vs. current.
+                    A sheet named just <span className="font-mono bg-amber-100 px-1 rounded">Employee Listing</span> (without year) will be rejected.
+                  </p>
                 </div>
               </div>
 
@@ -193,7 +203,7 @@ const RenewalComparison = () => {
                       <tr>
                         <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">12</td>
                         <td className="border border-gray-300 px-2 py-1">Dates / Premium Rates</td>
-                        <td className="border border-gray-300 px-2 py-1 text-gray-500">Year auto-detected from date values; Type 1 rate (e.g. 0.003) read per product column</td>
+                        <td className="border border-gray-300 px-2 py-1 text-gray-500">Type 1 rate (e.g. 0.003) read per product column. Policy year is taken from the sheet name, not cell values.</td>
                       </tr>
                       <tr className="bg-yellow-50">
                         <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">13</td>
@@ -271,14 +281,14 @@ const RenewalComparison = () => {
         <div className="grid grid-cols-2 gap-6 mb-6">
           <FileUploadBox
             label="File 1"
-            description="Drop renewal listing .xlsx (auto-detects year)"
+            description='Sheet must be named "Employee Listing YYYY" (e.g. Employee Listing 2025)'
             file={file1}
             onDrop={handleFile1Drop}
             isProcessing={isProcessing}
           />
           <FileUploadBox
             label="File 2"
-            description="Drop renewal listing .xlsx (auto-detects year)"
+            description='Sheet must be named "Employee Listing YYYY" (e.g. Employee Listing 2026)'
             file={file2}
             onDrop={handleFile2Drop}
             isProcessing={isProcessing}
@@ -591,7 +601,7 @@ const RenewalComparison = () => {
           <div className="text-center p-3 bg-gray-50 rounded-lg">
             <div className="w-8 h-8 mx-auto mb-2 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 font-bold">2</div>
             <h4 className="text-sm font-medium text-gray-700">Auto-Detect</h4>
-            <p className="text-xs text-gray-500 mt-1">Products, types, and years detected from headers</p>
+            <p className="text-xs text-gray-500 mt-1">Year read from sheet name; products & types from column headers</p>
           </div>
           <div className="text-center p-3 bg-gray-50 rounded-lg">
             <div className="w-8 h-8 mx-auto mb-2 bg-green-100 rounded-full flex items-center justify-center text-green-600 font-bold">3</div>

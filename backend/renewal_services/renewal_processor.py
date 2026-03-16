@@ -32,7 +32,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-EMPLOYEE_LISTING_SHEET = "Employee Listing"
+EMPLOYEE_LISTING_SHEET_PREFIX = "Employee Listing"
 
 SKIP_SECTIONS = {
     "employee", "dependant", "termination", "re-employment",
@@ -150,6 +150,33 @@ def _year_from_val(val) -> Optional[int]:
         if match:
             return int(match.group(1))
     return None
+
+
+def _find_employee_listing_sheet(wb, filename: str) -> Tuple[str, int]:
+    """
+    Locate the 'Employee Listing YYYY' sheet and return (sheet_name, year).
+    Raises ValueError with a clear, actionable message if not found.
+    """
+    for name in wb.sheetnames:
+        m = re.match(r'^Employee Listing\s+(\d{4})\s*$', name.strip(), re.IGNORECASE)
+        if m:
+            year = int(m.group(1))
+            if 2000 <= year <= 2100:
+                logger.info(f"Found sheet '{name}' → year {year} in {filename}")
+                return name, year
+
+    # Helpful fallback messages
+    old_style = next((n for n in wb.sheetnames if n.strip().lower() == 'employee listing'), None)
+    if old_style:
+        raise ValueError(
+            f"File '{filename}': sheet is named '{old_style}' but must include the policy year. "
+            f"Please rename it to 'Employee Listing YYYY' — e.g. 'Employee Listing 2025'."
+        )
+    raise ValueError(
+        f"File '{filename}': no 'Employee Listing YYYY' sheet found. "
+        f"Found sheets: {', '.join(wb.sheetnames)}. "
+        f"Please rename the sheet to 'Employee Listing YYYY' — e.g. 'Employee Listing 2025'."
+    )
 
 
 def _detect_header_rows(ws) -> Tuple[int, int, int]:
@@ -805,36 +832,27 @@ def process_renewal_comparison(
     wb1 = openpyxl.load_workbook(file1_path, data_only=True)
     wb2 = openpyxl.load_workbook(file2_path, data_only=True)
 
-    if EMPLOYEE_LISTING_SHEET not in wb1.sheetnames:
+    try:
+        sheet1_name, year1 = _find_employee_listing_sheet(wb1, file1_name)
+    except ValueError:
         wb1.close()
         wb2.close()
-        raise ValueError(f"File '{file1_name}' missing '{EMPLOYEE_LISTING_SHEET}' sheet. Found: {wb1.sheetnames}")
-    if EMPLOYEE_LISTING_SHEET not in wb2.sheetnames:
+        raise
+    try:
+        sheet2_name, year2 = _find_employee_listing_sheet(wb2, file2_name)
+    except ValueError:
         wb1.close()
         wb2.close()
-        raise ValueError(f"File '{file2_name}' missing '{EMPLOYEE_LISTING_SHEET}' sheet. Found: {wb2.sheetnames}")
+        raise
 
-    ws1 = wb1[EMPLOYEE_LISTING_SHEET]
-    ws2 = wb2[EMPLOYEE_LISTING_SHEET]
+    ws1 = wb1[sheet1_name]
+    ws2 = wb2[sheet2_name]
 
     # Auto-detect row structure for each file independently (formats vary by client)
     ph1, sh1, ds1 = _detect_header_rows(ws1)
     ph2, sh2, ds2 = _detect_header_rows(ws2)
     logger.info(f"File1 rows — product_header:{ph1} subheader:{sh1} data_start:{ds1}")
     logger.info(f"File2 rows — product_header:{ph2} subheader:{sh2} data_start:{ds2}")
-
-    year1 = _detect_year(ws1, ph1)
-    year2 = _detect_year(ws2, ph2)
-
-    if year1 is None or year2 is None:
-        wb1.close()
-        wb2.close()
-        raise ValueError(
-            f"Could not detect year from files. "
-            f"File1 year: {year1}, File2 year: {year2}. "
-            f"Ensure the year appears as text (e.g. 'YEAR : 2025') or as a date "
-            f"in the rows above the product headers."
-        )
 
     if year1 == year2:
         wb1.close()
