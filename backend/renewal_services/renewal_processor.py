@@ -571,8 +571,8 @@ def _generate_product_sheet(
     if is_type1:
         col_j_label = f"{name}\n(sum insured)"
         col_k_label = f"{name} Annual Premium"
-        col_l_label = "GST 9%"
-        col_m_label = "Adj Premium"
+        col_l_label = "Adj Premium\n(w/o GST)"
+        col_m_label = "Adj Premium\n(w/ GST)"
     else:
         col_j_label = f"{name} Annual Premium"
         col_k_label = "GST 9%"
@@ -633,8 +633,8 @@ def _generate_product_sheet(
                 ws.cell(row=row_num, column=11, value=-ap)  # cancel = negative
             elif rate:
                 ws.cell(row=row_num, column=11).value = f"=J{row_num}*{rate}"
-            ws.cell(row=row_num, column=12).value = f"=K{row_num}*0.09"   # GST
-            ws.cell(row=row_num, column=13).value = f"=K{row_num}/{divisor}"  # Adj Premium
+            ws.cell(row=row_num, column=12).value = f"=K{row_num}/{divisor}"  # Adj w/o GST
+            ws.cell(row=row_num, column=13).value = f"=L{row_num}*1.09"        # Adj w/ GST
         else:
             ws.cell(row=row_num, column=11).value = f"=J{row_num}*0.09"
             ws.cell(row=row_num, column=12).value = f"=J{row_num}/{divisor}"
@@ -701,8 +701,8 @@ def _generate_product_sheet(
                 ws.cell(row=row_num, column=11, value=ap)  # enroll = positive
             elif rate:
                 ws.cell(row=row_num, column=11).value = f"=J{row_num}*{rate}"
-            ws.cell(row=row_num, column=12).value = f"=K{row_num}*0.09"   # GST
-            ws.cell(row=row_num, column=13).value = f"=K{row_num}/{divisor}"  # Adj Premium
+            ws.cell(row=row_num, column=12).value = f"=K{row_num}/{divisor}"  # Adj w/o GST
+            ws.cell(row=row_num, column=13).value = f"=L{row_num}*1.09"        # Adj w/ GST
         else:
             ws.cell(row=row_num, column=11).value = f"=J{row_num}*0.09"
             ws.cell(row=row_num, column=12).value = f"=J{row_num}/{divisor}"
@@ -722,19 +722,11 @@ def _generate_product_sheet(
 
     bold_font = Font(bold=True)
     if is_type1:
-        ws.cell(row=row_num, column=12, value="Adjustment Breakdown").font = bold_font
+        ws.cell(row=row_num, column=11, value="Adjustment Breakdown").font = bold_font
+        ws.cell(row=row_num, column=12).value = f"=SUM(L{data_start_row}:L{last_data_row})"
+        ws.cell(row=row_num, column=12).number_format = ACCOUNTING_FORMAT
+        ws.cell(row=row_num, column=12).font = bold_font
         ws.cell(row=row_num, column=13).value = f"=SUM(M{data_start_row}:M{last_data_row})"
-        ws.cell(row=row_num, column=13).number_format = ACCOUNTING_FORMAT
-        ws.cell(row=row_num, column=13).font = bold_font
-
-        row_num += 1
-        ws.cell(row=row_num, column=12, value="GST").font = bold_font
-        ws.cell(row=row_num, column=13).value = f"=M{row_num-1}*0.09"
-        ws.cell(row=row_num, column=13).number_format = ACCOUNTING_FORMAT
-
-        row_num += 1
-        ws.cell(row=row_num, column=12, value="Adjustment Breakdown with GST").font = bold_font
-        ws.cell(row=row_num, column=13).value = f"=M{row_num-2}+M{row_num-1}"
         ws.cell(row=row_num, column=13).number_format = ACCOUNTING_FORMAT
         ws.cell(row=row_num, column=13).font = bold_font
     else:
