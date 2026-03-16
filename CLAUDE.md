@@ -101,10 +101,10 @@ Each uploaded Excel file **must** contain a sheet named `"Employee Listing YYYY"
 ### Supported Products
 | Abbr | Full Name | Type |
 |------|-----------|------|
-| GTL  | Group Term Life | Type 1 — Sum Insured × Rate |
-| GDD  | Group Dread Disease | Type 1 — Sum Insured × Rate |
-| GPA  | Group Personal Accident | Type 1 — Sum Insured × Rate |
-| GDI  | Group Disability Income Benefit | Type 1 — Sum Insured × Rate |
+| GTL  | Group Term Life | Type 1 — Sum Insured based |
+| GDD  | Group Dread Disease | Type 1 — Sum Insured based |
+| GPA  | Group Personal Accident | Type 1 — Sum Insured based |
+| GDI  | Group Disability Income Benefit | Type 1 — Sum Insured based |
 | GHS  | Group Hospital & Surgical | Type 2 — Annual Premium + GST |
 | GMM  | Group Major Medical | Type 2 — Annual Premium + GST |
 | GP   | Group Clinical General Practitioner | Type 2 — Annual Premium + GST |
@@ -140,6 +140,30 @@ Key format examples: `NRIC|S1234567A`, `EMAIL|john@example.com`, `NAME|JOHN TAN|
 - Type 2 (Premium): detected when subheader contains `'premium'` (excluding GST and `w/` columns)
 - Fallback: `PRODUCT_TYPE_HINTS` dict maps known product name patterns to their type when column headers are ambiguous
 
+### Premium Column Detection & Output Logic
+
+**All column detection is keyword-based (case-insensitive substring match) — column names vary by client file.**
+
+| Output Column | Source | Detection Keyword |
+|---|---|---|
+| Sum Insured (Col J base) | `'eligible sum insured'` → first match wins | `eligible sum insured` or `sum insured` |
+| Annual Premium (Type 1, Col K) | Per-row premium column in source file | `premium` in header, not `gst`, not `w/` |
+| Annual Premium (Type 2, Col J) | Per-row premium column in source file | `premium` in header, not `gst`, not `w/` |
+
+**Type 1 premium output (GTL, GDD, GPA, GDI):**
+- The source file already has a calculated annual premium per employee (e.g. `"Premium GPA"`, `"GPA Annual Premium"` — any column containing `premium`).
+- Different employee categories carry different rates (e.g. Director $800k vs Staff $150k), so the premium is **read directly from each row** — no rate calculation is done by the system.
+- `DetectedProduct.annual_premium_col` stores the column index; `product_data['annual_premium']` stores the per-row value.
+- Output sign convention:
+  - **Cancel rows** (prev year block): Column K = `−annual_premium` (negative)
+  - **New employee rows** (curr year block): Column K = `+annual_premium` (positive)
+  - **Renewal rows** (curr year block): Column K = `+prev_annual_premium` → net with cancel row = 0
+- Fallback: if no annual premium column detected, falls back to `=J*rate` using the fixed product-level rate from the rate row.
+
+**Type 2 premium output (GHS, GMM, GP, SP, GD):**
+- Annual premium read directly from source; GST calculated as 9% in output Column K.
+- Adjustment column (L) = `J / divisor` (pro-rated by divisor entered by user).
+
 ### Named vs Headcount
 - Employees with `Type of Administration = Named` are excluded from the Headcount adjustment
 - Classification changes (HC ↔ Named between years) are flagged in the Summary sheet output
@@ -162,6 +186,7 @@ Formula: `New = Current − Common`, `Left = Previous − Common`
 3. **Memory on Large Files**: Use chunked processing for >10MB files
 4. **Common = 0 (no matches)**: Check server logs for `Sample key:` lines to see which key strategy is being used. Most likely cause: NRIC/email column header not detected — check it matches one of the supported labels. Fallback is name+DOB which requires consistent formatting across both files.
 5. **Wrong year assigned**: Ensure sheet tabs are named `"Employee Listing YYYY"` — the year comes from the sheet name, not cell content.
+6. **NRIC wrongly mapped / DOB not detected (Berkshire-style files)**: Files using headers like `"EMPLOYEE STAFF ID NO."`, `"MEMBER NATIONAL ID NO."`, `"MEMBER DOB (DD-MM-YYYY)"` are handled by checking employee_id (`staff id`) **before** NRIC (`id no`) to prevent false substring matches, and matching DOB via `'dob' in header` rather than exact match. Hardcoded fallback column indices for employee_id/cost_centre/department were removed — fields are blank if their column is absent.
 
 ## API Endpoints
 

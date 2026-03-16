@@ -78,6 +78,7 @@ class DetectedProduct:
     category_col: Optional[int] = None
     value_col: Optional[int] = None  # Sum Insured (type1) or Premium (type2)
     premium_rate: Optional[float] = None  # Type 1 only, from row 12
+    annual_premium_col: Optional[int] = None  # Type 1: column with per-row calculated annual premium
 
 
 @dataclass
@@ -359,6 +360,8 @@ def _detect_products(ws, product_header_row: int = 13, subheader_row: int = 14) 
             elif 'premium' in header and 'gst' not in header and 'w/' not in header:
                 if not has_sum_insured:
                     product.value_col = col
+                else:
+                    product.annual_premium_col = col  # Type 1: per-row calculated premium
 
         if eligible_si_col:
             product.value_col = eligible_si_col
@@ -425,14 +428,14 @@ def _find_employee_columns(ws, subheader_row: int = 14) -> dict:
         elif name_fallback is None and 'name' in header and 'employee' not in header and 'dependant' not in header:
             name_fallback = col
 
-        if 'dob' not in col_map and ('date of birth' in header or header in ('dob', 'd.o.b', 'birth date', 'birthdate')):
+        if 'dob' not in col_map and ('date of birth' in header or 'dob' in header or header in ('d.o.b', 'birth date', 'birthdate')):
             col_map['dob'] = col
-        elif 'nric' not in col_map and ('nric' in header or 'ic no' in header or 'id no' in header or 'passport' in header or header in ('nric/fin', 'nric / fin', 'fin', 'nric/passport')):
+        elif 'employee id' in header or 'emp id' in header or 'staff id' in header or 'employee id no' in header:
+            col_map['employee_id'] = col  # check BEFORE nric to prevent 'id no' false match
+        elif 'nric' not in col_map and ('nric' in header or 'ic no' in header or 'id no' in header or 'national id' in header or 'passport' in header or header in ('nric/fin', 'nric / fin', 'fin', 'nric/passport')):
             col_map['nric'] = col
         elif 'email' not in col_map and ('email' in header or 'e-mail' in header or 'e mail' in header):
             col_map['email'] = col
-        elif 'employee id' in header or 'emp id' in header or 'staff id' in header or 'employee id no' in header:
-            col_map['employee_id'] = col
         elif 'cost centre' in header or 'cost center' in header:
             col_map['cost_centre'] = col
         elif 'department' in header:
@@ -463,9 +466,9 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict,
         emp = EmployeeRecord(
             name=name_val,
             dob=dob_val,
-            employee_id=_normalize(ws.cell(row=row, column=emp_cols.get('employee_id', 13)).value),
-            cost_centre=_normalize(ws.cell(row=row, column=emp_cols.get('cost_centre', 14)).value),
-            department=_normalize(ws.cell(row=row, column=emp_cols.get('department', 15)).value),
+            employee_id=_normalize(ws.cell(row=row, column=emp_cols['employee_id']).value) if 'employee_id' in emp_cols else '',
+            cost_centre=_normalize(ws.cell(row=row, column=emp_cols['cost_centre']).value) if 'cost_centre' in emp_cols else '',
+            department=_normalize(ws.cell(row=row, column=emp_cols['department']).value) if 'department' in emp_cols else '',
             category=_normalize(ws.cell(row=row, column=emp_cols.get('category', 12)).value),
             nric=_normalize(ws.cell(row=row, column=emp_cols['nric']).value) if 'nric' in emp_cols else '',
             email=_normalize(ws.cell(row=row, column=emp_cols['email']).value) if 'email' in emp_cols else '',
@@ -481,12 +484,16 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict,
                 category = _normalize(ws.cell(row=row, column=product.category_col).value)
 
             value = _to_float(ws.cell(row=row, column=product.value_col).value)
+            annual_premium = None
+            if product.annual_premium_col:
+                annual_premium = _to_float(ws.cell(row=row, column=product.annual_premium_col).value)
 
             if admin_type or value is not None:
                 emp.product_data[product.name] = {
                     'admin_type': admin_type,
                     'category': category,
-                    'value': value
+                    'value': value,
+                    'annual_premium': annual_premium,
                 }
 
         key = emp.unique_key()
@@ -531,9 +538,11 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict,
                         'admin_type': '',
                         'category': eo_pdata.get('category', ''),
                         'value': None,
+                        'annual_premium': None,
                     }
 
     return employees
+
 
 
 def _generate_product_sheet(
@@ -608,7 +617,7 @@ def _generate_product_sheet(
         ws.cell(row=row_num, column=4, value=emp.employee_id)
         ws.cell(row=row_num, column=5, value=emp.cost_centre)
         ws.cell(row=row_num, column=6, value=emp.department)
-        ws.cell(row=row_num, column=7, value=emp.category)
+        ws.cell(row=row_num, column=7, value=pdata.get('category') or emp.category)
 
         val = pdata.get('value')
         if val is not None:
@@ -616,8 +625,12 @@ def _generate_product_sheet(
         # Col I empty for prev year; Col J = I - H
         ws.cell(row=row_num, column=10).value = f"=I{row_num}-H{row_num}"
 
-        if is_type1 and rate:
-            ws.cell(row=row_num, column=11).value = f"=J{row_num}*{rate}"
+        if is_type1:
+            ap = pdata.get('annual_premium')
+            if ap is not None:
+                ws.cell(row=row_num, column=11, value=-ap)  # cancel = negative
+            elif rate:
+                ws.cell(row=row_num, column=11).value = f"=J{row_num}*{rate}"
             ws.cell(row=row_num, column=12).value = f"=K{row_num}/{divisor}"
         else:
             ws.cell(row=row_num, column=11).value = f"=J{row_num}*0.09"
@@ -658,7 +671,7 @@ def _generate_product_sheet(
         ws.cell(row=row_num, column=4, value=emp.employee_id)
         ws.cell(row=row_num, column=5, value=emp.cost_centre)
         ws.cell(row=row_num, column=6, value=emp.department)
-        ws.cell(row=row_num, column=7, value=emp.category)
+        ws.cell(row=row_num, column=7, value=pdata.get('category') or emp.category)
 
         # Col H empty for curr year; Col J = I - H
         # For renewal employees (in both years), use prev year premium so that
@@ -672,8 +685,14 @@ def _generate_product_sheet(
             ws.cell(row=row_num, column=9, value=val)
         ws.cell(row=row_num, column=10).value = f"=I{row_num}-H{row_num}"
 
-        if is_type1 and rate:
-            ws.cell(row=row_num, column=11).value = f"=J{row_num}*{rate}"
+        if is_type1:
+            # Renewals use prev year premium (mirrors cancel → net = 0); new employees use curr year
+            ap_pdata = prev_employees[key].product_data.get(product.name, {}) if key in prev_employees else pdata
+            ap = ap_pdata.get('annual_premium')
+            if ap is not None:
+                ws.cell(row=row_num, column=11, value=ap)  # enroll = positive
+            elif rate:
+                ws.cell(row=row_num, column=11).value = f"=J{row_num}*{rate}"
             ws.cell(row=row_num, column=12).value = f"=K{row_num}/{divisor}"
         else:
             ws.cell(row=row_num, column=11).value = f"=J{row_num}*0.09"

@@ -231,7 +231,7 @@ const RenewalComparison = () => {
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <p className="text-xs font-medium text-purple-700 mb-1 uppercase tracking-wide">
-                      Type 1 — Sum Insured × Rate
+                      Type 1 — Sum Insured based
                     </p>
                     <div className="space-y-1">
                       {PRODUCTS.filter(p => p.type === 1).map(p => (
@@ -246,7 +246,7 @@ const RenewalComparison = () => {
                   </div>
                   <div>
                     <p className="text-xs font-medium text-blue-700 mb-1 uppercase tracking-wide">
-                      Type 2 — Annual Premium + GST
+                      Type 2 — Annual Premium based
                     </p>
                     <div className="space-y-1">
                       {PRODUCTS.filter(p => p.type === 2).map(p => (
@@ -258,6 +258,61 @@ const RenewalComparison = () => {
                         </div>
                       ))}
                     </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* How Premium is Generated */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-700 mb-2">How Premium Values are Generated</h4>
+
+                <div className="space-y-3">
+                  {/* Type 1 */}
+                  <div className="bg-purple-50 border border-purple-200 rounded-md px-3 py-3">
+                    <p className="text-xs font-semibold text-purple-800 mb-1">
+                      Type 1 products (GTL, GDD, GPA, GDI) — Sum Insured products
+                    </p>
+                    <p className="text-xs text-purple-900 mb-2">
+                      Each employee has their own coverage amount (Sum Insured) and a pre-calculated annual premium already in the source file.
+                      Because different categories (e.g. "Director – $800,000 coverage" vs "Staff – $150,000 coverage") often carry different premium rates,
+                      the system reads each employee's actual premium figure directly from the source file — no manual rate calculation is done.
+                    </p>
+                    <div className="space-y-1">
+                      <div className="flex items-start space-x-2 text-xs text-purple-800">
+                        <span className="mt-0.5 font-bold text-red-500">−</span>
+                        <span><span className="font-semibold">Cancelled employees</span> (in previous year only) — premium shown as a <span className="font-semibold">negative</span> amount</span>
+                      </div>
+                      <div className="flex items-start space-x-2 text-xs text-purple-800">
+                        <span className="mt-0.5 font-bold text-green-600">+</span>
+                        <span><span className="font-semibold">New employees</span> (in current year only) — premium shown as a <span className="font-semibold">positive</span> amount</span>
+                      </div>
+                      <div className="flex items-start space-x-2 text-xs text-purple-800">
+                        <span className="mt-0.5 font-bold text-gray-400">0</span>
+                        <span><span className="font-semibold">Continuing employees</span> (in both years) — cancel and re-enrol values cancel out to <span className="font-semibold">zero net adjustment</span></span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Type 2 */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-md px-3 py-3">
+                    <p className="text-xs font-semibold text-blue-800 mb-1">
+                      Type 2 products (GHS, GMM, GP, SP, GD) — Annual Premium products
+                    </p>
+                    <p className="text-xs text-blue-900">
+                      Each employee has a fixed annual premium already stated in the source file.
+                      The system reads this directly and calculates <span className="font-semibold">GST at 9%</span> on top.
+                      The adjustment column shows the pro-rated amount based on the divisor you set (e.g. divisor 2 = half-year adjustment).
+                    </p>
+                  </div>
+
+                  {/* Pro-rata note */}
+                  <div className="bg-gray-50 border border-gray-200 rounded-md px-3 py-2">
+                    <p className="text-xs text-gray-700">
+                      <span className="font-semibold">Pro-rata Divisor:</span> The final adjustment column divides the annual premium by this number.
+                      Use <span className="font-mono bg-gray-100 px-1 rounded">2</span> for a mid-year adjustment (6 months),{' '}
+                      <span className="font-mono bg-gray-100 px-1 rounded">12</span> for a single month, or{' '}
+                      <span className="font-mono bg-gray-100 px-1 rounded">1</span> for a full year.
+                    </p>
                   </div>
                 </div>
               </div>
