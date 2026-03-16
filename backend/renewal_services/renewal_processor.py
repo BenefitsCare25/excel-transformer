@@ -88,11 +88,20 @@ class EmployeeRecord:
     cost_centre: str
     department: str
     category: str = ''
+    nric: str = ''
+    email: str = ''
     product_data: Dict[str, dict] = field(default_factory=dict)
 
     def unique_key(self) -> str:
-        name_norm = ' '.join(self.name.upper().split())  # collapse internal spaces
-        return f"{name_norm}|{self.dob.strip()}"
+        """Matching priority: NRIC → email → name+DOB."""
+        nric = self.nric.upper().strip()
+        if nric:
+            return f"NRIC|{nric}"
+        email = self.email.lower().strip()
+        if email:
+            return f"EMAIL|{email}"
+        name_norm = ' '.join(self.name.upper().split())
+        return f"NAME|{name_norm}|{self.dob.strip()}"
 
 
 @dataclass
@@ -418,6 +427,10 @@ def _find_employee_columns(ws, subheader_row: int = 14) -> dict:
 
         if 'dob' not in col_map and ('date of birth' in header or header in ('dob', 'd.o.b', 'birth date', 'birthdate')):
             col_map['dob'] = col
+        elif 'nric' not in col_map and ('nric' in header or 'ic no' in header or 'id no' in header or 'passport' in header or header in ('nric/fin', 'nric / fin', 'fin', 'nric/passport')):
+            col_map['nric'] = col
+        elif 'email' not in col_map and ('email' in header or 'e-mail' in header or 'e mail' in header):
+            col_map['email'] = col
         elif 'employee id' in header or 'emp id' in header or 'staff id' in header or 'employee id no' in header:
             col_map['employee_id'] = col
         elif 'cost centre' in header or 'cost center' in header:
@@ -454,6 +467,8 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict,
             cost_centre=_normalize(ws.cell(row=row, column=emp_cols.get('cost_centre', 14)).value),
             department=_normalize(ws.cell(row=row, column=emp_cols.get('department', 15)).value),
             category=_normalize(ws.cell(row=row, column=emp_cols.get('category', 12)).value),
+            nric=_normalize(ws.cell(row=row, column=emp_cols['nric']).value) if 'nric' in emp_cols else '',
+            email=_normalize(ws.cell(row=row, column=emp_cols['email']).value) if 'email' in emp_cols else '',
         )
 
         for product in products:
@@ -476,7 +491,7 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict,
 
         key = emp.unique_key()
         if len(employees) < 3:
-            logger.debug(f"Sample key: {repr(key)}")
+            logger.info(f"Sample key: {repr(key)}")
         if key not in employees:
             employees[key] = emp
         else:
