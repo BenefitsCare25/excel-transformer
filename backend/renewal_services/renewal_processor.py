@@ -91,7 +91,8 @@ class EmployeeRecord:
     product_data: Dict[str, dict] = field(default_factory=dict)
 
     def unique_key(self) -> str:
-        return f"{self.name.upper().strip()}|{self.dob.strip()}"
+        name_norm = ' '.join(self.name.upper().split())  # collapse internal spaces
+        return f"{name_norm}|{self.dob.strip()}"
 
 
 @dataclass
@@ -118,11 +119,22 @@ def _normalize(value) -> str:
 
 
 def _normalize_date(value) -> str:
+    """Return date as dd/mm/yyyy string for consistent key matching across files."""
     if value is None:
         return ''
     if isinstance(value, datetime):
         return value.strftime('%d/%m/%Y')
-    return str(value).strip()
+    s = str(value).strip()
+    if not s:
+        return ''
+    # Try common string formats so both files resolve to the same key
+    for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%m/%d/%Y',
+                '%d/%m/%y', '%Y/%m/%d', '%d-%b-%Y', '%d %b %Y'):
+        try:
+            return datetime.strptime(s, fmt).strftime('%d/%m/%Y')
+        except ValueError:
+            continue
+    return s  # return as-is if no format matched (avoids silent empty)
 
 
 def _to_float(value) -> Optional[float]:
@@ -463,6 +475,8 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict,
                 }
 
         key = emp.unique_key()
+        if len(employees) < 3:
+            logger.debug(f"Sample key: {repr(key)}")
         if key not in employees:
             employees[key] = emp
         else:
