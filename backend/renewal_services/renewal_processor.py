@@ -766,15 +766,26 @@ def _generate_summary_sheet(
     added = curr_keys - prev_keys
     removed = prev_keys - curr_keys
 
-    for label, val in [
-        ("Previous year employees:", len(prev_keys)),
-        ("Current year employees:", len(curr_keys)),
-        ("Common (matched):", len(common)),
-        ("New employees:", len(added)),
-        ("Left employees:", len(removed)),
+    for label, val, note in [
+        ("Previous year employees:",
+         len(prev_keys),
+         f"Total headcount in {prev_year} policy file"),
+        ("Current year employees:",
+         len(curr_keys),
+         f"Total headcount in {curr_year} policy file"),
+        ("Common (matched):",
+         len(common),
+         "Employees found in BOTH years — matched by name & date of birth"),
+        ("New employees:",
+         len(added),
+         f"In {curr_year} but NOT in {prev_year} — enrolled after previous policy (Cancel & Re-enroll as NEW)"),
+        ("Left employees:",
+         len(removed),
+         f"In {prev_year} but NOT in {curr_year} — no longer on current policy (Cancel & Re-enroll as CANCEL)"),
     ]:
         ws.cell(row=row, column=1, value=label)
         ws.cell(row=row, column=2, value=val)
+        ws.cell(row=row, column=3, value=note).font = Font(italic=True, color="595959", size=9)
         row += 1
 
     row += 1
