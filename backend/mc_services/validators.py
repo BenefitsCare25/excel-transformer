@@ -4,7 +4,7 @@ from typing import List
 import pandas as pd
 
 EL_MIN_COLUMNS = 21
-DL_MIN_COLUMNS = 9
+DL_MIN_COLUMNS = 8
 
 EL_EXPECTED_COLUMNS = [
     'Entity', 'Staff ID', 'Login ID', 'Employee Name', 'Identification No.',
