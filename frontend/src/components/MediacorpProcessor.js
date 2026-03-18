@@ -443,7 +443,7 @@ const MediacorpProcessor = () => {
               />
               <CollapsibleDetail
                 label="Changes"
-                count={result.statistics?.el_total_changes || 0}
+                count={result.statistics?.el_details?.changes?.length || 0}
                 items={result.statistics?.el_details?.changes}
                 colorClass="text-blue-700"
               />
