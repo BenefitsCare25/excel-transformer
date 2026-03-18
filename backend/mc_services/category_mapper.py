@@ -91,9 +91,9 @@ class CategoryMapper:
         aia_category: str
     ) -> str:
         """Determine Flex Category based on overseas/employment/AIA details."""
-        overseas = str(overseas_assignment).strip() if overseas_assignment else ''
-        emp_type = str(employment_type).strip() if employment_type else ''
-        aia_cat = str(aia_category).strip() if aia_category else ''
+        overseas = str(overseas_assignment).strip() if is_not_blank(overseas_assignment) else ''
+        emp_type = str(employment_type).strip() if is_not_blank(employment_type) else ''
+        aia_cat = str(aia_category).strip() if is_not_blank(aia_category) else ''
 
         if overseas.lower() == 'secondment':
             return "Regular/FTH/RR (SG) - Secondee"
