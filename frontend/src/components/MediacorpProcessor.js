@@ -2,6 +2,46 @@ import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import apiService from '../services/api';
 
+const CollapsibleDetail = ({ label, count, items, colorClass = 'text-gray-700' }) => {
+  const [open, setOpen] = useState(false);
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="bg-white rounded border border-gray-200 overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-3 py-2 text-xs hover:bg-gray-50 transition-colors"
+      >
+        <span className={`font-semibold ${colorClass}`}>{count} {label}</span>
+        <svg className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="border-t border-gray-100 max-h-48 overflow-y-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50 sticky top-0">
+              <tr>
+                <th className="px-3 py-1 text-left text-gray-500 font-medium">Staff ID</th>
+                <th className="px-3 py-1 text-left text-gray-500 font-medium">Name</th>
+                <th className="px-3 py-1 text-left text-gray-500 font-medium">Remark</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {items.map((item, i) => (
+                <tr key={i} className="hover:bg-gray-50">
+                  <td className="px-3 py-1 text-gray-600 whitespace-nowrap">{item.staff_id}</td>
+                  <td className="px-3 py-1 text-gray-800">{item.name}</td>
+                  <td className="px-3 py-1 text-gray-500">{item.remark}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const getFileType = (filename) => {
   if (!filename) return null;
   const ext = filename.split('.').pop().toLowerCase();
@@ -388,22 +428,28 @@ const MediacorpProcessor = () => {
               </svg>
               Employee Listing Changes
             </h4>
-            <div className="grid grid-cols-3 gap-3 mb-3">
-              <div className="bg-white rounded p-2 text-center">
-                <div className="text-lg font-bold text-green-600">{result.statistics?.el_additions || 0}</div>
-                <div className="text-xs text-gray-500">Additions</div>
-              </div>
-              <div className="bg-white rounded p-2 text-center">
-                <div className="text-lg font-bold text-red-600">{result.statistics?.el_deletions || 0}</div>
-                <div className="text-xs text-gray-500">Deletions</div>
-              </div>
-              <div className="bg-white rounded p-2 text-center">
-                <div className="text-lg font-bold text-blue-600">{result.statistics?.el_total_changes || 0}</div>
-                <div className="text-xs text-gray-500">Changes</div>
-              </div>
+            <div className="space-y-2">
+              <CollapsibleDetail
+                label="Additions"
+                count={result.statistics?.el_additions || 0}
+                items={result.statistics?.el_details?.additions}
+                colorClass="text-green-700"
+              />
+              <CollapsibleDetail
+                label="Deletions"
+                count={result.statistics?.el_deletions || 0}
+                items={result.statistics?.el_details?.deletions}
+                colorClass="text-red-700"
+              />
+              <CollapsibleDetail
+                label="Changes"
+                count={result.statistics?.el_total_changes || 0}
+                items={result.statistics?.el_details?.changes}
+                colorClass="text-blue-700"
+              />
             </div>
             {result.statistics?.el_total_changes > 0 && (
-              <div className="bg-white rounded p-2">
+              <div className="mt-2 bg-white rounded p-2">
                 <div className="text-xs text-gray-600 flex flex-wrap gap-2">
                   {result.statistics?.el_changes?.entity > 0 && (
                     <span className="bg-gray-100 px-2 py-1 rounded">Entity: {result.statistics.el_changes.entity}</span>
@@ -439,27 +485,37 @@ const MediacorpProcessor = () => {
               </svg>
               Dependant Listing Changes
             </h4>
-            <div className="grid grid-cols-5 gap-2">
-              <div className="bg-white rounded p-2 text-center">
-                <div className="text-lg font-bold text-pink-600">{result.statistics?.dl_new_spouse || 0}</div>
-                <div className="text-xs text-gray-500">New Spouse</div>
-              </div>
-              <div className="bg-white rounded p-2 text-center">
-                <div className="text-lg font-bold text-indigo-600">{result.statistics?.dl_new_child || 0}</div>
-                <div className="text-xs text-gray-500">New Child</div>
-              </div>
-              <div className="bg-white rounded p-2 text-center">
-                <div className="text-lg font-bold text-purple-600">{result.statistics?.dl_new_other || 0}</div>
-                <div className="text-xs text-gray-500">New Other</div>
-              </div>
-              <div className="bg-white rounded p-2 text-center">
-                <div className="text-lg font-bold text-red-600">{result.statistics?.dl_deletions || 0}</div>
-                <div className="text-xs text-gray-500">Deletions</div>
-              </div>
-              <div className="bg-white rounded p-2 text-center">
-                <div className="text-lg font-bold text-gray-600">{result.statistics?.dl_dropoffs || 0}</div>
-                <div className="text-xs text-gray-500">Dropoffs</div>
-              </div>
+            <div className="space-y-2">
+              <CollapsibleDetail
+                label="New Spouse"
+                count={result.statistics?.dl_new_spouse || 0}
+                items={result.statistics?.dl_details?.new_spouse}
+                colorClass="text-pink-700"
+              />
+              <CollapsibleDetail
+                label="New Child"
+                count={result.statistics?.dl_new_child || 0}
+                items={result.statistics?.dl_details?.new_child}
+                colorClass="text-indigo-700"
+              />
+              <CollapsibleDetail
+                label="New Other"
+                count={result.statistics?.dl_new_other || 0}
+                items={result.statistics?.dl_details?.new_other}
+                colorClass="text-purple-700"
+              />
+              <CollapsibleDetail
+                label="Deletions"
+                count={result.statistics?.dl_deletions || 0}
+                items={result.statistics?.dl_details?.deletions}
+                colorClass="text-red-700"
+              />
+              <CollapsibleDetail
+                label="Dropoffs"
+                count={result.statistics?.dl_dropoffs || 0}
+                items={result.statistics?.dl_details?.dropoffs}
+                colorClass="text-gray-700"
+              />
             </div>
           </div>
 
@@ -533,7 +589,7 @@ const MediacorpProcessor = () => {
               </li>
               <li className="flex items-center">
                 <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
-                <strong>iXchange ADC</strong> - 13-column format ({result.statistics?.adc_records || 0} records)
+                <strong>Employee</strong> - 13-column format ({result.statistics?.adc_records || 0} records)
               </li>
             </ul>
           </div>

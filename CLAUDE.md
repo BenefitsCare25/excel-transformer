@@ -114,19 +114,39 @@ cd frontend && npm start                 # Run React (port 3000)
 | 1 | Category Tagging | Assign AIA Category + Flex Category to new EL |
 | 2 | DL Comparison | Compare new vs old Dependant Listings, generate ADC |
 | 3 | EL Comparison | Compare new vs old Employee Listings, add ADC remarks |
-| 4 | Output Generation | Combined Excel with 3 sheets (Processed EL, Processed DL, iXchange ADC) |
+| 4 | Output Generation | Combined Excel with 3 sheets (Processed EL, Processed DL, Employee) |
+
+### Output Excel Sheets
+| Sheet | Contents | Filtering |
+|-------|----------|-----------|
+| Processed EL | Full employee listing with categories and remarks | Only rows with non-empty ADC Remarks |
+| Processed DL | Full dependant listing with comparison columns | All rows (unfiltered) |
+| Employee | 13-column iXchange format | Only rows with non-empty ADC Remarks |
+
+- ADC Remarks / Inspro ADC Remarks is always the **first column** in each sheet
+- Sheet was previously named "iXchange ADC", renamed to "Employee"
+
+### ADC Effective Date (`wef`)
+- **EL Addition**: `wef` = employee's Date of Hire (col 12) — when coverage starts
+- **EL Deletion**: `wef` = Last Day of Service (col 14) — when coverage ends
+- **DL new dependant**: `wef` = date extracted from the **new DL filename** (e.g. `MediacorpDependant_16032026.csv` → `160326`)
+  - Regex extracts 8-digit date from filename, converts `DDMMYYYY` → `DDMMYY`
+  - Fallback: today's date if no date found in filename
+  - Previously used DOB (incorrect) — fixed to use file date since it represents when the ADC was generated
 
 ### Backend Logging
 - Comprehensive step-by-step logging with timing for Azure Log Stream monitoring
 - Logs file types, row/column counts, category distributions, sample data, warnings, and full traceback on errors
 - `file_info` dict (type, rows per file) included in API response for frontend display
 
-### Frontend Validation
+### Frontend Summary & Details
 - File type badges (CSV orange, XLSX green) on upload boxes
 - File size display per upload
 - Pre-submission validation summary grid showing all 4 files with type/size/missing status
 - Error details array rendered as bulleted list (e.g. backend validation errors)
 - Console logging with `[MC Processor]` prefix for debugging
+- **Collapsible detail dropdowns** in results summary — click each category (EL additions/deletions/changes, DL new spouse/child/other/deletions/dropoffs) to expand a table showing Staff ID, Name, and Remark for each record
+- Detail data extracted from processed DataFrames in `app.py` and returned via API response (`el_details`, `dl_details`)
 
 ## Renewal Comparison — Key Design Notes
 

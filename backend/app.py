@@ -5365,8 +5365,19 @@ def mc_process_files():
             logger.info("MC ADC STEP 2: DL COMPARISON")
             logger.info("-" * 40)
 
+            # Extract date from new DL filename (e.g. MediacorpDependant_16032026.csv → 160326)
+            import re as _re
+            new_dl_basename = os.path.basename(file_paths['new_dl'])
+            _date_match = _re.search(r'(\d{8})', new_dl_basename)
+            if _date_match:
+                _raw = _date_match.group(1)  # DDMMYYYY
+                new_dl_file_date = _raw[:4] + _raw[6:]  # DDMMYY
+            else:
+                new_dl_file_date = get_today_ddmmyy()
+            logger.info(f"  New DL file date: {new_dl_file_date} (from filename: {new_dl_basename})")
+
             processed_dl, dl_stats = dl_processor.process_step2_dl_comparison(
-                new_dl_df, old_dl_df, processed_el
+                new_dl_df, old_dl_df, processed_el, file_date=new_dl_file_date
             )
 
             step2_elapsed = time.time() - step2_start
@@ -5397,6 +5408,63 @@ def mc_process_files():
                         f"has_inactive_date={el_stats['warnings']['has_inactive_date']}, "
                         f"check_hr={el_stats['warnings']['check_with_hr']}")
             logger.info(f"  Step 3 completed in {step3_elapsed:.2f}s")
+
+            # ── Extract detail records for frontend dropdowns ──
+            def extract_el_details(df):
+                details = {'additions': [], 'deletions': [], 'changes': []}
+                for _, row in df.iterrows():
+                    remark = str(row.get('ADC Remarks', '')).strip()
+                    if not remark:
+                        continue
+                    staff_id = str(row.iloc[1]).strip() if len(row) > 1 else ''
+                    name = str(row.iloc[3]).strip() if len(row) > 3 else ''
+                    rec = {'staff_id': staff_id, 'name': name, 'remark': remark}
+                    if 'Addition' in remark:
+                        details['additions'].append(rec)
+                    elif 'Deletion' in remark:
+                        details['deletions'].append(rec)
+                    else:
+                        details['changes'].append(rec)
+                return details
+
+            def extract_dl_details(df):
+                details = {'new_spouse': [], 'new_child': [], 'new_other': [],
+                           'deletions': [], 'dropoffs': []}
+                remarks_col = 'Inspro ADC Remarks'
+                if remarks_col not in df.columns:
+                    return details
+                for _, row in df.iterrows():
+                    remark = str(row.get(remarks_col, '')).strip()
+                    if not remark:
+                        continue
+                    staff_id = str(row.iloc[0]).strip() if len(row) > 0 else ''
+                    first = str(row.iloc[2]).strip() if len(row) > 2 else ''
+                    last = str(row.iloc[3]).strip() if len(row) > 3 else ''
+                    name = f"{first} {last}".strip()
+                    rec = {'staff_id': staff_id, 'name': name, 'remark': remark}
+                    if 'New Spouse' in remark:
+                        details['new_spouse'].append(rec)
+                    elif 'New Child' in remark:
+                        details['new_child'].append(rec)
+                    elif 'New Dependant' in remark:
+                        details['new_other'].append(rec)
+                    elif 'Deletion' in remark:
+                        details['deletions'].append(rec)
+                    elif 'Dropoff' in remark or 'Drop' in remark:
+                        details['dropoffs'].append(rec)
+                return details
+
+            el_details = extract_el_details(processed_el)
+            dl_details = extract_dl_details(processed_dl)
+
+            # Dropoffs are stored in DataFrame attrs, not in Inspro ADC Remarks
+            dropoff_list = processed_dl.attrs.get('dropoffs', [])
+            dl_details['dropoffs'] = [
+                {'staff_id': str(d.get('Staff ID', '')).strip(),
+                 'name': str(d.get('Name', '')).strip(),
+                 'remark': d.get('Status', 'Dropped from listing')}
+                for d in dropoff_list
+            ]
 
             # ── Step 4: Generate Combined Output ──
             step4_start = time.time()
@@ -5474,6 +5542,9 @@ def mc_process_files():
                         'check_with_hr': el_stats['warnings']['check_with_hr'] + dl_stats['warnings']['check_with_hr']
                     },
                     'total_warnings': total_warnings,
+                    # Detail records for frontend dropdowns
+                    'el_details': el_details,
+                    'dl_details': dl_details,
                     # File metadata for frontend display
                     'file_info': file_info
                 }

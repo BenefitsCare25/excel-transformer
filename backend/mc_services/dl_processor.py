@@ -33,9 +33,14 @@ class DLProcessor:
         self,
         new_dl_df: pd.DataFrame,
         old_dl_df: pd.DataFrame,
-        processed_el_df: pd.DataFrame
+        processed_el_df: pd.DataFrame,
+        file_date: Optional[str] = None
     ) -> tuple:
         """Step 2: DL Comparison and ADC generation.
+
+        Args:
+            file_date: DDMMYY string from the new DL file's modification date.
+                       Used as the effective date for new dependant ADC remarks.
 
         Returns:
             tuple: (processed_df, statistics_dict)
@@ -72,8 +77,6 @@ class DLProcessor:
             staff_id = self._get_safe_value(row, self.COL_STAFF_ID)
             dep_id = self._get_safe_value(row, self.COL_DEP_ID)
             relationship = self._get_safe_value(row, self.COL_RELATIONSHIP)
-            hire_date = self._get_safe_value(row, self.COL_DOB)
-
             dep_id_no_str = str(dep_id_no).strip().upper() if dep_id_no else ''
             staff_id_str = str(staff_id).strip() if staff_id else ''
             dep_id_str = str(dep_id).strip() if dep_id else ''
@@ -109,7 +112,7 @@ class DLProcessor:
             remarks, remark_type = self._generate_adc_remarks_with_type(
                 is_new=is_new,
                 relationship=relationship,
-                effective_date=hire_date,
+                effective_date=file_date,
                 lds_check=lds_check,
                 is_employee=is_employee,
                 dep_who_are_ee=dep_who_are_ee
@@ -215,8 +218,7 @@ class DLProcessor:
             return "Deletion", 'deletion'
 
         if is_new:
-            date_str = format_date_ddmmyy(effective_date)
-            wef_str = f" wef {date_str}" if date_str else ""
+            wef_str = f" wef {effective_date}" if effective_date else ""
 
             relationship_str = str(relationship).upper() if relationship else ''
 
