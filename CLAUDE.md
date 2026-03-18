@@ -116,7 +116,8 @@ cd frontend && npm start                 # Run React (port 3000)
 | 3 | EL Comparison | Compare new vs old Employee Listings, add ADC remarks |
 | 4 | Output Generation | Combined Excel with 3 sheets (Processed EL, Processed DL, Employee) |
 
-### Output Excel Sheets
+### Output Excel Files
+**Main file**: `Mediacorp_ADC_Output_DDMMYY.xlsx` — 3 sheets:
 | Sheet | Contents | Filtering |
 |-------|----------|-----------|
 | Processed EL | Full employee listing with categories and remarks | Only rows with non-empty ADC Remarks |
@@ -125,6 +126,12 @@ cd frontend && npm start                 # Run React (port 3000)
 
 - ADC Remarks / Inspro ADC Remarks is always the **first column** in each sheet
 - Sheet was previously named "iXchange ADC", renamed to "Employee"
+
+**Standalone files** (date from uploaded filename, DDMMYYYY format):
+| File | Contents | Source |
+|------|----------|--------|
+| `MediacorpEmployee_DDMMYYYY.xlsx` | Processed EL without ADC Remarks column | All rows |
+| `MediacorpDependant_DDMMYYYY.xlsx` | Processed DL without Inspro ADC Remarks column | All rows |
 
 ### ADC Effective Date (`wef`)
 - **EL Addition**: `wef` = employee's Date of Hire (col 12) — when coverage starts

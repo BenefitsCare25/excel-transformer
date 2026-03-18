@@ -5479,6 +5479,25 @@ def mc_process_files():
 
             excel_handler.save_multi_sheet_excel(output_path, sheets)
 
+            # Generate standalone EL file (without ADC Remarks)
+            new_el_basename = os.path.basename(file_paths['new_el'])
+            _el_date_match = _re.search(r'(\d{8})', new_el_basename)
+            el_file_date = _el_date_match.group(1) if _el_date_match else datetime.now().strftime('%d%m%Y')
+            el_only_filename = f"MediacorpEmployee_{el_file_date}.xlsx"
+            el_only_path = os.path.join(PROCESSED_FOLDER, el_only_filename)
+            el_only_df = processed_el.drop(columns=['ADC Remarks'], errors='ignore')
+            el_only_df.to_excel(el_only_path, index=False, engine='openpyxl')
+            logger.info(f"  EL-only file: {el_only_filename} ({len(el_only_df)} rows)")
+
+            # Generate standalone DL file (without Inspro ADC Remarks)
+            _dl_date_match = _re.search(r'(\d{8})', new_dl_basename)
+            dl_file_date = _dl_date_match.group(1) if _dl_date_match else datetime.now().strftime('%d%m%Y')
+            dl_only_filename = f"MediacorpDependant_{dl_file_date}.xlsx"
+            dl_only_path = os.path.join(PROCESSED_FOLDER, dl_only_filename)
+            dl_only_df = processed_dl.drop(columns=['Inspro ADC Remarks'], errors='ignore')
+            dl_only_df.to_excel(dl_only_path, index=False, engine='openpyxl')
+            logger.info(f"  DL-only file: {dl_only_filename} ({len(dl_only_df)} rows)")
+
             step4_elapsed = time.time() - step4_start
             output_size = os.path.getsize(output_path)
 
@@ -5516,6 +5535,8 @@ def mc_process_files():
             return jsonify({
                 'success': True,
                 'filename': output_filename,
+                'el_filename': el_only_filename,
+                'dl_filename': dl_only_filename,
                 'statistics': {
                     'employees_processed': el_count,
                     'dependants_processed': dl_count,
