@@ -88,6 +88,7 @@ class EmployeeRecord:
     employee_id: str
     cost_centre: str
     department: str
+    entity: str = ''
     category: str = ''
     nric: str = ''
     email: str = ''
@@ -440,6 +441,8 @@ def _find_employee_columns(ws, subheader_row: int = 14) -> dict:
             col_map['cost_centre'] = col
         elif 'department' in header:
             col_map['department'] = col
+        elif 'entity' not in col_map and header == 'entity':
+            col_map['entity'] = col
         elif 'category' in header and 'category' not in col_map:
             col_map['category'] = col
 
@@ -469,6 +472,7 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict,
             employee_id=_normalize(ws.cell(row=row, column=emp_cols['employee_id']).value) if 'employee_id' in emp_cols else '',
             cost_centre=_normalize(ws.cell(row=row, column=emp_cols['cost_centre']).value) if 'cost_centre' in emp_cols else '',
             department=_normalize(ws.cell(row=row, column=emp_cols['department']).value) if 'department' in emp_cols else '',
+            entity=_normalize(ws.cell(row=row, column=emp_cols['entity']).value) if 'entity' in emp_cols else '',
             category=_normalize(ws.cell(row=row, column=emp_cols.get('category', 12)).value),
             nric=_normalize(ws.cell(row=row, column=emp_cols['nric']).value) if 'nric' in emp_cols else '',
             email=_normalize(ws.cell(row=row, column=emp_cols['email']).value) if 'email' in emp_cols else '',
@@ -554,6 +558,7 @@ def _generate_product_sheet(
     curr_year: int,
     divisor: int,
     prev_rate: Optional[float] = None,
+    has_entity: bool = False,
 ) -> Tuple[int, int]:
     """Generate a product adjustment sheet. Returns (prev_rows, curr_rows) written."""
     sheet_name = re.sub(r'[\\/*?:\[\]&]', '', product.name)[:31]
@@ -562,6 +567,9 @@ def _generate_product_sheet(
     is_type1 = product.product_type == 1
     # Use prev year rate for all rows to match reference convention
     rate = (prev_rate or product.premium_rate) if is_type1 else None
+
+    # Column offset: when Entity column is present, product columns shift right by 1
+    ofs = 1 if has_entity else 0
 
     # Short product abbreviation for column headers
     name = product.name
@@ -579,9 +587,11 @@ def _generate_product_sheet(
         col_l_label = "Adj Premium / 2"
 
     base_headers = ["Remarks", "Name \n(Surname, First Name) ", "NRIC No. or FIN No.\n(eg. S1234567F)",
-                    "EMP ID", "Cost Centre", "Department",
-                    "Category                        \n(Pls Select Basis Accordingly)",
-                    col_h_label, col_i_label, col_j_label, col_k_label, col_l_label]
+                    "EMP ID", "Cost Centre", "Department"]
+    if has_entity:
+        base_headers.append("Entity")
+    base_headers += ["Category                        \n(Pls Select Basis Accordingly)",
+                     col_h_label, col_i_label, col_j_label, col_k_label, col_l_label]
     headers = base_headers + [col_m_label] if is_type1 else base_headers
 
     header_font = Font(bold=True, size=11)
@@ -612,6 +622,23 @@ def _generate_product_sheet(
 
     prev_headcount.sort(key=lambda x: (x[1].department.lower(), x[1].name.upper()))
 
+    # Column indices with entity offset
+    col_entity = 7 if has_entity else None
+    col_category = 7 + ofs
+    col_prev_val = 8 + ofs   # H (+ofs)
+    col_curr_val = 9 + ofs   # I (+ofs)
+    col_diff = 10 + ofs      # J (+ofs)
+    col_k = 11 + ofs         # K (+ofs)
+    col_l = 12 + ofs         # L (+ofs)
+    col_m = 13 + ofs         # M (+ofs), type1 only
+
+    prev_val_letter = get_column_letter(col_prev_val)
+    curr_val_letter = get_column_letter(col_curr_val)
+    diff_letter = get_column_letter(col_diff)
+    k_letter = get_column_letter(col_k)
+    l_letter = get_column_letter(col_l)
+    m_letter = get_column_letter(col_m)
+
     for key, emp, pdata in prev_headcount:
         ws.cell(row=row_num, column=1, value=f"Renewal {prev_year}")
         ws.cell(row=row_num, column=2, value=emp.name)
@@ -619,28 +646,30 @@ def _generate_product_sheet(
         ws.cell(row=row_num, column=4, value=emp.employee_id)
         ws.cell(row=row_num, column=5, value=emp.cost_centre)
         ws.cell(row=row_num, column=6, value=emp.department)
-        ws.cell(row=row_num, column=7, value=pdata.get('category') or emp.category)
+        if col_entity:
+            ws.cell(row=row_num, column=col_entity, value=emp.entity)
+        ws.cell(row=row_num, column=col_category, value=pdata.get('category') or emp.category)
 
         val = pdata.get('value')
         if val is not None:
-            ws.cell(row=row_num, column=8, value=val)
+            ws.cell(row=row_num, column=col_prev_val, value=val)
         # Col I empty for prev year; Col J = I - H
-        ws.cell(row=row_num, column=10).value = f"=I{row_num}-H{row_num}"
+        ws.cell(row=row_num, column=col_diff).value = f"={curr_val_letter}{row_num}-{prev_val_letter}{row_num}"
 
         if is_type1:
             ap = pdata.get('annual_premium')
             if ap is not None:
-                ws.cell(row=row_num, column=11, value=-ap)  # cancel = negative
+                ws.cell(row=row_num, column=col_k, value=-ap)  # cancel = negative
             elif rate:
-                ws.cell(row=row_num, column=11).value = f"=J{row_num}*{rate}"
-            ws.cell(row=row_num, column=12).value = f"=K{row_num}/{divisor}"  # Adj w/o GST
-            ws.cell(row=row_num, column=13).value = f"=L{row_num}*1.09"        # Adj w/ GST
+                ws.cell(row=row_num, column=col_k).value = f"={diff_letter}{row_num}*{rate}"
+            ws.cell(row=row_num, column=col_l).value = f"={k_letter}{row_num}/{divisor}"  # Adj w/o GST
+            ws.cell(row=row_num, column=col_m).value = f"={l_letter}{row_num}*1.09"        # Adj w/ GST
         else:
-            ws.cell(row=row_num, column=11).value = f"=J{row_num}*0.09"
-            ws.cell(row=row_num, column=12).value = f"=J{row_num}/{divisor}"
+            ws.cell(row=row_num, column=col_k).value = f"={diff_letter}{row_num}*0.09"
+            ws.cell(row=row_num, column=col_l).value = f"={diff_letter}{row_num}/{divisor}"
 
-        fmt_end = 14 if is_type1 else 13
-        for c in range(8, fmt_end):
+        fmt_end = col_m + 1 if is_type1 else col_l + 1
+        for c in range(col_prev_val, fmt_end):
             ws.cell(row=row_num, column=c).number_format = ACCOUNTING_FORMAT
 
         row_num += 1
@@ -675,7 +704,9 @@ def _generate_product_sheet(
         ws.cell(row=row_num, column=4, value=emp.employee_id)
         ws.cell(row=row_num, column=5, value=emp.cost_centre)
         ws.cell(row=row_num, column=6, value=emp.department)
-        ws.cell(row=row_num, column=7, value=pdata.get('category') or emp.category)
+        if col_entity:
+            ws.cell(row=row_num, column=col_entity, value=emp.entity)
+        ws.cell(row=row_num, column=col_category, value=pdata.get('category') or emp.category)
 
         # Col H empty for curr year; Col J = I - H
         # Type 1 (sum insured): always use curr year value so SI changes are captured.
@@ -689,8 +720,8 @@ def _generate_product_sheet(
         else:
             val = pdata.get('value')
         if val is not None:
-            ws.cell(row=row_num, column=9, value=val)
-        ws.cell(row=row_num, column=10).value = f"=I{row_num}-H{row_num}"
+            ws.cell(row=row_num, column=col_curr_val, value=val)
+        ws.cell(row=row_num, column=col_diff).value = f"={curr_val_letter}{row_num}-{prev_val_letter}{row_num}"
 
         if is_type1:
             # Always use curr year annual premium so SI changes flow through correctly.
@@ -698,17 +729,17 @@ def _generate_product_sheet(
             # For changed SI: curr_premium reflects new SI → adjustment is captured.
             ap = pdata.get('annual_premium')
             if ap is not None:
-                ws.cell(row=row_num, column=11, value=ap)  # enroll = positive
+                ws.cell(row=row_num, column=col_k, value=ap)  # enroll = positive
             elif rate:
-                ws.cell(row=row_num, column=11).value = f"=J{row_num}*{rate}"
-            ws.cell(row=row_num, column=12).value = f"=K{row_num}/{divisor}"  # Adj w/o GST
-            ws.cell(row=row_num, column=13).value = f"=L{row_num}*1.09"        # Adj w/ GST
+                ws.cell(row=row_num, column=col_k).value = f"={diff_letter}{row_num}*{rate}"
+            ws.cell(row=row_num, column=col_l).value = f"={k_letter}{row_num}/{divisor}"  # Adj w/o GST
+            ws.cell(row=row_num, column=col_m).value = f"={l_letter}{row_num}*1.09"        # Adj w/ GST
         else:
-            ws.cell(row=row_num, column=11).value = f"=J{row_num}*0.09"
-            ws.cell(row=row_num, column=12).value = f"=J{row_num}/{divisor}"
+            ws.cell(row=row_num, column=col_k).value = f"={diff_letter}{row_num}*0.09"
+            ws.cell(row=row_num, column=col_l).value = f"={diff_letter}{row_num}/{divisor}"
 
-        fmt_end = 14 if is_type1 else 13
-        for c in range(8, fmt_end):
+        fmt_end = col_m + 1 if is_type1 else col_l + 1
+        for c in range(col_prev_val, fmt_end):
             ws.cell(row=row_num, column=c).number_format = ACCOUNTING_FORMAT
 
         row_num += 1
@@ -722,34 +753,39 @@ def _generate_product_sheet(
 
     bold_font = Font(bold=True)
     if is_type1:
-        ws.cell(row=row_num, column=11, value="Adjustment Breakdown").font = bold_font
-        ws.cell(row=row_num, column=12).value = f"=SUM(L{data_start_row}:L{last_data_row})"
-        ws.cell(row=row_num, column=12).number_format = ACCOUNTING_FORMAT
-        ws.cell(row=row_num, column=12).font = bold_font
-        ws.cell(row=row_num, column=13).value = f"=SUM(M{data_start_row}:M{last_data_row})"
-        ws.cell(row=row_num, column=13).number_format = ACCOUNTING_FORMAT
-        ws.cell(row=row_num, column=13).font = bold_font
+        ws.cell(row=row_num, column=col_k, value="Adjustment Breakdown").font = bold_font
+        ws.cell(row=row_num, column=col_l).value = f"=SUM({l_letter}{data_start_row}:{l_letter}{last_data_row})"
+        ws.cell(row=row_num, column=col_l).number_format = ACCOUNTING_FORMAT
+        ws.cell(row=row_num, column=col_l).font = bold_font
+        ws.cell(row=row_num, column=col_m).value = f"=SUM({m_letter}{data_start_row}:{m_letter}{last_data_row})"
+        ws.cell(row=row_num, column=col_m).number_format = ACCOUNTING_FORMAT
+        ws.cell(row=row_num, column=col_m).font = bold_font
     else:
-        ws.cell(row=row_num, column=11, value="Adjustment Premium").font = bold_font
-        ws.cell(row=row_num, column=12).value = f"=SUM(L{data_start_row}:L{last_data_row})"
-        ws.cell(row=row_num, column=12).number_format = ACCOUNTING_FORMAT
-        ws.cell(row=row_num, column=12).font = bold_font
+        ws.cell(row=row_num, column=col_k, value="Adjustment Premium").font = bold_font
+        ws.cell(row=row_num, column=col_l).value = f"=SUM({l_letter}{data_start_row}:{l_letter}{last_data_row})"
+        ws.cell(row=row_num, column=col_l).number_format = ACCOUNTING_FORMAT
+        ws.cell(row=row_num, column=col_l).font = bold_font
 
         row_num += 1
-        ws.cell(row=row_num, column=11, value="GST").font = bold_font
-        ws.cell(row=row_num, column=12).value = f"=L{row_num-1}*0.09"
-        ws.cell(row=row_num, column=12).number_format = ACCOUNTING_FORMAT
+        ws.cell(row=row_num, column=col_k, value="GST").font = bold_font
+        ws.cell(row=row_num, column=col_l).value = f"={l_letter}{row_num-1}*0.09"
+        ws.cell(row=row_num, column=col_l).number_format = ACCOUNTING_FORMAT
 
         row_num += 1
-        ws.cell(row=row_num, column=11, value="Adjustment Premium with GST").font = bold_font
-        ws.cell(row=row_num, column=12).value = f"=L{row_num-2}+L{row_num-1}"
-        ws.cell(row=row_num, column=12).number_format = ACCOUNTING_FORMAT
-        ws.cell(row=row_num, column=12).font = bold_font
+        ws.cell(row=row_num, column=col_k, value="Adjustment Premium with GST").font = bold_font
+        ws.cell(row=row_num, column=col_l).value = f"={l_letter}{row_num-2}+{l_letter}{row_num-1}"
+        ws.cell(row=row_num, column=col_l).number_format = ACCOUNTING_FORMAT
+        ws.cell(row=row_num, column=col_l).font = bold_font
 
-    col_widths = {'A': 18, 'B': 30, 'C': 18, 'D': 12, 'E': 14, 'F': 20,
-                  'G': 14, 'H': 18, 'I': 18, 'J': 18, 'K': 18, 'L': 18}
-    if is_type1:
-        col_widths['M'] = 18
+    col_widths = {'A': 18, 'B': 30, 'C': 18, 'D': 12, 'E': 14, 'F': 20}
+    if has_entity:
+        col_widths['G'] = 30  # Entity
+        col_widths['H'] = 14  # Category
+    else:
+        col_widths['G'] = 14  # Category
+    # Product value columns start after Category
+    for ci in range(col_prev_val, (col_m if is_type1 else col_l) + 1):
+        col_widths[get_column_letter(ci)] = 18
     for letter, width in col_widths.items():
         ws.column_dimensions[letter].width = width
 
@@ -986,6 +1022,11 @@ def process_renewal_comparison(
     logger.info(f"Previous year employees: {len(prev_employees)}")
     logger.info(f"Current year employees: {len(curr_employees)}")
 
+    # Detect if any file has Entity column
+    has_entity = ('entity' in prev_emp_cols) or ('entity' in curr_emp_cols)
+    if has_entity:
+        logger.info("Entity column detected — will include in output")
+
     wb1.close()
     wb2.close()
 
@@ -1054,6 +1095,7 @@ def process_renewal_comparison(
             prev_year, curr_year,
             pro_rata_divisor,
             prev_rate=prev_rates_map.get(product_name),
+            has_entity=has_entity,
         )
         sheet_row_counts[product_name] = result if result else (0, 0)
 

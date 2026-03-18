@@ -197,6 +197,12 @@ Employees are matched across years using this priority:
 
 Key format examples: `NRIC|S1234567A`, `EMAIL|john@example.com`, `NAME|JOHN TAN|01/01/1980`
 
+### Entity Column (Optional)
+- If either uploaded file has a column header `Entity` (exact match, case-insensitive), the value is extracted per employee and included in the output product sheets
+- Entity column appears between Department and Category in the output (col G), shifting all product columns right by 1
+- If neither file has an Entity column, the output layout is unchanged (no Entity column, no shift)
+- Useful for multi-entity clients (e.g. "Poh Heng Jewellery (Private) Limited") where employees belong to different subsidiary entities
+
 ### Product Detection (`_detect_products`)
 - Reads merged cells on product_header_row for section names
 - Each section's `col_end` is **extended** to just before the next section's `col_start` — this captures premium/value columns that fall outside the merged range (common in some client formats)
