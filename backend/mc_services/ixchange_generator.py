@@ -15,6 +15,7 @@ class IXchangeGenerator:
     """
 
     OUTPUT_COLUMNS = [
+        'ADC Remarks',
         'Entity',
         'Staff ID',
         'Employee Name',
@@ -27,7 +28,6 @@ class IXchangeGenerator:
         'Email Address',
         'Mobile Phone',
         'Flex Category',
-        'ADC Remarks'
     ]
 
     EL_COL_MAPPING = {
@@ -94,15 +94,31 @@ def create_combined_output(
     Sheets:
     1. Processed EL - Full employee listing with categories and remarks
     2. Processed DL - Full dependant listing with comparison columns
-    3. iXchange ADC - 13-column iXchange format (ADC records only)
+    3. Employee - 13-column iXchange format (ADC records only)
     """
     generator = IXchangeGenerator()
     ixchange_df = generator.generate(processed_el_df, filter_adc_only=True)
 
+    # Filter Processed EL to only rows with non-empty ADC Remarks
+    filtered_el = processed_el_df[
+        processed_el_df['ADC Remarks'].notna() &
+        (processed_el_df['ADC Remarks'].astype(str).str.strip() != '')
+    ].copy()
+
+    # Move ADC Remarks to first column for Processed EL
+    el_cols = ['ADC Remarks'] + [c for c in filtered_el.columns if c != 'ADC Remarks']
+    filtered_el = filtered_el[el_cols]
+
+    # Move Inspro ADC Remarks to first column for Processed DL
+    dl_remarks_col = 'Inspro ADC Remarks'
+    if dl_remarks_col in processed_dl_df.columns:
+        dl_cols = [dl_remarks_col] + [c for c in processed_dl_df.columns if c != dl_remarks_col]
+        processed_dl_df = processed_dl_df[dl_cols]
+
     sheets = {
-        'Processed EL': processed_el_df,
+        'Processed EL': filtered_el,
         'Processed DL': processed_dl_df,
-        'iXchange ADC': ixchange_df
+        'Employee': ixchange_df
     }
 
     return sheets

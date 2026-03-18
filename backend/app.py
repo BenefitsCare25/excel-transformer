@@ -5422,7 +5422,7 @@ def mc_process_files():
             # ── Summary ──
             el_count = len(processed_el)
             dl_count = len(processed_dl)
-            adc_count = len(sheets.get('iXchange ADC', []))
+            adc_count = len(sheets.get('Employee', []))
             total_el_changes = sum(el_stats['changes'].values())
             total_warnings = (
                 el_stats['warnings']['terminated_no_lds'] +
