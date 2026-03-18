@@ -2,11 +2,39 @@ import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import apiService from '../services/api';
 
+const getFileType = (filename) => {
+  if (!filename) return null;
+  const ext = filename.split('.').pop().toLowerCase();
+  return ext === 'csv' ? 'CSV' : ext === 'xlsx' ? 'XLSX' : ext.toUpperCase();
+};
+
+const formatFileSize = (bytes) => {
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const FileTypeBadge = ({ filename }) => {
+  const type = getFileType(filename);
+  if (!type) return null;
+  const isCSV = type === 'CSV';
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold ${
+      isCSV ? 'bg-orange-100 text-orange-700 border border-orange-300' : 'bg-emerald-100 text-emerald-700 border border-emerald-300'
+    }`}>
+      {type}
+    </span>
+  );
+};
+
 const FileUploadBox = ({ label, description, file, onDrop, isProcessing }) => {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'text/csv': ['.csv'],
+      'application/csv': ['.csv'],
     },
     multiple: false,
     disabled: isProcessing
@@ -27,11 +55,17 @@ const FileUploadBox = ({ label, description, file, onDrop, isProcessing }) => {
       >
         <input {...getInputProps()} />
         {file ? (
-          <div className="flex items-center justify-center space-x-2">
-            <svg className="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-            </svg>
-            <span className="text-sm text-green-700 truncate max-w-[150px]">{file.name}</span>
+          <div>
+            <div className="flex items-center justify-center space-x-2">
+              <svg className="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+              </svg>
+              <span className="text-sm text-green-700 truncate max-w-[150px]">{file.name}</span>
+            </div>
+            <div className="flex items-center justify-center space-x-2 mt-1">
+              <FileTypeBadge filename={file.name} />
+              <span className="text-xs text-gray-500">{formatFileSize(file.size)}</span>
+            </div>
           </div>
         ) : (
           <div>
@@ -73,24 +107,52 @@ const MediacorpProcessor = () => {
       return;
     }
 
+    const invalidFiles = Object.entries(files).filter(([, f]) => {
+      const ext = f.name.split('.').pop().toLowerCase();
+      return !['xlsx', 'csv'].includes(ext);
+    });
+    if (invalidFiles.length > 0) {
+      setError({
+        message: 'Invalid file types detected',
+        details: invalidFiles.map(([key, f]) => `${key}: "${f.name}" is not a .xlsx or .csv file`)
+      });
+      return;
+    }
+
+    const fileTypes = Object.entries(files).map(([key, f]) =>
+      `${key}: ${getFileType(f.name)} (${formatFileSize(f.size)})`
+    );
+    console.log('[MC Processor] Starting upload with files:', fileTypes);
+
     setIsProcessing(true);
     setError(null);
     setResult(null);
     setProgress('Uploading files...');
 
     try {
-      setProgress('Processing Employee Listings...');
+      setProgress('Step 0: Uploading & parsing files (CSV auto-detection)...');
       const response = await apiService.processMCFiles(files);
 
       if (response.success) {
+        console.log('[MC Processor] Success:', response.data?.statistics);
         setResult(response.data);
         setProgress('');
       } else {
-        setError(response.error || 'Processing failed');
+        const rawDetails = response.details;
+        const details = rawDetails
+          ? (Array.isArray(rawDetails) ? rawDetails : [rawDetails])
+          : null;
+        const errObj = {
+          message: response.error || 'Processing failed',
+          details
+        };
+        console.error('[MC Processor] Failed:', errObj);
+        setError(errObj);
         setProgress('');
       }
     } catch (err) {
-      setError(err.message || 'An error occurred during processing');
+      console.error('[MC Processor] Exception:', err);
+      setError({ message: err.message || 'An error occurred during processing' });
       setProgress('');
     } finally {
       setIsProcessing(false);
@@ -123,6 +185,7 @@ const MediacorpProcessor = () => {
           </h2>
           <p className="text-sm text-gray-600">
             Process Employee and Dependant Listings to generate ADC output with category mapping.
+            Supports raw CSV (pipe-delimited) and Excel (.xlsx) files.
           </p>
         </div>
 
@@ -137,14 +200,14 @@ const MediacorpProcessor = () => {
           <div className="grid grid-cols-2 gap-4">
             <FileUploadBox
               label="New Employee Listing"
-              description="Drop .xlsx file here"
+              description="Drop .xlsx or .csv file here"
               file={files.new_el}
               onDrop={handleFileDrop('new_el')}
               isProcessing={isProcessing}
             />
             <FileUploadBox
               label="Old Employee Listing"
-              description="Drop .xlsx file here"
+              description="Drop .xlsx or .csv file here"
               file={files.old_el}
               onDrop={handleFileDrop('old_el')}
               isProcessing={isProcessing}
@@ -163,14 +226,14 @@ const MediacorpProcessor = () => {
           <div className="grid grid-cols-2 gap-4">
             <FileUploadBox
               label="New Dependant Listing"
-              description="Drop .xlsx file here"
+              description="Drop .xlsx or .csv file here"
               file={files.new_dl}
               onDrop={handleFileDrop('new_dl')}
               isProcessing={isProcessing}
             />
             <FileUploadBox
               label="Old Dependant Listing"
-              description="Drop .xlsx file here"
+              description="Drop .xlsx or .csv file here"
               file={files.old_dl}
               onDrop={handleFileDrop('old_dl')}
               isProcessing={isProcessing}
@@ -178,16 +241,52 @@ const MediacorpProcessor = () => {
           </div>
         </div>
 
+        {/* Pre-submission Validation Summary */}
+        {Object.values(files).some(f => f !== null) && !isProcessing && !result && (
+          <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+            <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Upload Summary</h4>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { key: 'new_el', label: 'New EL' },
+                { key: 'old_el', label: 'Old EL' },
+                { key: 'new_dl', label: 'New DL' },
+                { key: 'old_dl', label: 'Old DL' },
+              ].map(({ key, label }) => (
+                <div key={key} className={`flex items-center justify-between px-2 py-1 rounded text-xs ${
+                  files[key] ? 'bg-white border border-slate-200' : 'bg-red-50 border border-red-200'
+                }`}>
+                  <span className={files[key] ? 'text-slate-700' : 'text-red-500 font-medium'}>{label}</span>
+                  {files[key] ? (
+                    <div className="flex items-center space-x-1.5">
+                      <FileTypeBadge filename={files[key].name} />
+                      <span className="text-slate-400">{formatFileSize(files[key].size)}</span>
+                    </div>
+                  ) : (
+                    <span className="text-red-400">Missing</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Error Message */}
         {error && (
           <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
             <div className="flex items-start">
-              <svg className="w-5 h-5 text-red-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+              <svg className="w-5 h-5 text-red-500 mr-2 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
               </svg>
-              <div>
+              <div className="flex-1">
                 <p className="text-sm font-medium text-red-800">Error</p>
-                <p className="text-sm text-red-700">{typeof error === 'object' ? JSON.stringify(error) : error}</p>
+                <p className="text-sm text-red-700">{typeof error === 'object' ? (error.message || JSON.stringify(error)) : error}</p>
+                {error.details && Array.isArray(error.details) && (
+                  <ul className="mt-2 text-xs text-red-600 space-y-1 list-disc list-inside">
+                    {error.details.map((detail, i) => (
+                      <li key={i}>{detail}</li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
           </div>
@@ -236,6 +335,28 @@ const MediacorpProcessor = () => {
               Processing Complete
             </h3>
           </div>
+
+          {/* File Info from Backend */}
+          {result.statistics?.file_info && (
+            <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+              <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Files Processed</h4>
+              <div className="grid grid-cols-2 gap-2">
+                {Object.entries(result.statistics.file_info).map(([key, info]) => (
+                  <div key={key} className="flex items-center justify-between px-2 py-1 bg-white rounded border border-slate-200 text-xs">
+                    <span className="text-slate-700">{key.replace('_', ' ').toUpperCase()}</span>
+                    <div className="flex items-center space-x-1.5">
+                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded font-bold ${
+                        info.type === 'csv' ? 'bg-orange-100 text-orange-700 border border-orange-300' : 'bg-emerald-100 text-emerald-700 border border-emerald-300'
+                      }`}>
+                        {(info.type || '').toUpperCase()}
+                      </span>
+                      <span className="text-slate-400">{info.rows || 0} rows</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Basic Statistics */}
           <div className="grid grid-cols-3 gap-4 mb-6">
@@ -433,7 +554,12 @@ const MediacorpProcessor = () => {
       {/* Information Section */}
       <div className="card">
         <h3 className="text-lg font-semibold text-gray-800 mb-3">Processing Steps</h3>
-        <div className="grid md:grid-cols-4 gap-4">
+        <div className="grid md:grid-cols-5 gap-4">
+          <div className="text-center p-3 bg-gray-50 rounded-lg">
+            <div className="w-8 h-8 mx-auto mb-2 bg-teal-100 rounded-full flex items-center justify-center text-teal-600 font-bold">0</div>
+            <h4 className="text-sm font-medium text-gray-700">CSV Import</h4>
+            <p className="text-xs text-gray-500 mt-1">Auto-parse pipe-delimited CSV to clean data</p>
+          </div>
           <div className="text-center p-3 bg-gray-50 rounded-lg">
             <div className="w-8 h-8 mx-auto mb-2 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold">1</div>
             <h4 className="text-sm font-medium text-gray-700">Category Tagging</h4>

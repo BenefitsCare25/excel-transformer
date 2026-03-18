@@ -4,6 +4,29 @@ import pandas as pd
 from typing import Optional
 from .date_utils import is_blank, is_not_blank
 
+# Hardcoded Mediacorp Category -> AIA Category mapping table
+DEFAULT_CATEGORY_MAPPING = {
+    'Plan A': 'Plan A',
+    'Plan B1': 'Plan B1',
+    'Plan A - Holder': 'Plan A',
+    'Plan A (CPW)': 'Plan C',
+    'Plan B1 (CPW)': 'Plan D',
+    'Plan B2 (CPW)': 'Plan E',
+    'Plan A-F': 'Plan H',
+    'Plan B1-F': 'Plan G',
+    'Plan 1': 'Plan F1',
+    'Plan 2': 'Plan F2',
+    'Plan 3': 'Plan F3',
+}
+
+
+def get_default_category_mapping_df():
+    """Return the hardcoded category mapping as a DataFrame."""
+    return pd.DataFrame([
+        {'Mediacorp Category': k, 'AIA Category': v}
+        for k, v in DEFAULT_CATEGORY_MAPPING.items()
+    ])
+
 
 class CategoryMapper:
     """
@@ -14,15 +37,17 @@ class CategoryMapper:
     - Flex Category: Complex nested IF logic
     """
 
-    def __init__(self, category_mapping_df: pd.DataFrame):
-        """Initialize with category mapping data."""
+    def __init__(self, category_mapping_df: Optional[pd.DataFrame] = None):
+        """Initialize with category mapping data. Uses hardcoded defaults if none provided."""
         self.mapping = {}
-        if not category_mapping_df.empty:
+        if category_mapping_df is not None and not category_mapping_df.empty:
             for _, row in category_mapping_df.iterrows():
                 mediacorp = row.get('Mediacorp Category', '')
                 aia = row.get('AIA Category', '')
                 if mediacorp:
                     self.mapping[str(mediacorp).strip()] = str(aia).strip() if aia else ''
+        else:
+            self.mapping = DEFAULT_CATEGORY_MAPPING.copy()
 
     def get_aia_category(self, category: Optional[str]) -> str:
         """Get AIA Category from Mediacorp Category via VLOOKUP."""
@@ -100,13 +125,16 @@ class CategoryMapper:
 
 def apply_category_mapping(
     df: pd.DataFrame,
-    category_mapping_df: pd.DataFrame,
+    category_mapping_df: Optional[pd.DataFrame] = None,
     category_col: int = 15,
     lds_col: int = 14,
     overseas_col: int = 8,
     emp_type_col: int = 9
 ) -> pd.DataFrame:
-    """Apply AIA Category and Flex Category to a DataFrame."""
+    """Apply AIA Category and Flex Category to a DataFrame.
+
+    Uses hardcoded default mapping if no category_mapping_df provided.
+    """
     mapper = CategoryMapper(category_mapping_df)
 
     df['AIA Category'] = df.iloc[:, category_col].apply(mapper.get_aia_category)

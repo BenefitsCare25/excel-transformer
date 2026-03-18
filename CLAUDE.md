@@ -27,6 +27,8 @@ EL/
 │   │   ├── el_processor.py    # Employee Listing processor
 │   │   ├── dl_processor.py    # Dependant Listing processor
 │   │   ├── ixchange_generator.py
+│   │   ├── csv_processor.py   # Pipe-delimited CSV parser
+│   │   ├── category_mapper.py # AIA/Flex category mapping (hardcoded)
 │   │   └── validators.py
 │   ├── gp_panel_services/     # GP Panel comparison
 │   │   └── panel_processor.py
@@ -89,6 +91,42 @@ cd frontend && npm start                 # Run React (port 3000)
 - Auto-cleanup after 15 minutes (cleanup_service.py)
 - Job IDs via UUID for tracking uploads
 - Processed files stored in `processed/` folder
+
+## Mediacorp ADC — Key Design Notes
+
+### CSV Support (Raw Sharepoint Files)
+- Accepts both `.xlsx` and `.csv` files interchangeably for all 4 uploads (New/Old EL, New/Old DL)
+- Raw CSV files from Sharepoint are **pipe-delimited** (`|`), parsed with `pd.read_csv(sep='|', dtype=str)`
+- Auto-detects Excel Power Query artifact headers (`Column1, Column2, ...`) and shifts first data row to headers
+- Encoding fallback: UTF-8 → latin-1
+- File type auto-detection by extension in `excel_handler.py`
+
+### Category Mapping (Hardcoded)
+- 11-entry mapping table in `category_mapper.py` → `DEFAULT_CATEGORY_MAPPING`
+- No 5th upload needed — falls back to hardcoded mapping when no `Category Mapping` sheet in XLSX
+- **AIA Category**: VLOOKUP from employee Category (col 15) → mapping table
+- **Flex Category**: Nested IF logic using LDS (col 14), Category (col 15), Overseas Assignment (col 8), Employment Type (col 9), and computed AIA Category
+
+### Processing Pipeline
+| Step | Name | Description |
+|------|------|-------------|
+| 0 | CSV Import | Auto-parse pipe-delimited CSV, detect headers, load data |
+| 1 | Category Tagging | Assign AIA Category + Flex Category to new EL |
+| 2 | DL Comparison | Compare new vs old Dependant Listings, generate ADC |
+| 3 | EL Comparison | Compare new vs old Employee Listings, add ADC remarks |
+| 4 | Output Generation | Combined Excel with 3 sheets (Processed EL, Processed DL, iXchange ADC) |
+
+### Backend Logging
+- Comprehensive step-by-step logging with timing for Azure Log Stream monitoring
+- Logs file types, row/column counts, category distributions, sample data, warnings, and full traceback on errors
+- `file_info` dict (type, rows per file) included in API response for frontend display
+
+### Frontend Validation
+- File type badges (CSV orange, XLSX green) on upload boxes
+- File size display per upload
+- Pre-submission validation summary grid showing all 4 files with type/size/missing status
+- Error details array rendered as bulleted list (e.g. backend validation errors)
+- Console logging with `[MC Processor]` prefix for debugging
 
 ## Renewal Comparison — Key Design Notes
 

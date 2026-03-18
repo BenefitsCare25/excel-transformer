@@ -100,5 +100,8 @@ def validate_category_mapping(df: pd.DataFrame, file_label: str) -> List[str]:
 
 
 def allowed_file(filename: str) -> bool:
-    """Check if file has allowed extension (.xlsx)."""
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() == 'xlsx'
+    """Check if file has allowed extension (.xlsx or .csv)."""
+    if not filename or '.' not in filename:
+        return False
+    ext = filename.rsplit('.', 1)[1].lower()
+    return ext in ('xlsx', 'csv')

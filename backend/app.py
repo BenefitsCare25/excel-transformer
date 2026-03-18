@@ -5198,7 +5198,7 @@ def mc_process_files():
     """
     Main processing endpoint for Mediacorp ADC.
 
-    Accepts 4 Excel files:
+    Accepts 4 files (.xlsx or .csv):
     - new_el: New Employee Listing
     - old_el: Old Employee Listing
     - new_dl: New Dependant Listing
@@ -5207,12 +5207,22 @@ def mc_process_files():
     Returns:
     - Combined Excel file with 3 sheets (Processed EL, Processed DL, iXchange ADC)
     """
+    import time
+    start_time = time.time()
+
+    logger.info("=" * 60)
+    logger.info("MC ADC PROCESSING - REQUEST RECEIVED")
+    logger.info("=" * 60)
+
     try:
+        # ── File Upload Validation ──
         required_files = ['new_el', 'old_el', 'new_dl', 'old_dl']
         files = {}
+        file_info = {}
 
         for file_key in required_files:
             if file_key not in request.files:
+                logger.warning(f"MC ADC: Missing file upload: {file_key}")
                 return jsonify({
                     'error': f'Missing file: {file_key}',
                     'details': f'Please upload the {file_key.replace("_", " ").title()} file'
@@ -5220,36 +5230,83 @@ def mc_process_files():
 
             file = request.files[file_key]
             if file.filename == '':
+                logger.warning(f"MC ADC: Empty filename for: {file_key}")
                 return jsonify({
                     'error': f'No file selected for: {file_key}',
                     'details': f'Please select a file for {file_key.replace("_", " ").title()}'
                 }), 400
 
             if not mc_allowed_file(file.filename):
+                ext = file.filename.rsplit('.', 1)[1] if '.' in file.filename else 'unknown'
+                logger.warning(f"MC ADC: Invalid file type for {file_key}: .{ext} ({file.filename})")
                 return jsonify({
                     'error': f'Invalid file type for {file_key}',
-                    'details': 'Only .xlsx files are supported'
+                    'details': f'Only .xlsx and .csv files are supported. Got: .{ext}'
                 }), 400
 
             files[file_key] = file
+            ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else 'unknown'
+            file_info[file_key] = {'name': file.filename, 'type': ext}
+
+        logger.info("MC ADC: All 4 files received:")
+        for key, info in file_info.items():
+            logger.info(f"  {key}: {info['name']} (type: .{info['type']})")
 
         with tempfile.TemporaryDirectory() as temp_dir:
+            # ── Save Files to Temp ──
             file_paths = {}
             for key, file in files.items():
                 from werkzeug.utils import secure_filename
                 safe_name = secure_filename(f"{key}_{file.filename}")
                 path = os.path.join(temp_dir, safe_name)
                 file.save(path)
+                file_size = os.path.getsize(path)
                 file_paths[key] = path
+                logger.info(f"  Saved {key}: {safe_name} ({file_size:,} bytes)")
 
             excel_handler = MCExcelHandler()
             el_processor = ELProcessor()
             dl_processor = DLProcessor()
 
+            # ── Step 0: Load & Parse Files (CSV auto-detection) ──
+            step0_start = time.time()
+            logger.info("-" * 40)
+            logger.info("MC ADC STEP 0: FILE LOADING & CSV PARSING")
+            logger.info("-" * 40)
+
+            logger.info("  Loading new_el...")
             new_el_df, category_mapping_df = excel_handler.load_el_file(file_paths['new_el'])
+            logger.info(f"  new_el loaded: {len(new_el_df)} rows, {len(new_el_df.columns)} cols")
+            logger.info(f"  new_el columns: {list(new_el_df.columns)}")
+            logger.info(f"  Category mapping: {len(category_mapping_df)} entries")
+            if not category_mapping_df.empty:
+                for _, row in category_mapping_df.iterrows():
+                    logger.info(f"    {row.get('Mediacorp Category', '')} -> {row.get('AIA Category', '')}")
+
+            logger.info("  Loading old_el...")
             old_el_df, _ = excel_handler.load_el_file(file_paths['old_el'])
+            logger.info(f"  old_el loaded: {len(old_el_df)} rows, {len(old_el_df.columns)} cols")
+
+            logger.info("  Loading new_dl...")
             new_dl_df = excel_handler.load_dl_file(file_paths['new_dl'])
+            logger.info(f"  new_dl loaded: {len(new_dl_df)} rows, {len(new_dl_df.columns)} cols")
+
+            logger.info("  Loading old_dl...")
             old_dl_df = excel_handler.load_dl_file(file_paths['old_dl'])
+            logger.info(f"  old_dl loaded: {len(old_dl_df)} rows, {len(old_dl_df.columns)} cols")
+
+            step0_elapsed = time.time() - step0_start
+            logger.info(f"  Step 0 completed in {step0_elapsed:.2f}s")
+
+            file_info['new_el']['rows'] = len(new_el_df)
+            file_info['old_el']['rows'] = len(old_el_df)
+            file_info['new_dl']['rows'] = len(new_dl_df)
+            file_info['old_dl']['rows'] = len(old_dl_df)
+
+            # ── Data Validation ──
+            logger.info("-" * 40)
+            logger.info("MC ADC: DATA VALIDATION")
+            logger.info("-" * 40)
 
             validation_errors = []
             validation_errors.extend(validate_el_file(new_el_df, 'New Employee Listing'))
@@ -5258,27 +5315,95 @@ def mc_process_files():
             validation_errors.extend(validate_dl_file(old_dl_df, 'Old Dependant Listing'))
 
             if validation_errors:
+                logger.error(f"MC ADC: Validation failed with {len(validation_errors)} errors:")
+                for err in validation_errors:
+                    logger.error(f"  - {err}")
                 return jsonify({
                     'error': 'File validation failed',
                     'details': validation_errors
                 }), 400
 
-            # Step 1: EL Category Tagging
+            logger.info("  Validation passed for all 4 files")
+
+            # Log sample data for debugging
+            logger.info("  new_el sample (first 3 rows, cols 0-4):")
+            for i in range(min(3, len(new_el_df))):
+                row_vals = [str(new_el_df.iloc[i, c]) if c < len(new_el_df.columns) else '' for c in range(5)]
+                logger.info(f"    Row {i}: {row_vals}")
+
+            logger.info("  new_dl sample (first 3 rows, cols 0-5):")
+            for i in range(min(3, len(new_dl_df))):
+                row_vals = [str(new_dl_df.iloc[i, c]) if c < len(new_dl_df.columns) else '' for c in range(6)]
+                logger.info(f"    Row {i}: {row_vals}")
+
+            # ── Step 1: EL Category Tagging ──
+            step1_start = time.time()
+            logger.info("-" * 40)
+            logger.info("MC ADC STEP 1: CATEGORY TAGGING")
+            logger.info("-" * 40)
+
             processed_el = el_processor.process_step1_category_tagging(
                 new_el_df, category_mapping_df
             )
 
-            # Step 2: DL Comparison & ADC
+            step1_elapsed = time.time() - step1_start
+
+            # Log category distribution
+            aia_dist = processed_el['AIA Category'].value_counts()
+            flex_dist = processed_el['Flex Category'].value_counts()
+            logger.info(f"  AIA Category distribution:")
+            for cat, count in aia_dist.items():
+                logger.info(f"    {cat if cat else '(empty)'}: {count}")
+            logger.info(f"  Flex Category distribution:")
+            for cat, count in flex_dist.items():
+                logger.info(f"    {cat if cat else '(empty)'}: {count}")
+            logger.info(f"  Step 1 completed in {step1_elapsed:.2f}s")
+
+            # ── Step 2: DL Comparison & ADC ──
+            step2_start = time.time()
+            logger.info("-" * 40)
+            logger.info("MC ADC STEP 2: DL COMPARISON")
+            logger.info("-" * 40)
+
             processed_dl, dl_stats = dl_processor.process_step2_dl_comparison(
                 new_dl_df, old_dl_df, processed_el
             )
 
-            # Step 3: EL Comparison & ADC
+            step2_elapsed = time.time() - step2_start
+            logger.info(f"  DL stats: new_spouse={dl_stats['new_spouse']}, new_child={dl_stats['new_child']}, "
+                        f"new_other={dl_stats['new_other']}, deletions={dl_stats['deletions']}, "
+                        f"dropoffs={dl_stats['dropoffs']}")
+            logger.info(f"  DL warnings: dep_is_employee={dl_stats['warnings']['dep_is_employee']}, "
+                        f"terminated_ee={dl_stats['warnings']['terminated_ee_coverage']}, "
+                        f"check_hr={dl_stats['warnings']['check_with_hr']}")
+            logger.info(f"  Step 2 completed in {step2_elapsed:.2f}s")
+
+            # ── Step 3: EL Comparison & ADC ──
+            step3_start = time.time()
+            logger.info("-" * 40)
+            logger.info("MC ADC STEP 3: EL COMPARISON")
+            logger.info("-" * 40)
+
             processed_el, el_stats = el_processor.process_step3_el_comparison(
                 processed_el, old_el_df
             )
 
-            # Step 4: Generate Combined Output
+            step3_elapsed = time.time() - step3_start
+            logger.info(f"  EL stats: additions={el_stats['additions']}, deletions={el_stats['deletions']}")
+            logger.info(f"  EL changes: {el_stats['changes']}")
+            logger.info(f"  EL warnings: terminated_no_lds={el_stats['warnings']['terminated_no_lds']}, "
+                        f"fin_to_nric={el_stats['warnings']['fin_to_nric']}, "
+                        f"check_category={el_stats['warnings']['check_category']}, "
+                        f"has_inactive_date={el_stats['warnings']['has_inactive_date']}, "
+                        f"check_hr={el_stats['warnings']['check_with_hr']}")
+            logger.info(f"  Step 3 completed in {step3_elapsed:.2f}s")
+
+            # ── Step 4: Generate Combined Output ──
+            step4_start = time.time()
+            logger.info("-" * 40)
+            logger.info("MC ADC STEP 4: OUTPUT GENERATION")
+            logger.info("-" * 40)
+
             sheets = create_combined_output(processed_el, processed_dl)
 
             output_filename = f"Mediacorp_ADC_Output_{get_today_ddmmyy()}.xlsx"
@@ -5286,15 +5411,19 @@ def mc_process_files():
 
             excel_handler.save_multi_sheet_excel(output_path, sheets)
 
-            # Get statistics
+            step4_elapsed = time.time() - step4_start
+            output_size = os.path.getsize(output_path)
+
+            for sheet_name, sheet_df in sheets.items():
+                logger.info(f"  Sheet '{sheet_name}': {len(sheet_df)} rows, {len(sheet_df.columns)} cols")
+            logger.info(f"  Output file: {output_filename} ({output_size:,} bytes)")
+            logger.info(f"  Step 4 completed in {step4_elapsed:.2f}s")
+
+            # ── Summary ──
             el_count = len(processed_el)
             dl_count = len(processed_dl)
             adc_count = len(sheets.get('iXchange ADC', []))
-
-            # Calculate total changes
             total_el_changes = sum(el_stats['changes'].values())
-
-            # Aggregate all warnings
             total_warnings = (
                 el_stats['warnings']['terminated_no_lds'] +
                 el_stats['warnings']['fin_to_nric'] +
@@ -5302,6 +5431,19 @@ def mc_process_files():
                 el_stats['warnings']['has_inactive_date'] +
                 dl_stats['warnings']['check_with_hr']
             )
+
+            total_elapsed = time.time() - start_time
+            logger.info("=" * 60)
+            logger.info("MC ADC PROCESSING - COMPLETE")
+            logger.info(f"  Total time: {total_elapsed:.2f}s")
+            logger.info(f"  Employees: {el_count}, Dependants: {dl_count}, ADC records: {adc_count}")
+            logger.info(f"  EL: +{el_stats['additions']} additions, -{el_stats['deletions']} deletions, ~{total_el_changes} changes")
+            logger.info(f"  DL: +{dl_stats['new_spouse']} spouse, +{dl_stats['new_child']} child, "
+                        f"-{dl_stats['deletions']} deletions, {dl_stats['dropoffs']} dropoffs")
+            logger.info(f"  Warnings: {total_warnings}")
+            file_types_str = ', '.join(f"{k}=.{v['type']}" for k, v in file_info.items())
+            logger.info(f"  File types: {file_types_str}")
+            logger.info("=" * 60)
 
             return jsonify({
                 'success': True,
@@ -5331,12 +5473,19 @@ def mc_process_files():
                         'terminated_ee_coverage': dl_stats['warnings']['terminated_ee_coverage'],
                         'check_with_hr': el_stats['warnings']['check_with_hr'] + dl_stats['warnings']['check_with_hr']
                     },
-                    'total_warnings': total_warnings
+                    'total_warnings': total_warnings,
+                    # File metadata for frontend display
+                    'file_info': file_info
                 }
             })
 
     except Exception as e:
-        logger.error(f"Mediacorp ADC processing failed: {e}\n{traceback.format_exc()}")
+        elapsed = time.time() - start_time
+        logger.error("=" * 60)
+        logger.error(f"MC ADC PROCESSING - FAILED after {elapsed:.2f}s")
+        logger.error(f"  Error: {e}")
+        logger.error(f"  Traceback:\n{traceback.format_exc()}")
+        logger.error("=" * 60)
         return jsonify({
             'error': 'Processing failed',
             'details': str(e)

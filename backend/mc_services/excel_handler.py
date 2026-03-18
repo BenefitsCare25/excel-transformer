@@ -1,22 +1,33 @@
-"""Excel file handling utilities for Mediacorp ADC Processor."""
+"""Excel and CSV file handling utilities for Mediacorp ADC Processor."""
 
 import pandas as pd
+import logging
 from typing import Tuple, Dict, List
+from .csv_processor import parse_pipe_delimited_csv, is_csv_file
+from .category_mapper import get_default_category_mapping_df
+
+logger = logging.getLogger(__name__)
 
 
 class ExcelHandler:
-    """Handles Excel file read/write operations with pandas and openpyxl."""
+    """Handles Excel/CSV file read/write operations."""
 
     def load_el_file(self, file_path: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Load Employee Listing file with main data and Category Mapping.
+        Load Employee Listing file (XLSX or CSV) with Category Mapping.
 
-        Args:
-            file_path: Path to the Excel file
+        For CSV: parses pipe-delimited data, uses hardcoded category mapping.
+        For XLSX: reads normally, checks for embedded Category Mapping sheet.
 
         Returns:
             Tuple of (main_data_df, category_mapping_df)
         """
+        if is_csv_file(file_path):
+            main_df = parse_pipe_delimited_csv(file_path, file_type='el')
+            category_df = get_default_category_mapping_df()
+            logger.info(f"Loaded EL from CSV: {len(main_df)} rows, using hardcoded category mapping")
+            return main_df, category_df
+
         xl = pd.ExcelFile(file_path)
         main_df = pd.read_excel(xl, sheet_name=0)
 
@@ -24,6 +35,11 @@ class ExcelHandler:
         if 'Category Mapping' in xl.sheet_names:
             raw_mapping = pd.read_excel(xl, sheet_name='Category Mapping', header=None)
             category_df = self._parse_category_mapping(raw_mapping)
+
+        # Fall back to hardcoded mapping if no Category Mapping sheet found
+        if category_df.empty:
+            category_df = get_default_category_mapping_df()
+            logger.info("No Category Mapping sheet found in XLSX, using hardcoded mapping")
 
         return main_df, category_df
 
@@ -57,7 +73,12 @@ class ExcelHandler:
         return pd.DataFrame(mapping_data)
 
     def load_dl_file(self, file_path: str) -> pd.DataFrame:
-        """Load Dependant Listing file."""
+        """Load Dependant Listing file (XLSX or CSV)."""
+        if is_csv_file(file_path):
+            df = parse_pipe_delimited_csv(file_path, file_type='dl')
+            logger.info(f"Loaded DL from CSV: {len(df)} rows")
+            return df
+
         return pd.read_excel(file_path, sheet_name=0)
 
     def save_multi_sheet_excel(self, file_path: str, sheets: Dict[str, pd.DataFrame]) -> str:
