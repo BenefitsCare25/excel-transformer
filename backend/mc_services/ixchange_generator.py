@@ -15,7 +15,6 @@ class IXchangeGenerator:
     """
 
     OUTPUT_COLUMNS = [
-        'ADC Remarks',
         'Entity',
         'Staff ID',
         'Employee Name',
@@ -28,6 +27,7 @@ class IXchangeGenerator:
         'Email Address',
         'Mobile Phone',
         'Flex Category',
+        'ADC Remarks',
     ]
 
     EL_COL_MAPPING = {
