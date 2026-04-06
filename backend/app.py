@@ -47,6 +47,58 @@ from gp_panel_services import (
 # Renewal Comparison imports
 from renewal_services import process_renewal_comparison
 
+def load_workbook_safe(path, **kwargs):
+    """Load an openpyxl workbook, stripping corrupted named ranges if needed.
+
+    Some AIA/vendor files contain invalid #N/A values in Print_Area, Print_Titles,
+    or _FilterDatabase defined names, causing openpyxl to raise an InvalidFileException
+    about 'could not assign names'. This helper detects that error and retries after
+    patching the workbook XML via zipfile.
+    """
+    import openpyxl
+    try:
+        return openpyxl.load_workbook(path, **kwargs)
+    except Exception as first_err:
+        err_str = str(first_err)
+        if 'could not assign names' not in err_str and 'invalid XML' not in err_str.lower():
+            raise
+    # Patch: rewrite workbook.xml removing <definedName> nodes that contain #N/A
+    import zipfile, re as _re, io, shutil, tempfile
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+    tmp.close()
+    shutil.copy2(path, tmp.name)
+    with zipfile.ZipFile(tmp.name, 'r') as zin:
+        names_in_zip = zin.namelist()
+        wb_xml_name = next((n for n in names_in_zip if n.endswith('workbook.xml')), None)
+        if wb_xml_name is None:
+            raise
+        wb_xml = zin.read(wb_xml_name)
+    # Remove any <definedName ...>#N/A</definedName> (and similar corrupt variants)
+    patched = _re.sub(
+        rb'<definedName[^>]*>[^<]*#N/A[^<]*</definedName>',
+        b'',
+        wb_xml,
+        flags=_re.IGNORECASE
+    )
+    # Write patched workbook into a new temp zip
+    tmp2 = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+    tmp2.close()
+    with zipfile.ZipFile(tmp.name, 'r') as zin, zipfile.ZipFile(tmp2.name, 'w', zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            if item.filename == wb_xml_name:
+                zout.writestr(item, patched)
+            else:
+                zout.writestr(item, zin.read(item.filename))
+    os.unlink(tmp.name)
+    try:
+        return openpyxl.load_workbook(tmp2.name, **kwargs)
+    finally:
+        try:
+            os.unlink(tmp2.name)
+        except Exception:
+            pass
+
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -1611,7 +1663,7 @@ class ExcelTransformer:
 
             if file_extension == '.xlsx':
                 # Only check for Alliance-Tokio format in .xlsx files
-                wb = openpyxl.load_workbook(input_path)
+                wb = load_workbook_safe(input_path)
                 ws = wb[sheet_name]
                 is_alliance_tokio = ExcelTransformer.detect_alliance_tokio_format(ws)
             else:
