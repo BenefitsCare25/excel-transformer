@@ -5485,19 +5485,18 @@ def mc_process_files():
                 remarks_col = 'Inspro ADC Remarks'
                 if remarks_col not in df.columns:
                     return details
+                _C = DLProcessor
+                n_cols = len(df.columns)
+                def _col(row, c): return str(row.iloc[c]).strip() if n_cols > c else ''
                 for _, row in df.iterrows():
                     remark = str(row.get(remarks_col, '')).strip()
                     if not remark:
                         continue
-                    staff_id = str(row.iloc[0]).strip() if len(row) > 0 else ''
-                    first = str(row.iloc[2]).strip() if len(row) > 2 else ''
-                    last = str(row.iloc[3]).strip() if len(row) > 3 else ''
-                    name = f"{first} {last}".strip()
-                    relationship = str(row.iloc[5]).strip() if len(row) > 5 else ''
-                    dep_nric = str(row.iloc[4]).strip() if len(row) > 4 else ''
-                    dob = str(row.iloc[7]).strip() if len(row) > 7 else ''
-                    rec = {'staff_id': staff_id, 'name': name, 'remark': remark,
-                           'relationship': relationship, 'dep_nric': dep_nric, 'dob': dob}
+                    name = f"{_col(row, _C.COL_FIRST_NAME)} {_col(row, _C.COL_LAST_NAME)}".strip()
+                    rec = {'staff_id': _col(row, _C.COL_STAFF_ID), 'name': name, 'remark': remark,
+                           'relationship': _col(row, _C.COL_RELATIONSHIP),
+                           'dep_nric': _col(row, _C.COL_DEP_ID_NO),
+                           'dob': _col(row, _C.COL_DOB)}
                     if 'New Spouse' in remark:
                         details['new_spouse'].append(rec)
                     elif 'New Child' in remark:
