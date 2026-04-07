@@ -269,7 +269,10 @@ class DLProcessor:
                         'Staff ID': self._get_safe_value(row, self.COL_STAFF_ID),
                         'Dependent ID': old_dep_id,
                         'Name': f"{self._get_safe_value(row, self.COL_FIRST_NAME) or ''} {self._get_safe_value(row, self.COL_LAST_NAME) or ''}".strip(),
-                        'Status': 'Dropped from listing'
+                        'Status': 'Dropped from listing',
+                        'Relationship': self._get_safe_value(row, self.COL_RELATIONSHIP),
+                        'Dep NRIC': self._get_safe_value(row, self.COL_DEP_ID_NO),
+                        'DOB': self._get_safe_value(row, self.COL_DOB),
                     })
 
         result_df.attrs['dropoffs'] = dropoffs

@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
+import * as XLSX from 'xlsx';
 import apiService from '../services/api';
 
 const CollapsibleDetail = ({ label, count, items, colorClass = 'text-gray-700' }) => {
@@ -31,6 +32,81 @@ const CollapsibleDetail = ({ label, count, items, colorClass = 'text-gray-700' }
                 <tr key={i} className="hover:bg-gray-50">
                   <td className="px-3 py-1 text-gray-600 whitespace-nowrap">{item.staff_id}</td>
                   <td className="px-3 py-1 text-gray-800">{item.name}</td>
+                  <td className="px-3 py-1 text-gray-500">{item.remark}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const CollapsibleDLDetail = ({ label, count, items, colorClass = 'text-gray-700' }) => {
+  const [open, setOpen] = useState(false);
+  if (!items || items.length === 0) return null;
+
+  const downloadExcel = (e) => {
+    e.stopPropagation();
+    const rows = items.map(item => ({
+      'Staff ID': item.staff_id || '',
+      'Name': item.name || '',
+      'Relationship': item.relationship || '',
+      'Dep NRIC': item.dep_nric || '',
+      'DOB': item.dob || '',
+      'Remark': item.remark || '',
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, label.replace(/[\\/*?:[\]]/g, '').slice(0, 31));
+    XLSX.writeFile(wb, `${label}.xlsx`);
+  };
+
+  return (
+    <div className="bg-white rounded border border-gray-200 overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-3 py-2 text-xs hover:bg-gray-50 transition-colors"
+      >
+        <span className={`font-semibold ${colorClass}`}>{count} {label}</span>
+        <div className="flex items-center gap-2">
+          <span
+            onClick={downloadExcel}
+            role="button"
+            tabIndex={0}
+            onKeyDown={e => e.key === 'Enter' && downloadExcel(e)}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-green-100 text-green-700 hover:bg-green-200 text-xs font-medium"
+            title="Download as Excel"
+          >
+            ↓ Excel
+          </span>
+          <svg className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+      </button>
+      {open && (
+        <div className="border-t border-gray-100 max-h-48 overflow-y-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50 sticky top-0">
+              <tr>
+                <th className="px-3 py-1 text-left text-gray-500 font-medium">Staff ID</th>
+                <th className="px-3 py-1 text-left text-gray-500 font-medium">Name</th>
+                <th className="px-3 py-1 text-left text-gray-500 font-medium">Relationship</th>
+                <th className="px-3 py-1 text-left text-gray-500 font-medium">Dep NRIC</th>
+                <th className="px-3 py-1 text-left text-gray-500 font-medium">DOB</th>
+                <th className="px-3 py-1 text-left text-gray-500 font-medium">Remark</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {items.map((item, i) => (
+                <tr key={i} className="hover:bg-gray-50">
+                  <td className="px-3 py-1 text-gray-600 whitespace-nowrap">{item.staff_id}</td>
+                  <td className="px-3 py-1 text-gray-800">{item.name}</td>
+                  <td className="px-3 py-1 text-gray-600">{item.relationship}</td>
+                  <td className="px-3 py-1 text-gray-600 whitespace-nowrap">{item.dep_nric}</td>
+                  <td className="px-3 py-1 text-gray-600 whitespace-nowrap">{item.dob}</td>
                   <td className="px-3 py-1 text-gray-500">{item.remark}</td>
                 </tr>
               ))}
@@ -487,31 +563,31 @@ const MediacorpProcessor = () => {
               Dependant Listing Changes
             </h4>
             <div className="space-y-2">
-              <CollapsibleDetail
+              <CollapsibleDLDetail
                 label="New Spouse"
                 count={result.statistics?.dl_new_spouse || 0}
                 items={result.statistics?.dl_details?.new_spouse}
                 colorClass="text-pink-700"
               />
-              <CollapsibleDetail
+              <CollapsibleDLDetail
                 label="New Child"
                 count={result.statistics?.dl_new_child || 0}
                 items={result.statistics?.dl_details?.new_child}
                 colorClass="text-indigo-700"
               />
-              <CollapsibleDetail
+              <CollapsibleDLDetail
                 label="New Other"
                 count={result.statistics?.dl_new_other || 0}
                 items={result.statistics?.dl_details?.new_other}
                 colorClass="text-purple-700"
               />
-              <CollapsibleDetail
+              <CollapsibleDLDetail
                 label="Deletions"
                 count={result.statistics?.dl_deletions || 0}
                 items={result.statistics?.dl_details?.deletions}
                 colorClass="text-red-700"
               />
-              <CollapsibleDetail
+              <CollapsibleDLDetail
                 label="Dropoffs"
                 count={result.statistics?.dl_dropoffs || 0}
                 items={result.statistics?.dl_details?.dropoffs}

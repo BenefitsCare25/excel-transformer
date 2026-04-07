@@ -5493,7 +5493,11 @@ def mc_process_files():
                     first = str(row.iloc[2]).strip() if len(row) > 2 else ''
                     last = str(row.iloc[3]).strip() if len(row) > 3 else ''
                     name = f"{first} {last}".strip()
-                    rec = {'staff_id': staff_id, 'name': name, 'remark': remark}
+                    relationship = str(row.iloc[5]).strip() if len(row) > 5 else ''
+                    dep_nric = str(row.iloc[4]).strip() if len(row) > 4 else ''
+                    dob = str(row.iloc[7]).strip() if len(row) > 7 else ''
+                    rec = {'staff_id': staff_id, 'name': name, 'remark': remark,
+                           'relationship': relationship, 'dep_nric': dep_nric, 'dob': dob}
                     if 'New Spouse' in remark:
                         details['new_spouse'].append(rec)
                     elif 'New Child' in remark:
@@ -5514,7 +5518,10 @@ def mc_process_files():
             dl_details['dropoffs'] = [
                 {'staff_id': str(d.get('Staff ID', '')).strip(),
                  'name': str(d.get('Name', '')).strip(),
-                 'remark': d.get('Status', 'Dropped from listing')}
+                 'remark': d.get('Status', 'Dropped from listing'),
+                 'relationship': str(d.get('Relationship', '') or '').strip(),
+                 'dep_nric': str(d.get('Dep NRIC', '') or '').strip(),
+                 'dob': str(d.get('DOB', '') or '').strip()}
                 for d in dropoff_list
             ]
 
