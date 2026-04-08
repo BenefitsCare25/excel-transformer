@@ -5435,7 +5435,7 @@ def mc_process_files():
             step2_elapsed = time.time() - step2_start
             logger.info(f"  DL stats: new_spouse={dl_stats['new_spouse']}, new_child={dl_stats['new_child']}, "
                         f"new_other={dl_stats['new_other']}, deletions={dl_stats['deletions']}, "
-                        f"dropoffs={dl_stats['dropoffs']}")
+                        f"dropoffs={dl_stats['dropoffs']}, name_nric_changes={dl_stats.get('name_nric_changes', 0)}")
             logger.info(f"  DL warnings: dep_is_employee={dl_stats['warnings']['dep_is_employee']}, "
                         f"terminated_ee={dl_stats['warnings']['terminated_ee_coverage']}, "
                         f"check_hr={dl_stats['warnings']['check_with_hr']}")
@@ -5481,7 +5481,7 @@ def mc_process_files():
 
             def extract_dl_details(df):
                 details = {'new_spouse': [], 'new_child': [], 'new_other': [],
-                           'deletions': [], 'dropoffs': []}
+                           'deletions': [], 'dropoffs': [], 'name_nric_changes': []}
                 remarks_col = 'Inspro ADC Remarks'
                 if remarks_col not in df.columns:
                     return details
@@ -5507,6 +5507,9 @@ def mc_process_files():
                         details['deletions'].append(rec)
                     elif 'Dropoff' in remark or 'Drop' in remark:
                         details['dropoffs'].append(rec)
+                    elif 'Name Changed' in remark or 'NRIC Changed' in remark:
+                        rec['change_details'] = str(row.get('Change Details', '')).strip()
+                        details['name_nric_changes'].append(rec)
                 return details
 
             el_details = extract_el_details(processed_el)
@@ -5584,7 +5587,8 @@ def mc_process_files():
             logger.info(f"  Employees: {el_count}, Dependants: {dl_count}, ADC records: {adc_count}")
             logger.info(f"  EL: +{el_stats['additions']} additions, -{el_stats['deletions']} deletions, ~{total_el_changes} changes")
             logger.info(f"  DL: +{dl_stats['new_spouse']} spouse, +{dl_stats['new_child']} child, "
-                        f"-{dl_stats['deletions']} deletions, {dl_stats['dropoffs']} dropoffs")
+                        f"-{dl_stats['deletions']} deletions, {dl_stats['dropoffs']} dropoffs, "
+                        f"~{dl_stats.get('name_nric_changes', 0)} name/NRIC changes")
             logger.info(f"  Warnings: {total_warnings}")
             file_types_str = ', '.join(f"{k}=.{v['type']}" for k, v in file_info.items())
             logger.info(f"  File types: {file_types_str}")
@@ -5610,6 +5614,7 @@ def mc_process_files():
                     'dl_new_other': dl_stats['new_other'],
                     'dl_deletions': dl_stats['deletions'],
                     'dl_dropoffs': dl_stats['dropoffs'],
+                    'dl_name_nric_changes': dl_stats.get('name_nric_changes', 0),
                     # Validation warnings
                     'warnings': {
                         'terminated_no_lds': el_stats['warnings']['terminated_no_lds'],

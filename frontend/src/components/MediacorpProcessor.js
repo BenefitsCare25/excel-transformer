@@ -9,6 +9,12 @@ const DL_EXTRA_FIELDS = [
   { key: 'dob', label: 'DOB', nowrap: true },
 ];
 
+const DL_CHANGE_EXTRA_FIELDS = [
+  { key: 'relationship', label: 'Relationship', nowrap: false },
+  { key: 'dep_nric', label: 'Dep NRIC', nowrap: true },
+  { key: 'change_details', label: 'Change Details', nowrap: false },
+];
+
 const downloadDLItems = (items, label) => {
   const rows = items.map(item => ({
     'Staff ID': item.staff_id || '',
@@ -17,6 +23,21 @@ const downloadDLItems = (items, label) => {
     'Dep NRIC': item.dep_nric || '',
     'DOB': item.dob || '',
     'Remark': item.remark || '',
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, label.replace(/[\\/*?:[\]]/g, '').slice(0, 31));
+  XLSX.writeFile(wb, `${label}.xlsx`);
+};
+
+const downloadDLChangeItems = (items, label) => {
+  const rows = items.map(item => ({
+    'Staff ID': item.staff_id || '',
+    'Name': item.name || '',
+    'Relationship': item.relationship || '',
+    'Dep NRIC': item.dep_nric || '',
+    'Remark': item.remark || '',
+    'Change Details': item.change_details || '',
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
@@ -562,6 +583,14 @@ const MediacorpProcessor = () => {
                 colorClass="text-gray-700"
                 extraFields={DL_EXTRA_FIELDS}
                 onDownload={() => downloadDLItems(result.statistics?.dl_details?.dropoffs, 'Dropoffs')}
+              />
+              <CollapsibleDetail
+                label="Name / NRIC Changes"
+                count={result.statistics?.dl_name_nric_changes || 0}
+                items={result.statistics?.dl_details?.name_nric_changes}
+                colorClass="text-orange-700"
+                extraFields={DL_CHANGE_EXTRA_FIELDS}
+                onDownload={() => downloadDLChangeItems(result.statistics?.dl_details?.name_nric_changes, 'Name NRIC Changes')}
               />
             </div>
           </div>

@@ -48,7 +48,8 @@ class DLProcessor:
         el_id_numbers = self._build_el_id_lookup(processed_el_df)
         el_staff_to_aia = self._build_staff_aia_lookup(processed_el_df)
         el_staff_to_lds = self._build_staff_lds_lookup(processed_el_df)
-        old_dep_ids = self._build_dep_id_set(old_dl_df)
+        old_dep_map = self._build_dep_id_map(old_dl_df)
+        old_dep_ids = set(old_dep_map.keys())
 
         results = {
             'DEP is Employee': [],
@@ -56,6 +57,7 @@ class DLProcessor:
             'DEP ID Check': [],
             'AIA Category': [],
             'Inspro ADC Remarks': [],
+            'Change Details': [],
         }
 
         # Statistics tracking
@@ -65,6 +67,7 @@ class DLProcessor:
             'new_other': 0,
             'deletions': 0,
             'dropoffs': 0,
+            'name_nric_changes': 0,
             'warnings': {
                 'dep_is_employee': 0,
                 'terminated_ee_coverage': 0,
@@ -109,13 +112,43 @@ class DLProcessor:
             aia_cat = el_staff_to_aia.get(staff_id_str, '')
             results['AIA Category'].append(aia_cat)
 
+            change_details = ''
+            change_type = None
+            if not is_new and dep_id_str and dep_id_str in old_dep_map:
+                first_name_new = str(self._get_safe_value(row, self.COL_FIRST_NAME) or '').strip()
+                last_name_new = str(self._get_safe_value(row, self.COL_LAST_NAME) or '').strip()
+                nric_new = str(dep_id_no or '').strip().upper()
+                old = old_dep_map[dep_id_str]
+                name_changed = (
+                    first_name_new.upper() != old['first_name'].upper() or
+                    last_name_new.upper() != old['last_name'].upper()
+                )
+                nric_changed = nric_new != old['nric']
+                if name_changed:
+                    old_name = f"{old['first_name']} {old['last_name']}".strip()
+                    new_name = f"{first_name_new} {last_name_new}".strip()
+                if name_changed and nric_changed:
+                    change_type = 'name_nric'
+                    change_details = f"Name: '{old_name}' → '{new_name}'; NRIC: '{old['nric']}' → '{nric_new}'"
+                elif name_changed:
+                    change_type = 'name'
+                    change_details = f"Name: '{old_name}' → '{new_name}'"
+                elif nric_changed:
+                    change_type = 'nric'
+                    change_details = f"NRIC: '{old['nric']}' → '{nric_new}'"
+
+            results['Change Details'].append(change_details)
+            if change_type:
+                stats['name_nric_changes'] += 1
+
             remarks, remark_type = self._generate_adc_remarks_with_type(
                 is_new=is_new,
                 relationship=relationship,
                 effective_date=file_date,
                 lds_check=lds_check,
                 is_employee=is_employee,
-                dep_who_are_ee=dep_who_are_ee
+                dep_who_are_ee=dep_who_are_ee,
+                change_type=change_type
             )
             results['Inspro ADC Remarks'].append(remarks)
 
@@ -175,6 +208,21 @@ class DLProcessor:
                 dep_ids.add(str(val).strip())
         return dep_ids
 
+    def _build_dep_id_map(self, dl_df: pd.DataFrame) -> Dict[str, dict]:
+        """Build Dependent ID → {first_name, last_name, nric} from a Dependant Listing."""
+        dep_map = {}
+        if dl_df is None or len(dl_df.columns) <= self.COL_DEP_ID:
+            return dep_map
+        for _, row in dl_df.iterrows():
+            dep_id = self._get_safe_value(row, self.COL_DEP_ID)
+            if dep_id:
+                dep_map[str(dep_id).strip()] = {
+                    'first_name': str(self._get_safe_value(row, self.COL_FIRST_NAME) or '').strip(),
+                    'last_name': str(self._get_safe_value(row, self.COL_LAST_NAME) or '').strip(),
+                    'nric': str(self._get_safe_value(row, self.COL_DEP_ID_NO) or '').strip().upper(),
+                }
+        return dep_map
+
     def _get_safe_value(self, row: pd.Series, col_idx: int):
         """Safely get value from row by column index."""
         try:
@@ -184,21 +232,6 @@ class DLProcessor:
             pass
         return None
 
-    def _generate_adc_remarks(
-        self,
-        is_new: bool,
-        relationship: Optional[str],
-        effective_date,
-        lds_check: str,
-        is_employee: str,
-        dep_who_are_ee: str
-    ) -> str:
-        """Generate Inspro ADC Remarks based on dependant status."""
-        remarks, _ = self._generate_adc_remarks_with_type(
-            is_new, relationship, effective_date, lds_check, is_employee, dep_who_are_ee
-        )
-        return remarks
-
     def _generate_adc_remarks_with_type(
         self,
         is_new: bool,
@@ -206,13 +239,15 @@ class DLProcessor:
         effective_date,
         lds_check: str,
         is_employee: str,
-        dep_who_are_ee: str
+        dep_who_are_ee: str,
+        change_type: Optional[str] = None
     ) -> tuple:
         """Generate Inspro ADC Remarks with type classification.
 
         Returns:
             tuple: (remarks_string, remark_type)
-            remark_type: 'deletion', 'new_spouse', 'new_child', 'new_other', 'dep_employee', or None
+            remark_type: 'deletion', 'new_spouse', 'new_child', 'new_other',
+                         'name_change', 'nric_change', 'name_nric_change', 'dep_employee', or None
         """
         if lds_check:
             return "Deletion", 'deletion'
@@ -228,6 +263,13 @@ class DLProcessor:
                 return f"New Child{wef_str}", 'new_child'
             else:
                 return f"New Dependant{wef_str} - Check with HR", 'new_other'
+
+        if change_type == 'name_nric':
+            return "Name and NRIC Changed", 'name_nric_change'
+        if change_type == 'name':
+            return "Name Changed", 'name_change'
+        if change_type == 'nric':
+            return "NRIC Changed", 'nric_change'
 
         if is_employee == 'Yes':
             if dep_who_are_ee:
