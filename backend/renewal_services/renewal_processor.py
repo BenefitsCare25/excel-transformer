@@ -282,8 +282,8 @@ def _detect_products(ws, product_header_row: int = 13, subheader_row: int = 14) 
     rate_row = product_header_row - 1  # row that holds premium rates for Type-1 products
 
     for merged_range in ws.merged_cells.ranges:
-        if merged_range.min_row == product_header_row and merged_range.max_row == product_header_row:
-            cell_val = ws.cell(row=product_header_row, column=merged_range.min_col).value
+        if merged_range.min_row <= product_header_row <= merged_range.max_row:
+            cell_val = ws.cell(row=merged_range.min_row, column=merged_range.min_col).value
             if cell_val:
                 merged_sections.append({
                     'name': str(cell_val).strip(),
@@ -674,6 +674,16 @@ def _generate_product_sheet(
 
         row_num += 1
 
+    # Build category→premium lookup from prev year for Type 2 new employees
+    prev_category_premium: Dict[str, float] = {}
+    if not is_type1:
+        for k, emp in prev_employees.items():
+            pd = emp.product_data.get(product.name)
+            if pd and pd.get('value') is not None:
+                cat = pd.get('category', '')
+                if cat and cat not in prev_category_premium:
+                    prev_category_premium[cat] = pd['value']
+
     curr_headcount = []
     for key, emp in curr_employees.items():
         pdata = emp.product_data.get(product.name)
@@ -710,15 +720,18 @@ def _generate_product_sheet(
 
         # Col H empty for curr year; Col J = I - H
         # Type 1 (sum insured): always use curr year value so SI changes are captured.
-        # Type 2 (premium): use prev year value for renewals so rate-only changes are
-        #   excluded from the adjustment (billed separately at renewal).
+        # Type 2 (premium): always use prev year premium for adjustment — even for
+        #   new employees, look up prev year rate by category.
         if is_type1:
             val = pdata.get('value')
         elif key in prev_employees:
             prev_pdata = prev_employees[key].product_data.get(product.name, {})
             val = prev_pdata.get('value')
         else:
-            val = pdata.get('value')
+            cat = pdata.get('category', '')
+            val = prev_category_premium.get(cat) if cat else None
+            if val is None:
+                val = pdata.get('value')
         if val is not None:
             ws.cell(row=row_num, column=col_curr_val, value=val)
         ws.cell(row=row_num, column=col_diff).value = f"={curr_val_letter}{row_num}-{prev_val_letter}{row_num}"

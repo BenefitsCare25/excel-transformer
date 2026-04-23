@@ -205,6 +205,7 @@ Key format examples: `NRIC|S1234567A`, `EMAIL|john@example.com`, `NAME|JOHN TAN|
 
 ### Product Detection (`_detect_products`)
 - Reads merged cells on product_header_row for section names
+- Supports **multi-row merged cells** — a merged range is detected as long as `product_header_row` falls within `min_row..max_row` (not just exact single-row match). Some files (e.g. SYNESYS) have product headers like GMM merged across R1-R13.
 - Each section's `col_end` is **extended** to just before the next section's `col_start` — this captures premium/value columns that fall outside the merged range (common in some client formats)
 - `admin_type_col` assigned as the nearest `'Type of Administration'` column to the LEFT of each section
 - Type 1 (Sum Insured): detected when subheader contains `'sum insured'` or `'eligible sum insured'`
@@ -233,6 +234,7 @@ Key format examples: `NRIC|S1234567A`, `EMAIL|john@example.com`, `NAME|JOHN TAN|
 
 **Type 2 premium output (GHS, GMM, GP, SP, GD):**
 - Annual premium read directly from source; GST calculated as 9% in output Column K.
+- **Curr year block always uses previous year premium** for adjustment — even for new employees not in the previous year file. A category→premium lookup is built from prev year employees; new employees get the prev year rate for their category. Falls back to curr year premium only if no category match found.
 - Adjustment column (L) = `J / divisor` (pro-rated by divisor entered by user).
 - Each Type 2 product sheet includes 3 summary rows (Col L) below the data:
   - **Adjustment Premium** = `SUM(L data rows)`
