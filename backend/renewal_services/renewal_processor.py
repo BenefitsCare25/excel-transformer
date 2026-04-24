@@ -26,6 +26,7 @@ from openpyxl.utils import get_column_letter
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
+from collections import Counter
 import os
 import re
 import logging
@@ -674,15 +675,21 @@ def _generate_product_sheet(
 
         row_num += 1
 
-    # Build category→premium lookup from prev year for Type 2 new employees
+    # Build category→premium lookup from prev year (used for category changes and new employees)
     prev_category_premium: Dict[str, float] = {}
     if not is_type1:
+        cat_values: Dict[str, list] = {}
         for k, emp in prev_employees.items():
             pd = emp.product_data.get(product.name)
             if pd and pd.get('value') is not None:
                 cat = pd.get('category', '')
-                if cat and cat not in prev_category_premium:
-                    prev_category_premium[cat] = pd['value']
+                if cat:
+                    cat_values.setdefault(cat, []).append(pd['value'])
+        for cat, vals in cat_values.items():
+            counter = Counter(vals)
+            prev_category_premium[cat] = counter.most_common(1)[0][0]
+        if prev_category_premium:
+            logger.info(f"Prev year category→premium lookup for '{product.name}': {prev_category_premium}")
 
     curr_headcount = []
     for key, emp in curr_employees.items():
@@ -707,6 +714,12 @@ def _generate_product_sheet(
 
     curr_headcount.sort(key=lambda x: (x[1].department.lower(), x[1].name.upper()))
 
+    def _resolve_type2_val(prod_data):
+        """Look up prev year premium by category, fall back to current year value."""
+        cat = prod_data.get('category', '')
+        v = prev_category_premium.get(cat) if cat else None
+        return v if v is not None else prod_data.get('value')
+
     for key, emp, pdata in curr_headcount:
         ws.cell(row=row_num, column=1, value=f"Renewal {curr_year}")
         ws.cell(row=row_num, column=2, value=emp.name)
@@ -718,22 +731,20 @@ def _generate_product_sheet(
             ws.cell(row=row_num, column=col_entity, value=emp.entity)
         ws.cell(row=row_num, column=col_category, value=pdata.get('category') or emp.category)
 
-        # Col H empty for curr year; Col J = I - H
-        # Type 1 (sum insured): always use curr year value so SI changes are captured.
-        # Type 2 (premium): always use prev year premium for adjustment — even for
-        #   new employees, look up prev year rate by category.
-        def _resolve_type2_val(pd):
-            cat = pd.get('category', '')
-            v = prev_category_premium.get(cat) if cat else None
-            return v if v is not None else pd.get('value')
-
+        # Type 1: use curr year value so SI changes are captured.
+        # Type 2: use prev year premium by category for adjustment.
         if is_type1:
             val = pdata.get('value')
         elif key in prev_employees:
             prev_pdata = prev_employees[key].product_data.get(product.name, {})
-            val = prev_pdata.get('value')
-            if val is None:
+            curr_cat = pdata.get('category', '')
+            prev_cat = prev_pdata.get('category', '')
+            if curr_cat and prev_cat and curr_cat != prev_cat:
                 val = _resolve_type2_val(pdata)
+            else:
+                val = prev_pdata.get('value')
+                if val is None:
+                    val = _resolve_type2_val(pdata)
         else:
             val = _resolve_type2_val(pdata)
         if val is not None:
