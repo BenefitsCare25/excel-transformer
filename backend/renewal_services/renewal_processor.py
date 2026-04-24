@@ -727,6 +727,11 @@ def _generate_product_sheet(
         elif key in prev_employees:
             prev_pdata = prev_employees[key].product_data.get(product.name, {})
             val = prev_pdata.get('value')
+            if val is None:
+                cat = pdata.get('category', '')
+                val = prev_category_premium.get(cat) if cat else None
+                if val is None:
+                    val = pdata.get('value')
         else:
             cat = pdata.get('category', '')
             val = prev_category_premium.get(cat) if cat else None
