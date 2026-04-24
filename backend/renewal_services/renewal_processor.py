@@ -722,21 +722,20 @@ def _generate_product_sheet(
         # Type 1 (sum insured): always use curr year value so SI changes are captured.
         # Type 2 (premium): always use prev year premium for adjustment — even for
         #   new employees, look up prev year rate by category.
+        def _resolve_type2_val(pd):
+            cat = pd.get('category', '')
+            v = prev_category_premium.get(cat) if cat else None
+            return v if v is not None else pd.get('value')
+
         if is_type1:
             val = pdata.get('value')
         elif key in prev_employees:
             prev_pdata = prev_employees[key].product_data.get(product.name, {})
             val = prev_pdata.get('value')
             if val is None:
-                cat = pdata.get('category', '')
-                val = prev_category_premium.get(cat) if cat else None
-                if val is None:
-                    val = pdata.get('value')
+                val = _resolve_type2_val(pdata)
         else:
-            cat = pdata.get('category', '')
-            val = prev_category_premium.get(cat) if cat else None
-            if val is None:
-                val = pdata.get('value')
+            val = _resolve_type2_val(pdata)
         if val is not None:
             ws.cell(row=row_num, column=col_curr_val, value=val)
         ws.cell(row=row_num, column=col_diff).value = f"={curr_val_letter}{row_num}-{prev_val_letter}{row_num}"
