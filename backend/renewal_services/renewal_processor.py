@@ -41,29 +41,61 @@ SKIP_SECTIONS = {
 }
 
 # Known product type hints — used as fallback when column headers are ambiguous.
-# Maps lowercase name patterns → product type (1 = Sum Insured, 2 = Premium)
+# Split into two tables so short abbreviations (e.g. 'gd', 'sp') only match as
+# whole words and never as substrings of unrelated values like 'sgd' (currency)
+# or 's-pass holders' (category text).
 # Product abbreviations: GTL, GDD, GPA, GDI, GHS, GMM, GP, SP, GD
-PRODUCT_TYPE_HINTS: dict = {
+PRODUCT_TYPE_PHRASES: Dict[str, int] = {
     # Type 1 — Sum Insured based
-    'gtl': 1, 'term life': 1,
-    'gdd': 1, 'dread disease': 1,
-    'gpa': 1, 'personal accident': 1,
-    'gdi': 1, 'disability income': 1,
+    'term life': 1,
+    'dread disease': 1,
+    'personal accident': 1,
+    'disability income': 1,
     # Type 2 — Premium based
-    'ghs': 2, 'hospital': 2, 'surgical': 2,
-    'gmm': 2, 'major medical': 2,
-    'clinical': 2, 'general practitioner': 2,
-    'sp': 2, 'specialist': 2,
-    'gd': 2, 'dental': 2,
+    'hospital': 2,
+    'surgical': 2,
+    'major medical': 2,
+    'general practitioner': 2,
+    'specialist': 2,
+    'dental': 2,
+    'clinical': 2,
 }
+
+PRODUCT_TYPE_ABBREVS: Dict[str, int] = {
+    # Type 1 — Sum Insured based
+    'gtl': 1, 'gdd': 1, 'gpa': 1, 'gdi': 1,
+    # Type 2 — Premium based
+    'ghs': 2, 'gmm': 2, 'gp': 2, 'sp': 2, 'gd': 2,
+}
+
+# Abbreviations require \b boundaries so 'gd' doesn't match 'sgd' (currency)
+# or 'sp' doesn't match 's-pass holders'. Phrases are safe as substrings.
+_ABBREV_RE = re.compile(
+    r'\b(?:' + '|'.join(re.escape(a) for a in PRODUCT_TYPE_ABBREVS) + r')\b',
+    re.IGNORECASE,
+)
+_KEYWORD_RE = re.compile(
+    r'\b(?:' + '|'.join(re.escape(a) for a in PRODUCT_TYPE_ABBREVS) + r')\b'
+    r'|' + '|'.join(re.escape(p) for p in PRODUCT_TYPE_PHRASES),
+    re.IGNORECASE,
+)
+
+
+def _contains_product_keyword(value) -> bool:
+    """True if cell value looks like a product label."""
+    text = _normalize(value)
+    return bool(text) and bool(_KEYWORD_RE.search(text))
 
 
 def _infer_product_type_from_name(name: str) -> int:
     """Return product type (1 or 2) from known name patterns, 0 if unrecognised."""
     name_lower = name.lower()
-    for pattern, ptype in PRODUCT_TYPE_HINTS.items():
-        if pattern in name_lower:
+    for phrase, ptype in PRODUCT_TYPE_PHRASES.items():
+        if phrase in name_lower:
             return ptype
+    m = _ABBREV_RE.search(name_lower)
+    if m:
+        return PRODUCT_TYPE_ABBREVS[m.group(0).lower()]
     return 0
 
 ACCOUNTING_FORMAT = '_(* #,##0.00_);_(* (#,##0.00);_(* "-"??_);_(@_)'
@@ -204,38 +236,60 @@ def _find_employee_listing_sheet(wb, filename: str) -> Tuple[str, int]:
 
 
 def _detect_header_rows(ws) -> Tuple[int, int, int]:
-    """
-    Dynamically locate (product_header_row, subheader_row, data_start_row).
+    """Locate (product_header_row, subheader_row, data_start_row).
 
-    Strategy:
-    1. Find the row whose merged cells contain the most product keywords
-       (e.g. 'GTL', 'GHS', 'term life', 'hospital') → product_header_row.
-    2. subheader_row  = product_header_row + 1
-    3. data_start_row = product_header_row + 2
-
-    Falls back to (13, 14, 15) when nothing is found.
+    Two phases so the same code handles merged and unmerged templates:
+    Phase 1 scores merged ranges per row; Phase 2 falls back to scanning
+    single cells in rows 1..30. Defaults to (13, 14, 15) only when both fail.
     """
-    PRODUCT_KEYWORDS = {
-        'gtl', 'gdd', 'gpa', 'gdi', 'ghs', 'gmm', 'sp', 'gd',
-        'term life', 'dread disease', 'personal accident', 'disability income',
-        'hospital', 'surgical', 'major medical', 'dental', 'specialist', 'clinical',
-        'group term', 'group dread', 'group hospital', 'group major',
-    }
-    row_scores: Dict[int, int] = {}
+    MIN_PRODUCT_HITS = 2
+
+    def _result(row: int, source: str, scores) -> Tuple[int, int, int]:
+        logger.info(f"Product header row {row} detected from {source} (scores={scores})")
+        return row, row + 1, row + 2
+
+    # Phase 1 — merged ranges spanning a single row
+    merged_scores: Dict[int, int] = {}
     for mr in ws.merged_cells.ranges:
-        val = ws.cell(row=mr.min_row, column=mr.min_col).value
-        if val:
-            val_lower = str(val).lower()
-            if any(kw in val_lower for kw in PRODUCT_KEYWORDS):
-                row_scores[mr.min_row] = row_scores.get(mr.min_row, 0) + 1
+        if _contains_product_keyword(ws.cell(row=mr.min_row, column=mr.min_col).value):
+            merged_scores[mr.min_row] = merged_scores.get(mr.min_row, 0) + 1
 
-    if not row_scores:
+    if merged_scores:
+        best = max(merged_scores, key=merged_scores.get)
+        if merged_scores[best] >= MIN_PRODUCT_HITS:
+            return _result(best, "merged cells", merged_scores)
+
+    # Phase 2 — single-cell scan over the top of the sheet
+    scan_limit = min(30, ws.max_row)
+    cell_scores: Dict[int, int] = {}
+    for row_idx, row_vals in enumerate(
+        ws.iter_rows(min_row=1, max_row=scan_limit, values_only=True), start=1
+    ):
+        hits = sum(1 for v in row_vals if _contains_product_keyword(v))
+        if hits:
+            cell_scores[row_idx] = hits
+
+    if not cell_scores:
         logger.warning("Could not auto-detect product header row; defaulting to row 13/14/15")
         return 13, 14, 15
 
-    product_header_row = max(row_scores, key=row_scores.get)
-    logger.info(f"Auto-detected product header row: {product_header_row} (scores={row_scores})")
-    return product_header_row, product_header_row + 1, product_header_row + 2
+    combined = {
+        r: cell_scores.get(r, 0) + merged_scores.get(r, 0)
+        for r in set(cell_scores) | set(merged_scores)
+    }
+    candidates = sorted(r for r, s in combined.items() if s >= MIN_PRODUCT_HITS)
+    if not candidates:
+        logger.warning("Could not auto-detect product header row; defaulting to row 13/14/15")
+        return 13, 14, 15
+
+    # The sub-header row repeats product abbreviations per column and so scores
+    # higher than the product header itself; picking by max() would land on the
+    # sub-header. Instead, pick the topmost candidate whose next row also looks
+    # header-like — that's the product header.
+    for r in candidates:
+        if combined.get(r + 1, 0) >= MIN_PRODUCT_HITS:
+            return _result(r, "cell scan", combined)
+    return _result(candidates[0], "cell scan (no sub-header signal)", combined)
 
 
 def _detect_year(ws, product_header_row: int = 13) -> Optional[int]:
@@ -282,6 +336,11 @@ def _detect_products(ws, product_header_row: int = 13, subheader_row: int = 14) 
     merged_sections = []
     rate_row = product_header_row - 1  # row that holds premium rates for Type-1 products
 
+    # Collect merged ranges spanning the header row, plus any non-empty single
+    # cell outside those ranges. Unrecognised products are kept as boundary
+    # markers so neighbouring sections don't bleed across them; they get
+    # product_type=0 and are discarded at the end.
+    covered_cols: set = set()
     for merged_range in ws.merged_cells.ranges:
         if merged_range.min_row <= product_header_row <= merged_range.max_row:
             cell_val = ws.cell(row=merged_range.min_row, column=merged_range.min_col).value
@@ -289,21 +348,22 @@ def _detect_products(ws, product_header_row: int = 13, subheader_row: int = 14) 
                 merged_sections.append({
                     'name': str(cell_val).strip(),
                     'col_start': merged_range.min_col,
-                    'col_end': merged_range.max_col
+                    'col_end': merged_range.max_col,
                 })
+            covered_cols.update(range(merged_range.min_col, merged_range.max_col + 1))
 
-    if not merged_sections:
-        for col in range(1, ws.max_column + 1):
-            val = ws.cell(row=product_header_row, column=col).value
-            if val:
-                name = str(val).strip()
-                is_merged = any(
-                    mr.min_row <= product_header_row <= mr.max_row and
-                    mr.min_col <= col <= mr.max_col
-                    for mr in ws.merged_cells.ranges
-                )
-                if not is_merged:
-                    merged_sections.append({'name': name, 'col_start': col, 'col_end': col})
+    header_row_vals = next(
+        ws.iter_rows(min_row=product_header_row, max_row=product_header_row, values_only=True),
+        (),
+    )
+    for col, val in enumerate(header_row_vals, start=1):
+        if not val or col in covered_cols:
+            continue
+        merged_sections.append({
+            'name': str(val).strip(),
+            'col_start': col,
+            'col_end': col,
+        })
 
     merged_sections.sort(key=lambda x: x['col_start'])
 
