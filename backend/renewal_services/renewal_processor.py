@@ -98,6 +98,42 @@ def _infer_product_type_from_name(name: str) -> int:
         return PRODUCT_TYPE_ABBREVS[m.group(0).lower()]
     return 0
 
+
+_SINGLE_ROW_TYPE_TOKEN_RE = re.compile(
+    r'\b(?:category|sum\s*insured|premium|gst|basis|named|headcount|annual\s*premium)\b',
+    re.IGNORECASE,
+)
+
+
+def _extract_product_key(value) -> Optional[str]:
+    """Return the canonical product key for a single column header.
+
+    Used by the single-row layout grouping path. Abbreviations win over phrases
+    because they are unambiguous (GPA always means Group Personal Accident),
+    while phrases like 'hospital' could appear in either GHS or GMM headers.
+    Returns the abbreviation upper-cased (e.g. 'GPA') or the phrase as found
+    (e.g. 'hospital'). None when no product keyword is present.
+
+    Why the type-token gate:
+      Headers like "Type of Employment Pass (eg. WP / SP)" accidentally contain
+      the abbreviation "SP" but are not product columns. Real product columns
+      always carry one of {category, sum insured, premium, gst, basis, named,
+      headcount}. Requiring at least one rejects the false matches without
+      needing an exclusion list.
+    """
+    text = _normalize(value).lower()
+    if not text:
+        return None
+    if not _SINGLE_ROW_TYPE_TOKEN_RE.search(text):
+        return None
+    m = _ABBREV_RE.search(text)
+    if m:
+        return m.group(0).upper()
+    for phrase in PRODUCT_TYPE_PHRASES:
+        if phrase in text:
+            return phrase
+    return None
+
 ACCOUNTING_FORMAT = '_(* #,##0.00_);_(* (#,##0.00);_(* "-"??_);_(@_)'
 
 
@@ -238,15 +274,33 @@ def _find_employee_listing_sheet(wb, filename: str) -> Tuple[str, int]:
 def _detect_header_rows(ws) -> Tuple[int, int, int]:
     """Locate (product_header_row, subheader_row, data_start_row).
 
-    Two phases so the same code handles merged and unmerged templates:
-    Phase 1 scores merged ranges per row; Phase 2 falls back to scanning
-    single cells in rows 1..30. Defaults to (13, 14, 15) only when both fail.
+    Three layouts are supported:
+    - Phase 1: a merged "GPA"/"GHS" banner sits above a separate sub-header
+      row with column-type labels (Sum Insured, Premium, ...).
+    - Phase 2a: same two-row structure but without merged cells — the product
+      banner row scores high on product keywords AND the next row also scores
+      because each column sub-header repeats the product abbreviation.
+    - Phase 2b (single-row layout): one row carries everything, e.g.
+      "GPA Category | GPA Eligible Sum Insured | GPA Premium". The row below
+      it is the first data row, not a sub-header. Returns (r, r, r+1) so
+      downstream code reads column-type info from the same row that holds the
+      product names.
+
+    Falls back to (13, 14, 15) only when no candidates are found anywhere.
     """
     MIN_PRODUCT_HITS = 2
 
-    def _result(row: int, source: str, scores) -> Tuple[int, int, int]:
+    def _two_row(row: int, source: str, scores) -> Tuple[int, int, int]:
         logger.info(f"Product header row {row} detected from {source} (scores={scores})")
         return row, row + 1, row + 2
+
+    def _single_row(row: int, source: str, scores) -> Tuple[int, int, int]:
+        logger.info(
+            f"Single-row header layout detected at row {row} from {source} "
+            f"(scores={scores}); subheader_row=product_header_row, "
+            f"data_start_row={row + 1}"
+        )
+        return row, row, row + 1
 
     # Phase 1 — merged ranges spanning a single row
     merged_scores: Dict[int, int] = {}
@@ -257,7 +311,7 @@ def _detect_header_rows(ws) -> Tuple[int, int, int]:
     if merged_scores:
         best = max(merged_scores, key=merged_scores.get)
         if merged_scores[best] >= MIN_PRODUCT_HITS:
-            return _result(best, "merged cells", merged_scores)
+            return _two_row(best, "merged cells", merged_scores)
 
     # Phase 2 — single-cell scan over the top of the sheet
     scan_limit = min(30, ws.max_row)
@@ -282,14 +336,19 @@ def _detect_header_rows(ws) -> Tuple[int, int, int]:
         logger.warning("Could not auto-detect product header row; defaulting to row 13/14/15")
         return 13, 14, 15
 
-    # The sub-header row repeats product abbreviations per column and so scores
-    # higher than the product header itself; picking by max() would land on the
-    # sub-header. Instead, pick the topmost candidate whose next row also looks
-    # header-like — that's the product header.
+    # Phase 2a — two-row layout. The sub-header row repeats product abbreviations
+    # per column and so scores higher than the product header itself; picking by
+    # max() would land on the sub-header. Instead, pick the topmost candidate
+    # whose next row also looks header-like — that's the product header.
     for r in candidates:
         if combined.get(r + 1, 0) >= MIN_PRODUCT_HITS:
-            return _result(r, "cell scan", combined)
-    return _result(candidates[0], "cell scan (no sub-header signal)", combined)
+            return _two_row(r, "cell scan", combined)
+
+    # Phase 2b — single-row layout. No sub-header signal anywhere. Pick the
+    # candidate row with the most product hits (real header rows carry
+    # one keyword per product column; metadata rows only ever carry one or two).
+    best = max(candidates, key=lambda r: (combined[r], -r))
+    return _single_row(best, "single-row layout", combined)
 
 
 def _detect_year(ws, product_header_row: int = 13) -> Optional[int]:
@@ -335,35 +394,67 @@ def _detect_products(ws, product_header_row: int = 13, subheader_row: int = 14) 
     products = []
     merged_sections = []
     rate_row = product_header_row - 1  # row that holds premium rates for Type-1 products
-
-    # Collect merged ranges spanning the header row, plus any non-empty single
-    # cell outside those ranges. Unrecognised products are kept as boundary
-    # markers so neighbouring sections don't bleed across them; they get
-    # product_type=0 and are discarded at the end.
-    covered_cols: set = set()
-    for merged_range in ws.merged_cells.ranges:
-        if merged_range.min_row <= product_header_row <= merged_range.max_row:
-            cell_val = ws.cell(row=merged_range.min_row, column=merged_range.min_col).value
-            if cell_val:
-                merged_sections.append({
-                    'name': str(cell_val).strip(),
-                    'col_start': merged_range.min_col,
-                    'col_end': merged_range.max_col,
-                })
-            covered_cols.update(range(merged_range.min_col, merged_range.max_col + 1))
+    single_row_mode = product_header_row == subheader_row
 
     header_row_vals = next(
         ws.iter_rows(min_row=product_header_row, max_row=product_header_row, values_only=True),
         (),
     )
-    for col, val in enumerate(header_row_vals, start=1):
-        if not val or col in covered_cols:
-            continue
-        merged_sections.append({
-            'name': str(val).strip(),
-            'col_start': col,
-            'col_end': col,
-        })
+
+    if single_row_mode:
+        # Single-row layout: group consecutive columns sharing the same product
+        # key (GPA, GHS, ...) into one section. Each column's header still
+        # contains the column-type word (Category / Sum Insured / Premium), so
+        # the per-section logic below can identify them via subheader_row scan
+        # without any further changes.
+        current_section: Optional[dict] = None
+        current_key: Optional[str] = None
+        for col, val in enumerate(header_row_vals, start=1):
+            key = _extract_product_key(val)
+            if key and key == current_key and current_section is not None:
+                current_section['col_end'] = col
+            else:
+                if current_section is not None:
+                    merged_sections.append(current_section)
+                if key:
+                    current_section = {'name': key, 'col_start': col, 'col_end': col}
+                    current_key = key
+                else:
+                    current_section = None
+                    current_key = None
+        if current_section is not None:
+            merged_sections.append(current_section)
+
+        logger.info(
+            f"Single-row layout: built {len(merged_sections)} product section(s) "
+            f"from row {product_header_row}: "
+            f"{[(s['name'], s['col_start'], s['col_end']) for s in merged_sections]}"
+        )
+    else:
+        # Two-row layout: collect merged ranges spanning the header row, plus
+        # any non-empty single cell outside those ranges. Unrecognised products
+        # are kept as boundary markers so neighbouring sections don't bleed
+        # across them; they get product_type=0 and are discarded at the end.
+        covered_cols: set = set()
+        for merged_range in ws.merged_cells.ranges:
+            if merged_range.min_row <= product_header_row <= merged_range.max_row:
+                cell_val = ws.cell(row=merged_range.min_row, column=merged_range.min_col).value
+                if cell_val:
+                    merged_sections.append({
+                        'name': str(cell_val).strip(),
+                        'col_start': merged_range.min_col,
+                        'col_end': merged_range.max_col,
+                    })
+                covered_cols.update(range(merged_range.min_col, merged_range.max_col + 1))
+
+        for col, val in enumerate(header_row_vals, start=1):
+            if not val or col in covered_cols:
+                continue
+            merged_sections.append({
+                'name': str(val).strip(),
+                'col_start': col,
+                'col_end': col,
+            })
 
     merged_sections.sort(key=lambda x: x['col_start'])
 
@@ -494,7 +585,9 @@ def _find_employee_columns(ws, subheader_row: int = 14) -> dict:
             col_map['dob'] = col
         elif 'employee id' in header or 'emp id' in header or 'staff id' in header or 'employee id no' in header:
             col_map['employee_id'] = col  # check BEFORE nric to prevent 'id no' false match
-        elif 'nric' not in col_map and ('nric' in header or 'ic no' in header or 'id no' in header or 'national id' in header or 'passport' in header or header in ('nric/fin', 'nric / fin', 'fin', 'nric/passport')):
+        elif 'nric' not in col_map and 'name' not in header and ('nric' in header or 'ic no' in header or 'id no' in header or 'national id' in header or 'passport' in header or header in ('nric/fin', 'nric / fin', 'fin', 'nric/passport')):
+            # 'name' guard rejects headers like "Full Name (as per NRIC)" which
+            # mention NRIC for context but are actually the name column.
             col_map['nric'] = col
         elif 'email' not in col_map and ('email' in header or 'e-mail' in header or 'e mail' in header):
             col_map['email'] = col

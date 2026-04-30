@@ -139,7 +139,8 @@ const RenewalComparison = () => {
           <h2 className="text-xl font-semibold text-gray-800 mb-1">Renewal Comparison</h2>
           <p className="text-sm text-gray-600">
             Compare insurance renewal listing files between two policy years to generate an Adjustment Breakdown report.
-            Products and years are auto-detected from headers. Only Headcount employees are included.
+            Products and years are auto-detected from headers — both <span className="font-medium">two-row banner</span>{' '}
+            and <span className="font-medium">single-row combined</span> header layouts are supported. Only Headcount employees are included.
           </p>
         </div>
 
@@ -189,39 +190,164 @@ const RenewalComparison = () => {
 
               {/* Excel Structure */}
               <div>
-                <h4 className="text-sm font-semibold text-gray-700 mb-2">Expected Excel Structure</h4>
-                <div className="overflow-x-auto">
-                  <table className="text-xs border-collapse w-full">
-                    <thead>
-                      <tr className="bg-gray-100">
-                        <th className="border border-gray-300 px-2 py-1 text-left font-medium text-gray-600 w-16">Row</th>
-                        <th className="border border-gray-300 px-2 py-1 text-left font-medium text-gray-600">Content</th>
-                        <th className="border border-gray-300 px-2 py-1 text-left font-medium text-gray-600">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">12</td>
-                        <td className="border border-gray-300 px-2 py-1">Dates / Premium Rates</td>
-                        <td className="border border-gray-300 px-2 py-1 text-gray-500">Type 1 rate (e.g. 0.003) read per product column. Policy year is taken from the sheet name, not cell values.</td>
-                      </tr>
-                      <tr className="bg-yellow-50">
-                        <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">13</td>
-                        <td className="border border-gray-300 px-2 py-1 font-semibold">Product Headers <span className="text-yellow-700">(merged cells)</span></td>
-                        <td className="border border-gray-300 px-2 py-1 text-gray-500">Each product spans its columns as a merged cell, e.g. "GTL", "GHS", "GP"</td>
-                      </tr>
-                      <tr className="bg-blue-50">
-                        <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">14</td>
-                        <td className="border border-gray-300 px-2 py-1 font-semibold">Sub-headers <span className="text-blue-700">(column names)</span></td>
-                        <td className="border border-gray-300 px-2 py-1 text-gray-500">Must include "Category", "Sum Insured" or "Annual Premium", "Type of Administration"</td>
-                      </tr>
-                      <tr>
-                        <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">15+</td>
-                        <td className="border border-gray-300 px-2 py-1">Employee Data</td>
-                        <td className="border border-gray-300 px-2 py-1 text-gray-500">One row per employee/dependent</td>
-                      </tr>
-                    </tbody>
-                  </table>
+                <h4 className="text-sm font-semibold text-gray-700 mb-2">Supported Excel Layouts</h4>
+                <p className="text-xs text-gray-600 mb-3">
+                  The processor auto-detects the header structure. Either of the two layouts below works — row numbers and column counts can vary between clients.
+                </p>
+
+                {/* Layout A — Two-row */}
+                <div className="mb-4 border border-gray-200 rounded-md overflow-hidden">
+                  <div className="bg-yellow-50 px-3 py-2 border-b border-gray-200">
+                    <p className="text-xs font-semibold text-gray-800">
+                      Layout A — Two-row header <span className="text-gray-500 font-normal">(most common)</span>
+                    </p>
+                    <p className="text-xs text-gray-600 mt-0.5">
+                      A product banner row sits above a sub-header row that names each column.
+                    </p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="text-xs border-collapse w-full">
+                      <thead>
+                        <tr className="bg-gray-100">
+                          <th className="border border-gray-300 px-2 py-1 text-left font-medium text-gray-600 w-20">Example Row</th>
+                          <th className="border border-gray-300 px-2 py-1 text-left font-medium text-gray-600">Content</th>
+                          <th className="border border-gray-300 px-2 py-1 text-left font-medium text-gray-600">Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">12</td>
+                          <td className="border border-gray-300 px-2 py-1">Premium rates (optional)</td>
+                          <td className="border border-gray-300 px-2 py-1 text-gray-500">Type 1 rate (e.g. 0.003) per product column. Falls back gracefully if missing.</td>
+                        </tr>
+                        <tr className="bg-yellow-50">
+                          <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">13</td>
+                          <td className="border border-gray-300 px-2 py-1 font-semibold">
+                            Product banner <span className="text-yellow-700">(merged cells)</span>
+                          </td>
+                          <td className="border border-gray-300 px-2 py-1 text-gray-500">
+                            Merged cell spans the product's columns, e.g. <span className="font-mono bg-yellow-100 px-1 rounded">GTL</span>,{' '}
+                            <span className="font-mono bg-yellow-100 px-1 rounded">GHS</span>,{' '}
+                            <span className="font-mono bg-yellow-100 px-1 rounded">GP</span>
+                          </td>
+                        </tr>
+                        <tr className="bg-blue-50">
+                          <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">14</td>
+                          <td className="border border-gray-300 px-2 py-1 font-semibold">
+                            Column names <span className="text-blue-700">(sub-header)</span>
+                          </td>
+                          <td className="border border-gray-300 px-2 py-1 text-gray-500">
+                            Includes <span className="font-mono bg-blue-100 px-1 rounded">Category</span>,{' '}
+                            <span className="font-mono bg-blue-100 px-1 rounded">Sum Insured</span> or{' '}
+                            <span className="font-mono bg-blue-100 px-1 rounded">Annual Premium</span>,{' '}
+                            <span className="font-mono bg-blue-100 px-1 rounded">Type of Administration</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">15+</td>
+                          <td className="border border-gray-300 px-2 py-1">Employee data</td>
+                          <td className="border border-gray-300 px-2 py-1 text-gray-500">One row per employee</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Layout B — Single-row */}
+                <div className="border border-gray-200 rounded-md overflow-hidden">
+                  <div className="bg-emerald-50 px-3 py-2 border-b border-gray-200">
+                    <p className="text-xs font-semibold text-gray-800">
+                      Layout B — Single-row header <span className="text-gray-500 font-normal">(no merged banner)</span>
+                    </p>
+                    <p className="text-xs text-gray-600 mt-0.5">
+                      One row carries everything — each column header includes the product name AND the column type, e.g.{' '}
+                      <span className="font-mono bg-emerald-100 px-1 rounded">GPA Premium</span>.
+                    </p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="text-xs border-collapse w-full">
+                      <thead>
+                        <tr className="bg-gray-100">
+                          <th className="border border-gray-300 px-2 py-1 text-left font-medium text-gray-600 w-20">Example Row</th>
+                          <th className="border border-gray-300 px-2 py-1 text-left font-medium text-gray-600">Content</th>
+                          <th className="border border-gray-300 px-2 py-1 text-left font-medium text-gray-600">Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="bg-emerald-50">
+                          <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">7</td>
+                          <td className="border border-gray-300 px-2 py-1 font-semibold">
+                            Combined header <span className="text-emerald-700">(no merge)</span>
+                          </td>
+                          <td className="border border-gray-300 px-2 py-1 text-gray-500">
+                            Headers carry both the product name and the column type, e.g.{' '}
+                            <span className="font-mono bg-emerald-100 px-1 rounded">GPA Category</span>,{' '}
+                            <span className="font-mono bg-emerald-100 px-1 rounded">GPA Eligible Sum Insured</span>,{' '}
+                            <span className="font-mono bg-emerald-100 px-1 rounded">GPA Premium</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="border border-gray-300 px-2 py-1 font-mono text-gray-500">8+</td>
+                          <td className="border border-gray-300 px-2 py-1">Employee data</td>
+                          <td className="border border-gray-300 px-2 py-1 text-gray-500">Starts on the row immediately after the header</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              {/* Column Header Rules */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-700 mb-2">Column Header Rules</h4>
+                <div className="bg-gray-50 border border-gray-200 rounded-md px-3 py-3 space-y-2">
+                  <p className="text-xs text-gray-700">
+                    For a column to be recognised as a product column, its header must contain <span className="font-semibold">both</span>:
+                  </p>
+                  <ol className="text-xs text-gray-700 list-decimal list-inside space-y-1 ml-1">
+                    <li>
+                      A <span className="font-semibold">product identifier</span> — either an abbreviation
+                      (<span className="font-mono bg-gray-200 px-1 rounded">GTL</span>,{' '}
+                      <span className="font-mono bg-gray-200 px-1 rounded">GPA</span>,{' '}
+                      <span className="font-mono bg-gray-200 px-1 rounded">GHS</span>, etc.) or a recognised product phrase
+                      (<span className="font-mono bg-gray-200 px-1 rounded">Personal Accident</span>,{' '}
+                      <span className="font-mono bg-gray-200 px-1 rounded">Hospital</span>,{' '}
+                      <span className="font-mono bg-gray-200 px-1 rounded">Dental</span>, etc.)
+                    </li>
+                    <li>
+                      A <span className="font-semibold">column-type word</span> — one of:{' '}
+                      <span className="font-mono bg-gray-200 px-1 rounded">Category</span>,{' '}
+                      <span className="font-mono bg-gray-200 px-1 rounded">Sum Insured</span>,{' '}
+                      <span className="font-mono bg-gray-200 px-1 rounded">Premium</span>,{' '}
+                      <span className="font-mono bg-gray-200 px-1 rounded">GST</span>,{' '}
+                      <span className="font-mono bg-gray-200 px-1 rounded">Basis</span>,{' '}
+                      <span className="font-mono bg-gray-200 px-1 rounded">Named</span>, or{' '}
+                      <span className="font-mono bg-gray-200 px-1 rounded">Headcount</span>
+                    </li>
+                  </ol>
+                  <div className="grid grid-cols-2 gap-2 mt-3">
+                    <div className="bg-emerald-50 border border-emerald-200 rounded px-2 py-1.5">
+                      <p className="text-xs font-semibold text-emerald-800 mb-1">✓ Detected</p>
+                      <ul className="text-xs text-emerald-900 space-y-0.5 font-mono">
+                        <li>GPA Category</li>
+                        <li>GPA Eligible Sum Insured</li>
+                        <li>GHS Annual Premium</li>
+                        <li>GTL Sum Insured</li>
+                      </ul>
+                    </div>
+                    <div className="bg-rose-50 border border-rose-200 rounded px-2 py-1.5">
+                      <p className="text-xs font-semibold text-rose-800 mb-1">✗ Not detected</p>
+                      <ul className="text-xs text-rose-900 space-y-0.5 font-mono">
+                        <li>GPA <span className="text-rose-600 font-sans not-italic">(no type word)</span></li>
+                        <li>Premium <span className="text-rose-600 font-sans not-italic">(no product)</span></li>
+                        <li>Type of Employment Pass <span className="text-rose-600 font-sans not-italic">(no type word — "SP" in WP/SP is ignored)</span></li>
+                      </ul>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    This dual requirement prevents accidental matches — for example, "Type of Employment Pass (eg. WP / SP)" contains the abbreviation SP
+                    but is not a product column, so it is correctly ignored.
+                  </p>
                 </div>
               </div>
 
@@ -656,7 +782,7 @@ const RenewalComparison = () => {
           <div className="text-center p-3 bg-gray-50 rounded-lg">
             <div className="w-8 h-8 mx-auto mb-2 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 font-bold">2</div>
             <h4 className="text-sm font-medium text-gray-700">Auto-Detect</h4>
-            <p className="text-xs text-gray-500 mt-1">Year read from sheet name; products & types from column headers</p>
+            <p className="text-xs text-gray-500 mt-1">Year from sheet name; products from headers (two-row banner OR single-row layouts both supported)</p>
           </div>
           <div className="text-center p-3 bg-gray-50 rounded-lg">
             <div className="w-8 h-8 mx-auto mb-2 bg-green-100 rounded-full flex items-center justify-center text-green-600 font-bold">3</div>
