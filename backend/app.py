@@ -5458,12 +5458,23 @@ def mc_process_files():
                         f"fin_to_nric={el_stats['warnings']['fin_to_nric']}, "
                         f"check_category={el_stats['warnings']['check_category']}, "
                         f"has_inactive_date={el_stats['warnings']['has_inactive_date']}, "
+                        f"lds_removed={el_stats['warnings']['lds_removed']}, "
                         f"check_hr={el_stats['warnings']['check_with_hr']}")
             logger.info(f"  Step 3 completed in {step3_elapsed:.2f}s")
 
             # ── Extract detail records for frontend dropdowns ──
+            # Field-change remark phrases emitted by ELProcessor (excludes the
+            # LDS markers, which have their own buckets). Used so a row carrying
+            # both a field change and an LDS event still surfaces under Changes.
+            EL_FIELD_CHANGE_MARKERS = (
+                'Entity changed', 'Name changed', 'Identification No. changed',
+                'ID changed', 'Overseas Assignment changed', 'Employment Type changed',
+                'Category changed', 'Bank Account changed'
+            )
+
             def extract_el_details(df):
-                details = {'additions': [], 'deletions': [], 'changes': []}
+                details = {'additions': [], 'deletions': [], 'changes': [],
+                           'lds_changed': [], 'lds_removed': []}
                 for _, row in df.iterrows():
                     remark = str(row.get('ADC Remarks', '')).strip()
                     if not remark:
@@ -5471,11 +5482,17 @@ def mc_process_files():
                     staff_id = str(row.iloc[1]).strip() if len(row) > 1 else ''
                     name = str(row.iloc[3]).strip() if len(row) > 3 else ''
                     rec = {'staff_id': staff_id, 'name': name, 'remark': remark}
+                    # Independent membership: a row appears under every category
+                    # it qualifies for (e.g. "Bank Account changed; LDS changed").
                     if 'Addition' in remark:
                         details['additions'].append(rec)
-                    elif 'Deletion' in remark:
+                    if 'Deletion' in remark:
                         details['deletions'].append(rec)
-                    else:
+                    if 'LDS changed' in remark:
+                        details['lds_changed'].append(rec)
+                    if 'LDS removed' in remark:
+                        details['lds_removed'].append(rec)
+                    if any(marker in remark for marker in EL_FIELD_CHANGE_MARKERS):
                         details['changes'].append(rec)
                 return details
 
@@ -5577,6 +5594,7 @@ def mc_process_files():
                 el_stats['warnings']['fin_to_nric'] +
                 el_stats['warnings']['check_category'] +
                 el_stats['warnings']['has_inactive_date'] +
+                el_stats['warnings']['lds_removed'] +
                 dl_stats['warnings']['check_with_hr']
             )
 
@@ -5621,6 +5639,7 @@ def mc_process_files():
                         'fin_to_nric': el_stats['warnings']['fin_to_nric'],
                         'check_category': el_stats['warnings']['check_category'],
                         'has_inactive_date': el_stats['warnings']['has_inactive_date'],
+                        'lds_removed': el_stats['warnings']['lds_removed'],
                         'dep_is_employee': dl_stats['warnings']['dep_is_employee'],
                         'terminated_ee_coverage': dl_stats['warnings']['terminated_ee_coverage'],
                         'check_with_hr': el_stats['warnings']['check_with_hr'] + dl_stats['warnings']['check_with_hr']

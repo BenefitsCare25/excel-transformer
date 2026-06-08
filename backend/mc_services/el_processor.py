@@ -1,5 +1,6 @@
 """Employee Listing processing for Steps 1 and 3."""
 
+import warnings
 import pandas as pd
 from typing import List, Dict
 from .category_mapper import apply_category_mapping
@@ -79,14 +80,16 @@ class ELProcessor:
                 'overseas': 0,
                 'employment_type': 0,
                 'category': 0,
-                'bank_account': 0
+                'bank_account': 0,
+                'lds_changed': 0
             },
             'warnings': {
                 'terminated_no_lds': 0,
                 'fin_to_nric': 0,
                 'check_category': 0,
                 'check_with_hr': 0,
-                'has_inactive_date': 0
+                'has_inactive_date': 0,
+                'lds_removed': 0
             }
         }
 
@@ -130,11 +133,24 @@ class ELProcessor:
                     stats['deletions'] += 1
                 else:
                     remarks.extend(change_remarks)
-                    # Add deletion if LDS changed from blank to value
+                    # LDS transitions:
+                    #   blank -> value : new termination (Deletion)
+                    #   value -> value : termination date corrected (LDS changed)
+                    #   value -> blank : termination removed / reinstated (flag for HR)
                     if is_not_blank(new_lds) and is_blank(old_lds):
                         date_str = format_date_ddmmyy(new_lds)
                         remarks.append(f"Deletion wef {date_str}" if date_str else "Deletion")
                         stats['deletions'] += 1
+                    elif self._lds_date_changed(new_lds, old_lds):
+                        old_str = format_date_ddmmyy(old_lds) or str(old_lds).strip()
+                        new_str = format_date_ddmmyy(new_lds) or str(new_lds).strip()
+                        remarks.append(f"LDS changed {old_str} -> {new_str}")
+                        stats['changes']['lds_changed'] += 1
+                    elif is_blank(new_lds) and is_not_blank(old_lds):
+                        old_str = format_date_ddmmyy(old_lds) or str(old_lds).strip()
+                        remarks.append(f"LDS removed (was {old_str}) - Check with HR")
+                        stats['warnings']['lds_removed'] += 1
+                        stats['warnings']['check_with_hr'] += 1
 
                 # Aggregate change stats
                 for key, count in change_stats['changes'].items():
@@ -245,6 +261,49 @@ class ELProcessor:
                 changes.append(change_msg)
 
         return changes, stats
+
+    def _parse_lds(self, value):
+        """Parse an LDS cell to a normalised (time-stripped) date, or None.
+
+        Strings (any common format) and datetime/Timestamp values are parsed
+        day-first. Numeric cells (e.g. stray Excel serial numbers) are NOT
+        interpreted as epoch timestamps — they return None so they fall back to
+        a text comparison instead of producing a bogus 1970-era date.
+        """
+        if is_blank(value):
+            return None
+        if isinstance(value, bool) or isinstance(value, (int, float)):
+            return None
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                ts = pd.to_datetime(value, dayfirst=True, errors='coerce')
+        except Exception:
+            return None
+        if pd.isna(ts):
+            return None
+        return ts.normalize()
+
+    def _lds_date_changed(self, new_lds, old_lds) -> bool:
+        """True only when both LDS values are present and represent different dates.
+
+        Both sides are parsed to real dates before comparison so equivalent
+        values expressed in different formats or types (e.g. a Timestamp vs the
+        string '31/01/2026', or '31/1/2026' vs '31/01/2026') are not mis-flagged
+        as a change. If neither side parses as a date, fall back to a normalised
+        text compare. If only one side parses, the values are the same field in
+        incompatible representations and are not reported as a change (this
+        avoids false positives from mixed xlsx/csv reads).
+        """
+        if is_blank(new_lds) or is_blank(old_lds):
+            return False
+        new_date = self._parse_lds(new_lds)
+        old_date = self._parse_lds(old_lds)
+        if new_date is not None and old_date is not None:
+            return new_date != old_date
+        if new_date is None and old_date is None:
+            return str(new_lds).strip().lower() != str(old_lds).strip().lower()
+        return False
 
     def _values_differ(self, new_val, old_val) -> bool:
         """Compare two values, handling NaN/None cases."""

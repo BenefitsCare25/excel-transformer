@@ -505,6 +505,18 @@ const MediacorpProcessor = () => {
                 items={result.statistics?.el_details?.changes}
                 colorClass="text-blue-700"
               />
+              <CollapsibleDetail
+                label="LDS Date Changed"
+                count={result.statistics?.el_details?.lds_changed?.length || 0}
+                items={result.statistics?.el_details?.lds_changed}
+                colorClass="text-amber-700"
+              />
+              <CollapsibleDetail
+                label="LDS Removed"
+                count={result.statistics?.el_details?.lds_removed?.length || 0}
+                items={result.statistics?.el_details?.lds_removed}
+                colorClass="text-orange-700"
+              />
             </div>
             {result.statistics?.el_total_changes > 0 && (
               <div className="mt-2 bg-white rounded p-2">
@@ -529,6 +541,9 @@ const MediacorpProcessor = () => {
                   )}
                   {result.statistics?.el_changes?.category > 0 && (
                     <span className="bg-gray-100 px-2 py-1 rounded">Category: {result.statistics.el_changes.category}</span>
+                  )}
+                  {result.statistics?.el_changes?.lds_changed > 0 && (
+                    <span className="bg-gray-100 px-2 py-1 rounded">LDS Date: {result.statistics.el_changes.lds_changed}</span>
                   )}
                 </div>
               </div>
@@ -631,6 +646,13 @@ const MediacorpProcessor = () => {
                     <span className="w-2 h-2 bg-yellow-500 rounded-full mr-2"></span>
                     <span className="font-medium">{result.statistics.warnings.has_inactive_date}</span>
                     <span className="ml-2">New employee has Inactive Date - Check with HR</span>
+                  </div>
+                )}
+                {result.statistics?.warnings?.lds_removed > 0 && (
+                  <div className="flex items-center text-sm bg-yellow-100 text-yellow-800 px-3 py-2 rounded">
+                    <span className="w-2 h-2 bg-yellow-500 rounded-full mr-2"></span>
+                    <span className="font-medium">{result.statistics.warnings.lds_removed}</span>
+                    <span className="ml-2">LDS removed (reinstated?) - Check with HR</span>
                   </div>
                 )}
                 {result.statistics?.warnings?.dep_is_employee > 0 && (
