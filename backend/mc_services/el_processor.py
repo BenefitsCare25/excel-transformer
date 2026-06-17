@@ -1,10 +1,9 @@
 """Employee Listing processing for Steps 1 and 3."""
 
-import warnings
 import pandas as pd
 from typing import List, Dict
 from .category_mapper import apply_category_mapping
-from .date_utils import format_date_ddmmyy, is_blank, is_not_blank
+from .date_utils import format_date_ddmmyy, is_blank, is_not_blank, parse_lds, lds_date_changed
 
 
 class ELProcessor:
@@ -263,47 +262,10 @@ class ELProcessor:
         return changes, stats
 
     def _parse_lds(self, value):
-        """Parse an LDS cell to a normalised (time-stripped) date, or None.
-
-        Strings (any common format) and datetime/Timestamp values are parsed
-        day-first. Numeric cells (e.g. stray Excel serial numbers) are NOT
-        interpreted as epoch timestamps — they return None so they fall back to
-        a text comparison instead of producing a bogus 1970-era date.
-        """
-        if is_blank(value):
-            return None
-        if isinstance(value, bool) or isinstance(value, (int, float)):
-            return None
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
-                ts = pd.to_datetime(value, dayfirst=True, errors='coerce')
-        except Exception:
-            return None
-        if pd.isna(ts):
-            return None
-        return ts.normalize()
+        return parse_lds(value)
 
     def _lds_date_changed(self, new_lds, old_lds) -> bool:
-        """True only when both LDS values are present and represent different dates.
-
-        Both sides are parsed to real dates before comparison so equivalent
-        values expressed in different formats or types (e.g. a Timestamp vs the
-        string '31/01/2026', or '31/1/2026' vs '31/01/2026') are not mis-flagged
-        as a change. If neither side parses as a date, fall back to a normalised
-        text compare. If only one side parses, the values are the same field in
-        incompatible representations and are not reported as a change (this
-        avoids false positives from mixed xlsx/csv reads).
-        """
-        if is_blank(new_lds) or is_blank(old_lds):
-            return False
-        new_date = self._parse_lds(new_lds)
-        old_date = self._parse_lds(old_lds)
-        if new_date is not None and old_date is not None:
-            return new_date != old_date
-        if new_date is None and old_date is None:
-            return str(new_lds).strip().lower() != str(old_lds).strip().lower()
-        return False
+        return lds_date_changed(new_lds, old_lds)
 
     def _values_differ(self, new_val, old_val) -> bool:
         """Compare two values, handling NaN/None cases."""

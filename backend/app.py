@@ -5429,7 +5429,7 @@ def mc_process_files():
             logger.info(f"  New DL file date: {new_dl_file_date} (from filename: {new_dl_basename})")
 
             processed_dl, dl_stats = dl_processor.process_step2_dl_comparison(
-                new_dl_df, old_dl_df, processed_el, file_date=new_dl_file_date
+                new_dl_df, old_dl_df, processed_el, old_el_df=old_el_df, file_date=new_dl_file_date
             )
 
             step2_elapsed = time.time() - step2_start

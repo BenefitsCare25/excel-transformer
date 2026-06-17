@@ -1,8 +1,11 @@
 """Dependant Listing processing for Step 2."""
 
+import logging
 import pandas as pd
 from typing import Dict, Set, Optional
-from .date_utils import format_date_ddmmyy, is_blank, is_not_blank
+from .date_utils import format_date_ddmmyy, is_blank, is_not_blank, lds_date_changed
+
+logger = logging.getLogger(__name__)
 
 
 class DLProcessor:
@@ -34,20 +37,30 @@ class DLProcessor:
         new_dl_df: pd.DataFrame,
         old_dl_df: pd.DataFrame,
         processed_el_df: pd.DataFrame,
+        old_el_df: Optional[pd.DataFrame] = None,
         file_date: Optional[str] = None
     ) -> tuple:
         """Step 2: DL Comparison and ADC generation.
 
         Args:
+            old_el_df: Old Employee Listing used to detect NEW terminations only.
             file_date: DDMMYY string from the new DL file's modification date.
                        Used as the effective date for new dependant ADC remarks.
 
         Returns:
             tuple: (processed_df, statistics_dict)
         """
+        if old_el_df is None:
+            logger.warning(
+                "old_el_df not provided to process_step2_dl_comparison — "
+                "all terminated employees' dependants will be flagged regardless of prior runs"
+            )
+
         el_id_numbers = self._build_el_id_lookup(processed_el_df)
         el_staff_to_aia = self._build_staff_aia_lookup(processed_el_df)
         el_staff_to_lds = self._build_staff_lds_lookup(processed_el_df)
+        el_nric_to_lds = self._build_nric_lds_lookup(processed_el_df)
+        old_el_staff_to_lds = self._build_staff_lds_lookup(old_el_df) if old_el_df is not None else {}
         old_dep_map = self._build_dep_id_map(old_dl_df)
         old_dep_ids = set(old_dep_map.keys())
 
@@ -91,18 +104,21 @@ class DLProcessor:
 
             dep_who_are_ee = ''
             if is_employee == 'Yes':
-                ee_lds = el_staff_to_lds.get(dep_id_no_str)
+                ee_lds = el_nric_to_lds.get(dep_id_no_str)
                 if is_not_blank(ee_lds):
                     dep_who_are_ee = 'Terminated EE - Check coverage'
                     stats['warnings']['terminated_ee_coverage'] += 1
 
             results['DEP who are EE'].append(dep_who_are_ee)
 
-            # Check LDS for deletion tracking (used in remarks generation)
+            # Flag Deletion when the employee's termination is new this period or the
+            # date was corrected (new LDS present AND different from old EL LDS).
+            # Same LDS in both ELs → deletion was already processed in a prior run.
             lds_check = ''
-            ee_lds = el_staff_to_lds.get(staff_id_str)
-            if is_not_blank(ee_lds):
-                lds_check = format_date_ddmmyy(ee_lds)
+            new_ee_lds = el_staff_to_lds.get(staff_id_str)
+            old_ee_lds = old_el_staff_to_lds.get(staff_id_str)
+            if is_not_blank(new_ee_lds) and (is_blank(old_ee_lds) or lds_date_changed(new_ee_lds, old_ee_lds)):
+                lds_check = format_date_ddmmyy(new_ee_lds)
                 stats['deletions'] += 1
 
             is_new = dep_id_str and dep_id_str not in old_dep_ids
@@ -189,7 +205,7 @@ class DLProcessor:
                     lookup[str(staff_id).strip()] = str(aia_cat) if aia_cat else ''
         return lookup
 
-    def _build_staff_lds_lookup(self, el_df: pd.DataFrame) -> Dict[str, str]:
+    def _build_staff_lds_lookup(self, el_df: pd.DataFrame) -> Dict[str, object]:
         """Build Staff ID -> Last Day of Service lookup."""
         lookup = {}
         if el_df is not None and len(el_df.columns) > self.EL_COL_LDS:
@@ -198,6 +214,23 @@ class DLProcessor:
                 lds = row.iloc[self.EL_COL_LDS] if self.EL_COL_LDS < len(row) else None
                 if staff_id:
                     lookup[str(staff_id).strip()] = lds
+        return lookup
+
+    def _build_nric_lds_lookup(self, el_df: pd.DataFrame) -> Dict[str, object]:
+        """Build NRIC/ID No -> Last Day of Service lookup.
+
+        Used to check whether a dependant who is also an employee is terminated.
+        Keyed by uppercased ID No (col EL_COL_ID_NO) so it can be matched against
+        dep_id_no_str from the DL, unlike _build_staff_lds_lookup which is keyed
+        by numeric staff ID.
+        """
+        lookup = {}
+        if el_df is not None and len(el_df.columns) > self.EL_COL_LDS:
+            for idx, row in el_df.iterrows():
+                id_no = row.iloc[self.EL_COL_ID_NO] if self.EL_COL_ID_NO < len(row) else None
+                lds = row.iloc[self.EL_COL_LDS] if self.EL_COL_LDS < len(row) else None
+                if id_no:
+                    lookup[str(id_no).strip().upper()] = lds
         return lookup
 
     def _build_dep_id_set(self, dl_df: pd.DataFrame) -> Set[str]:
