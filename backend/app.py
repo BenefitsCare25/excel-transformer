@@ -2096,7 +2096,16 @@ class ExcelTransformer:
             df_transformed['GoogleMapURL'] = df_transformed.apply(
                 lambda row: generate_google_maps_url(row['Latitude'], row['Longitude']), axis=1
             )
-            
+
+            # Strip double quotes from every string cell — no " should appear in the generated listing
+            def _strip_double_quotes(val):
+                if isinstance(val, str):
+                    return val.replace('"', '').replace('“', '').replace('”', '')
+                return val
+            for _col in df_transformed.columns:
+                if df_transformed[_col].dtype == object:
+                    df_transformed[_col] = df_transformed[_col].map(_strip_double_quotes)
+
             # Return the transformed dataframe instead of saving
             # Saving will be handled by the multi-sheet processor
             
