@@ -1755,23 +1755,22 @@ class ExcelTransformer:
                 logger.info(f"Filtered out {initial_count - filtered_count} empty/invalid rows from sheet '{sheet_name}', keeping {filtered_count} valid records")
 
             # Dynamic in-sheet termination detection (template-agnostic)
-            # Many panel templates flag terminated clinics inside the sheet itself
+            # Some panel templates flag terminated clinics inside the sheet itself
             # via a status/change column (e.g. "CHANGES OF THE MONTH" = "TERMINATE
-            # CLINIC") or a short "TERMINATED" marker in any cell — rather than a
-            # separate termination list. Detect and drop these rows for any layout.
+            # CLINIC") or a standalone "TERMINATED" marker cell, rather than a
+            # separate termination list. A cell flags termination only when its
+            # value STARTS with a termination keyword — this catches real markers
+            # ("TERMINATE CLINIC", "TERMINATED", "TERMINATE CLINIC EFFECTIVE
+            # 1/8/26") while ignoring incidental mentions buried inside longer
+            # change notes or remarks ("UPDATED REMARKS RE TERMINATION OF NIGHT
+            # SERVICE", "CONTRACT TERMINATION PENDING") that must not drop a live
+            # clinic.
             if len(df_source) > 0:
                 import re as _re_term
-                _term_re = _re_term.compile(r'\bterminat(?:e|ed|es|ing|ion)?\b', _re_term.IGNORECASE)
-                # Columns whose header names a status/change/action field get a
-                # full-length keyword match; all other cells only match short markers
-                # (<=30 chars) to avoid false hits inside long remark sentences.
-                _status_col_set = {
-                    str(c).lower() for c in df_source.columns
-                    if any(k in str(c).lower() for k in ('change', 'status', 'action', 'terminat'))
-                }
+                _term_re = _re_term.compile(r'terminat(?:e|ed|es|ing|ion)?\b', _re_term.IGNORECASE)
 
                 def _row_terminated(row):
-                    for col, v in row.items():
+                    for v in row.values:
                         if isinstance(v, pd.Series):  # duplicate column label
                             continue
                         try:
@@ -1779,13 +1778,8 @@ class ExcelTransformer:
                                 continue
                         except (TypeError, ValueError):
                             continue
-                        s = str(v).strip()
-                        if not s:
-                            continue
-                        if str(col).lower() in _status_col_set:
-                            if _term_re.search(s):
-                                return True
-                        elif len(s) <= 30 and _term_re.search(s):
+                        # match() anchors at start; strip() ignores leading space
+                        if _term_re.match(str(v).strip()):
                             return True
                     return False
 
@@ -1975,7 +1969,8 @@ class ExcelTransformer:
                 df_transformed = df_transformed.reset_index(drop=True)
                 df_source = df_source.reset_index(drop=True)
 
-                terminated_count = initial_count - len(df_transformed)
+                # Accumulate: preserve any in-sheet terminations already counted
+                terminated_count += initial_count - len(df_transformed)
 
                 logger.info("=" * 60)
                 logger.info(f"TERMINATION FILTERING COMPLETE")
