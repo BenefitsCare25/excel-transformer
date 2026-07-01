@@ -1754,6 +1754,56 @@ class ExcelTransformer:
             if initial_count != filtered_count:
                 logger.info(f"Filtered out {initial_count - filtered_count} empty/invalid rows from sheet '{sheet_name}', keeping {filtered_count} valid records")
 
+            # Dynamic in-sheet termination detection (template-agnostic)
+            # Many panel templates flag terminated clinics inside the sheet itself
+            # via a status/change column (e.g. "CHANGES OF THE MONTH" = "TERMINATE
+            # CLINIC") or a short "TERMINATED" marker in any cell — rather than a
+            # separate termination list. Detect and drop these rows for any layout.
+            if len(df_source) > 0:
+                import re as _re_term
+                _term_re = _re_term.compile(r'\bterminat(?:e|ed|es|ing|ion)?\b', _re_term.IGNORECASE)
+                # Columns whose header names a status/change/action field get a
+                # full-length keyword match; all other cells only match short markers
+                # (<=30 chars) to avoid false hits inside long remark sentences.
+                _status_col_set = {
+                    str(c).lower() for c in df_source.columns
+                    if any(k in str(c).lower() for k in ('change', 'status', 'action', 'terminat'))
+                }
+
+                def _row_terminated(row):
+                    for col, v in row.items():
+                        if isinstance(v, pd.Series):  # duplicate column label
+                            continue
+                        try:
+                            if pd.isna(v):
+                                continue
+                        except (TypeError, ValueError):
+                            continue
+                        s = str(v).strip()
+                        if not s:
+                            continue
+                        if str(col).lower() in _status_col_set:
+                            if _term_re.search(s):
+                                return True
+                        elif len(s) <= 30 and _term_re.search(s):
+                            return True
+                    return False
+
+                _term_mask = df_source.apply(_row_terminated, axis=1)
+                _n_term = int(_term_mask.sum())
+                if _n_term > 0:
+                    _id_col = col_map.get('clinic_id')
+                    _name_col = col_map.get('clinic_name')
+                    for _, _r in df_source[_term_mask].iterrows():
+                        _cid = str(_r[_id_col]).strip() if _id_col else ''
+                        _nm = str(_r[_name_col]).strip() if _name_col else ''
+                        logger.info(f"In-sheet termination: dropping '{_cid}' {_nm}")
+                        if _cid and _cid not in filtered_provider_codes:
+                            filtered_provider_codes.append(_cid)
+                    df_source = df_source[~_term_mask]
+                    terminated_count += _n_term
+                    logger.info(f"Removed {_n_term} in-sheet terminated clinic(s) from sheet '{sheet_name}'")
+
             # Robust field mapping with fallbacks
             # Clinic ID with smart fallback
             if 'clinic_id' in col_map:
