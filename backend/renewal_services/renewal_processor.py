@@ -158,6 +158,7 @@ class EmployeeRecord:
     cost_centre: str
     department: str
     entity: str = ''
+    date_of_hire: object = ''  # datetime when parseable (real Excel date), else text
     category: str = ''
     nric: str = ''
     email: str = ''
@@ -198,23 +199,60 @@ def _normalize(value) -> str:
     return str(value).strip()
 
 
+def _header_key(value) -> str:
+    """Lowercase header with ALL whitespace removed, for space-insensitive matching.
+
+    Some client files export headers with internal spaces stripped
+    (e.g. 'TypeofAdministration', 'DateofBirth'). Matching keyword substrings
+    against this space-free form makes detection robust to both variants.
+    """
+    return re.sub(r'\s+', '', _normalize(value).lower())
+
+
+# Common date string layouts seen across client files
+_DATE_FORMATS = ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%m/%d/%Y',
+                 '%d/%m/%y', '%Y/%m/%d', '%d-%b-%Y', '%d %b %Y',
+                 '%d/%b/%Y', '%d/%b/%y', '%d-%b-%y')
+
+DATE_DISPLAY_FORMAT = 'DD/MM/YYYY'  # openpyxl number_format for real date cells
+
+
+def _parse_date_value(value) -> Optional[datetime]:
+    """Return a real datetime for date-like cells, else None.
+
+    Used for display columns (e.g. Date of Hire) so Excel stores an actual
+    date — sortable and filterable — rather than a text string.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    s = str(value).strip()
+    if not s:
+        return None
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 def _normalize_date(value) -> str:
     """Return date as dd/mm/yyyy string for consistent key matching across files."""
     if value is None:
         return ''
-    if isinstance(value, datetime):
-        return value.strftime('%d/%m/%Y')
-    s = str(value).strip()
-    if not s:
-        return ''
-    # Try common string formats so both files resolve to the same key
-    for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%m/%d/%Y',
-                '%d/%m/%y', '%Y/%m/%d', '%d-%b-%Y', '%d %b %Y'):
-        try:
-            return datetime.strptime(s, fmt).strftime('%d/%m/%Y')
-        except ValueError:
-            continue
-    return s  # return as-is if no format matched (avoids silent empty)
+    dt = _parse_date_value(value)
+    if dt is not None:
+        return dt.strftime('%d/%m/%Y')
+    return str(value).strip()  # return as-is if no format matched (avoids silent empty)
+
+
+def _date_or_text(value):
+    """Return a datetime for real dates (sortable/filterable in Excel),
+    otherwise the trimmed text so nothing is silently dropped."""
+    dt = _parse_date_value(value)
+    return dt if dt is not None else _normalize(value)
 
 
 def _to_float(value) -> Optional[float]:
@@ -472,8 +510,8 @@ def _detect_products(ws, product_header_row: int = 13, subheader_row: int = 14) 
     # Pre-detect all "Type of Administration" columns across the subheader row
     admin_type_cols = []
     for col in range(1, ws.max_column + 1):
-        header = _normalize(ws.cell(row=subheader_row, column=col).value).lower()
-        if 'type of administration' in header:
+        header = _header_key(ws.cell(row=subheader_row, column=col).value)
+        if 'typeofadministration' in header:
             admin_type_cols.append(col)
 
     for section in merged_sections:
@@ -497,16 +535,16 @@ def _detect_products(ws, product_header_row: int = 13, subheader_row: int = 14) 
         eligible_si_col = None
 
         for col in range(section['col_start'], section['col_end'] + 1):
-            header = _normalize(ws.cell(row=subheader_row, column=col).value).lower()
+            header = _header_key(ws.cell(row=subheader_row, column=col).value)
             if not header:
                 continue
 
             if 'category' in header:
                 product.category_col = col
-            elif 'eligible sum insured' in header:
+            elif 'eligiblesuminsured' in header:
                 eligible_si_col = col
                 has_sum_insured = True
-            elif 'sum insured' in header and 'pending' not in header:
+            elif 'suminsured' in header and 'pending' not in header:
                 if not eligible_si_col:
                     product.value_col = col
                 has_sum_insured = True
@@ -539,9 +577,9 @@ def _detect_products(ws, product_header_row: int = 13, subheader_row: int = 14) 
                 if not product.value_col:
                     skip_kw = {'category', 'name', 'type', 'administration', 'nric', 'id', 'dob', 'date',
                                'sex', 'age', 'marital', 'nationality', 'designation', 'employment',
-                               'mu status', 'mu decision', 'pending', 'acceptance', 'last accepted'}
+                               'mustatus', 'mudecision', 'pending', 'acceptance', 'lastaccepted'}
                     for col in range(section['col_start'], section['col_end'] + 1):
-                        header = _normalize(ws.cell(row=subheader_row, column=col).value).lower()
+                        header = _header_key(ws.cell(row=subheader_row, column=col).value)
                         if header and not any(kw in header for kw in skip_kw):
                             product.value_col = col
                             logger.info(f"Value col for '{product.name}' set by broad scan: col {col} ('{header}')")
@@ -570,9 +608,16 @@ def _find_employee_columns(ws, subheader_row: int = 14) -> dict:
     col_map = {}
     name_fallback = None
 
-    # Scan all columns — employee headers can be anywhere in the subheader row
+    # Scan all columns — employee headers can be anywhere in the subheader row.
+    # `htight` (all whitespace removed) matches files that strip internal spaces
+    # from headers (e.g. 'DateofBirth', 'CostCentre'); `spaced` (runs collapsed to
+    # a single space) is used for short ambiguous tokens like 'id no' / 'ic no'
+    # so they don't false-match inside longer words (e.g. 'grid no' → 'gridno').
     for col in range(1, ws.max_column + 1):
-        header = _normalize(ws.cell(row=subheader_row, column=col).value).lower()
+        raw = _normalize(ws.cell(row=subheader_row, column=col).value).lower()
+        htight = re.sub(r'\s+', '', raw)
+        spaced = re.sub(r'\s+', ' ', raw)
+        header = htight  # default matcher for compound keywords
         if not header:
             continue
 
@@ -581,17 +626,28 @@ def _find_employee_columns(ws, subheader_row: int = 14) -> dict:
         elif name_fallback is None and 'name' in header and 'employee' not in header and 'dependant' not in header:
             name_fallback = col
 
-        if 'dob' not in col_map and ('date of birth' in header or 'dob' in header or header in ('d.o.b', 'birth date', 'birthdate')):
+        if 'dob' not in col_map and ('dateofbirth' in header or 'dob' in header or header in ('d.o.b', 'birthdate')):
             col_map['dob'] = col
-        elif 'employee id' in header or 'emp id' in header or 'staff id' in header or 'employee id no' in header:
-            col_map['employee_id'] = col  # check BEFORE nric to prevent 'id no' false match
-        elif 'nric' not in col_map and 'name' not in header and ('nric' in header or 'ic no' in header or 'id no' in header or 'national id' in header or 'passport' in header or header in ('nric/fin', 'nric / fin', 'fin', 'nric/passport')):
+        elif ('date_of_hire' not in col_map
+              and ('dateofhire' in header or 'hiredate' in header or 'dateofjoin' in header
+                   or 'joindate' in header or 'dateofemployment' in header)
+              # exclude benefit/scheme enrolment dates that also read "join date"
+              and not any(x in header for x in ('scheme', 'fund', 'plan', 'benefit', 'policy'))):
+            col_map['date_of_hire'] = col
+        elif 'employeeid' in header or 'empid' in header or 'staffid' in header or 'employeeidno' in header:
+            col_map['employee_id'] = col  # check BEFORE nric to prevent 'idno' false match
+        elif 'nric' not in col_map and 'name' not in header and (
+                'nric' in header or 'nationalid' in header or 'passport' in header
+                or re.search(r'\b(?:id|ic) no\b', spaced)
+                or header in ('nric/fin', 'fin', 'nric/passport', 'idno', 'icno')):
             # 'name' guard rejects headers like "Full Name (as per NRIC)" which
-            # mention NRIC for context but are actually the name column.
+            # mention NRIC for context but are actually the name column. Short
+            # 'id no'/'ic no' need a word boundary so they don't match inside
+            # 'grid no', 'basic no', etc.
             col_map['nric'] = col
-        elif 'email' not in col_map and ('email' in header or 'e-mail' in header or 'e mail' in header):
+        elif 'email' not in col_map and ('email' in header or 'e-mail' in header):
             col_map['email'] = col
-        elif 'cost centre' in header or 'cost center' in header:
+        elif 'costcentre' in header or 'costcenter' in header:
             col_map['cost_centre'] = col
         elif 'department' in header:
             col_map['department'] = col
@@ -627,6 +683,7 @@ def _extract_employees(ws, products: List[DetectedProduct], emp_cols: dict,
             cost_centre=_normalize(ws.cell(row=row, column=emp_cols['cost_centre']).value) if 'cost_centre' in emp_cols else '',
             department=_normalize(ws.cell(row=row, column=emp_cols['department']).value) if 'department' in emp_cols else '',
             entity=_normalize(ws.cell(row=row, column=emp_cols['entity']).value) if 'entity' in emp_cols else '',
+            date_of_hire=_date_or_text(ws.cell(row=row, column=emp_cols['date_of_hire']).value) if 'date_of_hire' in emp_cols else '',
             category=_normalize(ws.cell(row=row, column=emp_cols.get('category', 12)).value),
             nric=_normalize(ws.cell(row=row, column=emp_cols['nric']).value) if 'nric' in emp_cols else '',
             email=_normalize(ws.cell(row=row, column=emp_cols['email']).value) if 'email' in emp_cols else '',
@@ -713,6 +770,7 @@ def _generate_product_sheet(
     divisor: int,
     prev_rate: Optional[float] = None,
     has_entity: bool = False,
+    has_doh: bool = False,
 ) -> Tuple[int, int]:
     """Generate a product adjustment sheet. Returns (prev_rows, curr_rows) written."""
     sheet_name = re.sub(r'[\\/*?:\[\]&]', '', product.name)[:31]
@@ -722,8 +780,11 @@ def _generate_product_sheet(
     # Use prev year rate for all rows to match reference convention
     rate = (prev_rate or product.premium_rate) if is_type1 else None
 
-    # Column offset: when Entity column is present, product columns shift right by 1
-    ofs = 1 if has_entity else 0
+    # Column offset: optional Date of Hire and Entity columns shift product columns right.
+    # Layout after Department: [Date of Hire?] [Entity?] then Category, H, I, ...
+    doh_ofs = 1 if has_doh else 0
+    ent_ofs = 1 if has_entity else 0
+    ofs = doh_ofs + ent_ofs
 
     # Short product abbreviation for column headers
     name = product.name
@@ -742,6 +803,8 @@ def _generate_product_sheet(
 
     base_headers = ["Remarks", "Name \n(Surname, First Name) ", "NRIC No. or FIN No.\n(eg. S1234567F)",
                     "EMP ID", "Cost Centre", "Department"]
+    if has_doh:
+        base_headers.append("Date of Hire\n(DD/MM/YYYY)")
     if has_entity:
         base_headers.append("Entity")
     base_headers += ["Category                        \n(Pls Select Basis Accordingly)",
@@ -776,8 +839,10 @@ def _generate_product_sheet(
 
     prev_headcount.sort(key=lambda x: (x[1].department.lower(), x[1].name.upper()))
 
-    # Column indices with entity offset
-    col_entity = 7 if has_entity else None
+    # Column indices with optional Date of Hire / Entity offsets.
+    # Order after Department (col 6): Date of Hire, then Entity.
+    col_doh = 7 if has_doh else None
+    col_entity = (7 + doh_ofs) if has_entity else None
     col_category = 7 + ofs
     col_prev_val = 8 + ofs   # H (+ofs)
     col_curr_val = 9 + ofs   # I (+ofs)
@@ -800,6 +865,10 @@ def _generate_product_sheet(
         ws.cell(row=row_num, column=4, value=emp.employee_id)
         ws.cell(row=row_num, column=5, value=emp.cost_centre)
         ws.cell(row=row_num, column=6, value=emp.department)
+        if col_doh:
+            doh_cell = ws.cell(row=row_num, column=col_doh, value=emp.date_of_hire or None)
+            if isinstance(emp.date_of_hire, datetime):
+                doh_cell.number_format = DATE_DISPLAY_FORMAT
         if col_entity:
             ws.cell(row=row_num, column=col_entity, value=emp.entity)
         ws.cell(row=row_num, column=col_category, value=pdata.get('category') or emp.category)
@@ -880,6 +949,10 @@ def _generate_product_sheet(
         ws.cell(row=row_num, column=4, value=emp.employee_id)
         ws.cell(row=row_num, column=5, value=emp.cost_centre)
         ws.cell(row=row_num, column=6, value=emp.department)
+        if col_doh:
+            doh_cell = ws.cell(row=row_num, column=col_doh, value=emp.date_of_hire or None)
+            if isinstance(emp.date_of_hire, datetime):
+                doh_cell.number_format = DATE_DISPLAY_FORMAT
         if col_entity:
             ws.cell(row=row_num, column=col_entity, value=emp.entity)
         ws.cell(row=row_num, column=col_category, value=pdata.get('category') or emp.category)
@@ -1208,6 +1281,21 @@ def process_renewal_comparison(
     if has_entity:
         logger.info("Entity column detected — will include in output")
 
+    # Detect if any file has a Date of Hire column. Include the column when
+    # either file has it (don't drop available data); warn when only one file
+    # provides it so the resulting blanks in the other year are explainable.
+    doh_prev = 'date_of_hire' in prev_emp_cols
+    doh_curr = 'date_of_hire' in curr_emp_cols
+    has_doh = doh_prev or doh_curr
+    if has_doh and not (doh_prev and doh_curr):
+        missing = curr_year if not doh_curr else prev_year
+        logger.warning(
+            f"Date of Hire column found in only one file — {missing} rows will have "
+            f"a blank Date of Hire in the output."
+        )
+    elif has_doh:
+        logger.info("Date of Hire column detected — will include in output")
+
     wb1.close()
     wb2.close()
 
@@ -1277,6 +1365,7 @@ def process_renewal_comparison(
             pro_rata_divisor,
             prev_rate=prev_rates_map.get(product_name),
             has_entity=has_entity,
+            has_doh=has_doh,
         )
         sheet_row_counts[product_name] = result if result else (0, 0)
 
