@@ -8,6 +8,7 @@ Internal tool for processing healthcare/insurance data with five main features:
 - **Mediacorp ADC**: Processes employee/dependant data to generate ADC reports
 - **GP Panel Comparison**: Compares GP panel changes between files
 - **Renewal Comparison**: Compares renewal listing Excel files between two policy years and generates an Adjustment Breakdown report (Cancel & Re-enroll method)
+- **Flex Report**: Plugin-style monthly flexible benefits reimbursement factory — one adapter module per client company, each declaring its own upload slots and transformation rules (STM is live)
 
 ## Tech Stack
 
@@ -32,8 +33,13 @@ EL/
 │   │   └── validators.py
 │   ├── gp_panel_services/     # GP Panel comparison
 │   │   └── panel_processor.py
-│   └── renewal_services/      # Renewal comparison
-│       └── renewal_processor.py
+│   ├── renewal_services/      # Renewal comparison
+│   │   └── renewal_processor.py
+│   └── flex_services/         # Flex Report (per-company adapters)
+│       ├── registry.py        # Company catalog: active adapters + pending slots
+│       ├── run_store.py       # Ephemeral run folders, manifest, zip, 30-min reaper
+│       └── companies/
+│           └── stm.py         # STMicroelectronics adapter
 ├── frontend/
 │   └── src/
 │       ├── App.js
@@ -43,7 +49,9 @@ EL/
 │           ├── ClinicMatcher.js
 │           ├── MediacorpProcessor.js
 │           ├── GPPanelComparison.js
-│           └── RenewalComparison.js
+│           ├── RenewalComparison.js
+│           ├── FlexReport.js          # Flex Report UI (company picker + upload slots)
+│           └── FlexRunResult.js       # Flex Report run result panel
 ├── data/                      # Reference data (SG_postal.csv)
 ├── uploads/                   # Temporary upload storage
 └── processed/                 # Output files
@@ -260,6 +268,84 @@ Key format examples: `NRIC|S1234567A`, `EMAIL|john@example.com`, `NAME|JOHN TAN|
 
 Formula: `New = Current − Common`, `Left = Previous − Common`
 
+## Flex Report — Key Design Notes
+
+### Plugin Architecture (one module per client company)
+Each company is a self-contained adapter in `backend/flex_services/companies/<id>.py` exposing:
+
+```python
+COMPANY = {"id", "name", "status": "active", "files": [{"key", "label", "required"}], "notes"}
+
+def run(files: dict, pay_month: str, outdir: str) -> dict   # -> outputs, log, errors, warnings, validation, stats
+```
+
+Onboarding a company: add the module, add its name to `ACTIVE_MODULES` in `flex_services/registry.py`,
+and reduce `PLACEHOLDER_COUNT` by 1. **No platform or frontend changes are needed** — the UI renders each
+company's upload slots, labels and required/optional flags from its own `COMPANY["files"]` spec, and the
+result panel renders whichever stat keys the adapter returns.
+
+Companies without logic appear as greyed-out "pending setup" slots (`PLACEHOLDER_COUNT`, default 17).
+
+### Run Storage & Retention
+- Outputs live in `processed/flex_runs/<run_id>/out/` with a `manifest.json` listing ordered filenames
+- Downloads resolve through the manifest (not in-memory state), so they survive a worker restart
+- Uploaded source files are deleted immediately after generation succeeds
+- Run folders are purged 30 minutes after the run by `FlexRunReaper`; orphans are swept at startup
+- `CleanupService` skips directories, so it never interferes with flex run folders
+
+### STM Adapter Rules (verified against May 2026 manual outputs)
+| Rule | Behaviour |
+|------|-----------|
+| Cost Centre | employee listing → leavers file → mapping master (fallback use raises a warning); none at all = hard error |
+| Legal Entity Code | G0005086 → 2800; G0005088 / G0005089 → 0800 |
+| Wage code | Optical → `Optical(T)`; Childcare / Health Screening → `HealthS/ChildC(NT)`; other medical → `N-Medi/Dental(NT)`. Unrecognised types are held with an error, never silently defaulted |
+| Amount | `Payment Amt` rounded to 2dp per claim, summed per employee × wage code for the IT15 |
+| Leavers | flagged Inactive; excluded from the IT15 only when the leavers file shows their claims are settled via final pay (exact subset match, earliest-incurred first) |
+| SEA | Bangkok / Hanoi / Jakarta employees split into per-country reports (7900TH / 0800VN / 2800INDON) |
+
+**Outputs**: Summary Reimbursement Report, IT15 payroll upload (written into the uploaded prior-month file so
+formatting is preserved), refreshed `STM_Mapping_Master.xlsx`, SEA reports when applicable, plus a Validation
+Exceptions Report when any check fires.
+
+**Errors vs warnings**: errors hold the affected claim rows OUT of both output files (they go to the exception
+report with a held-out total); warnings leave rows in the outputs but flag them on screen.
+
+### IT15 Payroll Template (STM)
+The template is used for **formatting only** — the generator clears any employee data in it before
+writing the new rows, clones cell styling from row 20, sets the month of request in L3, and leaves the
+payroll-user formula columns (M/P) intact.
+
+- Save a **blank** template (header block, formulas, row-20 formatting, no employee data) at
+  `backend/flex_services/companies/templates/stm_it15_template.xlsx` → the monthly run then needs only
+  the **three data files**, and the template slot becomes optional
+- Uploading a file always overrides the saved template (use when payroll changes the format)
+- The required/optional flag is read at **import time**, so adding the saved template takes effect on restart
+- Prior-month rows are cleared by scanning to `ws.max_row`, not to the first blank cell — a gap in the old
+  data would otherwise leave last month's payments in the file submitted to payroll
+- **Only rows whose EEID cell is numeric count as data.** The real template ends with a `Grand Total` row
+  (row 1176, `=SUM(J20:J1174)`) that must survive — clearing to the last non-empty column-B cell would wipe it
+- **Capacity is 1,155 payroll rows** (rows 20–1174). If a run produces more, it raises `FlexInputError` naming
+  the footer row rather than overwriting the total. May 2026 used 1,154 — one row under the ceiling
+- Helper columns P/Q/R (`=$B20`, `=$D20`, `=VLOOKUP(H20,'wt_notes (ref)'!…)`) are extended via openpyxl's
+  `Translator` only for rows the template does not already pre-fill; existing cells are never touched
+- The saved template is ~12 MB and carries ~950k validation formulas (incl. 93k array formulas out to column
+  XFD in rows 1077–1173). A run takes ~30s, almost all of it the openpyxl round-trip. Verified that formulas,
+  array formulas, all 5 sheets and the 9 data validations survive into the generated file
+
+### Input File Expectations (STM)
+- **Claims export**: `Staff ID`, `Employee Name`, `Reference No.`, `Entity`, `Claim Type`, `Payment Amt`, `Status`, `Incurred Date`
+- **Employee listing**: `User ID`, `Cost Centre`, `Location Description`, `Last Day of Service`
+- **Leavers file**: header on **row 2**, first 12 columns positional (EmpID, Name, LastDay, CostCentre, Company, HealthS, NMedi, Optical, Total, LastClaimMonth, Clawback, EmailDate)
+- **IT15 template**: must contain sheet `SG1xPaymtTemplate`; data rows start at row 20, cols A–L are rewritten, cols M/P formulas are left intact
+- Missing columns raise `FlexInputError` → HTTP 400 with the message shown verbatim; every other exception is a 500 with a logged traceback
+
+### Data Integrity Rules (learned the hard way)
+- **ID columns**: normalise with `_normalise_eeid()`, never `astype(str).str.zfill(6)`. One blank cell makes pandas type the column as float64, so plain zfill yields `'1001.0'` for every row and nothing matches
+- **Payroll groupby uses `dropna=False`**: a NaN grouping key (e.g. blank Cost Centre) would otherwise silently drop the claim from the IT15 while it still counts in the summary report — the two outputs would not tie and the employee would not be paid
+- **Rows are held out by source-row index**, not by Claim Reference — a claim with a blank reference must still be held
+- **Blank Cost Centre in the listing counts as missing**, not as present
+- **Leaver amounts that match no claim in their category** attempt the cross-category rescue first, then block that leaver's remaining claims from payroll (a wrong-category entry would otherwise be paid twice)
+
 ## Common Issues
 
 1. **openpyxl Fill Error**: Create new `PatternFill()` objects instead of copying
@@ -287,6 +373,11 @@ Formula: `New = Current − Common`, `Left = Previous − Common`
 | `/api/gp-panel/download/<filename>` | GET | Download GP Panel result |
 | `/api/renewal/compare` | POST | Renewal comparison |
 | `/api/renewal/download/<filename>` | GET | Download renewal result |
+| `/api/flex/health` | GET | Flex Report health + adapter load errors |
+| `/api/flex/companies` | GET | Company catalog with upload slot specs |
+| `/api/flex/run/<company_id>` | POST | Run one company's monthly generation |
+| `/api/flex/download/<run_id>/<index>` | GET | Download one output file of a run |
+| `/api/flex/download-all/<run_id>` | GET | Download all outputs of a run as zip |
 
 ## Environment Variables
 

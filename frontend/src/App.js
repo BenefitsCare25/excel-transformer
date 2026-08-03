@@ -5,11 +5,12 @@ import ClinicMatcher from './components/ClinicMatcher';
 import MediacorpProcessor from './components/MediacorpProcessor';
 import GPPanelComparison from './components/GPPanelComparison';
 import RenewalComparison from './components/RenewalComparison';
+import FlexReport from './components/FlexReport';
 import apiService from './services/api';
 import './index.css';
 
 function App() {
-  const [activeTab, setActiveTab] = useState('transformer'); // 'transformer', 'matcher', 'mediacorp', 'gppanel', 'renewal'
+  const [activeTab, setActiveTab] = useState('transformer'); // 'transformer', 'matcher', 'mediacorp', 'gppanel', 'renewal', 'flex'
   const [processingStatus, setProcessingStatus] = useState('idle');
   const [result, setResult] = useState(null);
   const [backendHealth, setBackendHealth] = useState(null);
@@ -167,7 +168,7 @@ function App() {
           </h1>
 
           {/* Tab Navigation */}
-          <div className="flex justify-center space-x-2 mt-6">
+          <div className="flex flex-wrap justify-center gap-2 mt-6">
             <button
               onClick={() => setActiveTab('transformer')}
               className={`px-6 py-2 font-medium rounded-lg transition-colors ${
@@ -217,6 +218,16 @@ function App() {
               }`}
             >
               Renewal Comparison
+            </button>
+            <button
+              onClick={() => setActiveTab('flex')}
+              className={`px-6 py-2 font-medium rounded-lg transition-colors ${
+                activeTab === 'flex'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+              }`}
+            >
+              Flex Report
             </button>
           </div>
         </header>
@@ -452,6 +463,11 @@ function App() {
             <>
               {/* Renewal Comparison Component */}
               <RenewalComparison />
+            </>
+          ) : activeTab === 'flex' ? (
+            <>
+              {/* Flex Report Component */}
+              <FlexReport />
             </>
           ) : (
             <>

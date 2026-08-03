@@ -406,6 +406,114 @@ class ApiService {
     }
   }
 
+  // Flex Report API functions
+  async getFlexCompanies() {
+    try {
+      const response = await this.api.get('/api/flex/companies');
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Could not load company list',
+        details: error.response?.data?.details || error.message,
+      };
+    }
+  }
+
+  async runFlexReport(companyId, files, payMonth) {
+    const formData = new FormData();
+    Object.entries(files).forEach(([key, file]) => {
+      if (file) formData.append(key, file);
+    });
+    formData.append('pay_month', payMonth);
+
+    try {
+      const response = await this.api.post(`/api/flex/run/${companyId}`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 600000, // 10 minutes - leaver reconciliation can be slow on large exports
+      });
+
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Generation failed',
+        details: error.response?.data?.details || error.message,
+      };
+    }
+  }
+
+  async downloadFlexOutput(runId, index, filename) {
+    try {
+      const response = await this.api.get(`/api/flex/download/${runId}/${index}`, {
+        responseType: 'blob',
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename || `flex_output_${index}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Download failed',
+      };
+    }
+  }
+
+  async downloadFlexAll(runId) {
+    try {
+      const response = await this.api.get(`/api/flex/download-all/${runId}`, {
+        responseType: 'blob',
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `flex_report_${runId}.zip`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Download failed',
+      };
+    }
+  }
+
+  async flexHealthCheck() {
+    try {
+      const response = await this.api.get('/api/flex/health');
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: 'Flex Report service is not available',
+      };
+    }
+  }
+
   async gpPanelHealthCheck() {
     try {
       const response = await this.api.get('/api/gp-panel/health');

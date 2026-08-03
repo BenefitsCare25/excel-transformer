@@ -47,6 +47,9 @@ from gp_panel_services import (
 # Renewal Comparison imports
 from renewal_services import process_renewal_comparison
 
+# Flex Report imports
+import flex_services
+
 def load_workbook_safe(path, **kwargs):
     """Load an openpyxl workbook, stripping corrupted named ranges if needed.
 
@@ -151,6 +154,9 @@ os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 # Initialize cleanup service
 from cleanup_service import CleanupService
 cleanup_service = CleanupService(UPLOAD_FOLDER, PROCESSED_FOLDER, ttl_minutes=15)
+# Flex Report run folders live under PROCESSED_FOLDER/flex_runs and hold payroll data;
+# they are swept by their own reaper (the cleanup service skips directories).
+flex_services.start_reaper(PROCESSED_FOLDER)
 # Global postal code lookup - loaded once at module startup
 _POSTAL_CODE_LOOKUP_CACHE = None
 
@@ -6012,6 +6018,203 @@ def renewal_download(filename):
 
     except Exception as e:
         logger.error(f"Error downloading renewal result: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ========== Flex Report Routes ==========
+
+FLEX_ALLOWED_EXTENSIONS = ('.xlsx', '.xlsm')
+FLEX_MIMETYPES = {
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.xlsm': 'application/vnd.ms-excel.sheet.macroEnabled.12',
+}
+
+
+@app.route('/api/flex/health', methods=['GET'])
+def flex_health_check():
+    """Health check endpoint for Flex Report."""
+    companies = flex_services.catalog()
+    return jsonify({
+        'status': 'healthy',
+        'service': 'Flex Report',
+        'active_companies': len([c for c in companies if c['status'] == 'active']),
+        'adapter_errors': flex_services.load_errors(),
+        'retention_minutes': flex_services.RETENTION_MINUTES,
+        'timestamp': datetime.now().isoformat()
+    })
+
+
+@app.route('/api/flex/companies', methods=['GET'])
+def flex_companies():
+    """Company catalog: active adapters with their upload slots, plus pending slots."""
+    try:
+        return jsonify({
+            'success': True,
+            'companies': flex_services.catalog(),
+            'retention_minutes': flex_services.RETENTION_MINUTES,
+        })
+    except Exception as e:
+        logger.error(f"Flex company catalog failed: {e}\n{traceback.format_exc()}")
+        return jsonify({'error': 'Could not load company catalog', 'details': str(e)}), 500
+
+
+@app.route('/api/flex/run/<company_id>', methods=['POST'])
+def flex_run(company_id):
+    """Run one company's monthly Flex Report generation.
+
+    Accepts the upload slots declared by that company's adapter plus pay_month
+    (YYYY-MM-DD). Returns validation outcome, run log and downloadable outputs.
+    """
+    run_id = None
+    try:
+        module = flex_services.get(company_id)
+        if not module:
+            return jsonify({
+                'error': 'Company not configured',
+                'details': f"No Flex Report logic is set up for '{company_id}' yet"
+            }), 404
+
+        pay_month = request.form.get('pay_month', '').strip()
+        if not pay_month:
+            return jsonify({'error': 'Missing payment month', 'details': 'pay_month is required'}), 400
+        try:
+            datetime.fromisoformat(pay_month)
+        except ValueError:
+            return jsonify({
+                'error': 'Invalid payment month',
+                'details': f"Expected format YYYY-MM-DD, received '{pay_month}'"
+            }), 400
+
+        # Enforce retention on every run as well as from the reaper thread - under a
+        # preloaded gunicorn the thread lives in the master, not the request workers.
+        flex_services.purge_expired(PROCESSED_FOLDER)
+
+        spec = {f['key']: f for f in module.COMPANY.get('files', [])}
+        run_id, indir, outdir = flex_services.create_run(PROCESSED_FOLDER)
+
+        from werkzeug.utils import secure_filename
+        files = {}
+        for key, uploaded in request.files.items():
+            if key not in spec or not uploaded.filename:
+                continue
+            ext = os.path.splitext(uploaded.filename)[1].lower()
+            if ext not in FLEX_ALLOWED_EXTENSIONS:
+                flex_services.discard_run(PROCESSED_FOLDER, run_id)
+                return jsonify({
+                    'error': f"Invalid file type for {spec[key]['label']}",
+                    'details': f"Only {' / '.join(FLEX_ALLOWED_EXTENSIONS)} files are accepted"
+                }), 400
+            path = os.path.join(indir, secure_filename(f'{key}{ext}'))
+            uploaded.save(path)
+            files[key] = path
+
+        missing = [s['label'] for k, s in spec.items() if s.get('required') and k not in files]
+        if missing:
+            flex_services.discard_run(PROCESSED_FOLDER, run_id)
+            return jsonify({
+                'error': 'Missing required file(s)',
+                'details': '; '.join(missing)
+            }), 400
+
+        logger.info(f"Flex Report [{company_id}] run {run_id}: pay_month={pay_month}, files={list(files)}")
+        start_time = time.time()
+        result = module.run(files, pay_month, outdir)
+        elapsed = time.time() - start_time
+
+        outputs = flex_services.finalize_run(
+            PROCESSED_FOLDER, run_id, result.get('outputs', []),
+            meta={'company_id': company_id, 'pay_month': pay_month}
+        )
+        logger.info(
+            f"Flex Report [{company_id}] run {run_id} completed in {elapsed:.1f}s: "
+            f"{len(outputs)} output(s), {result.get('errors', 0)} error(s), {result.get('warnings', 0)} warning(s)"
+        )
+
+        stats = {k: result.get(k) for k in (
+            'grand_total', 'breakdown_rows', 'payroll_rows', 'held_total', 'held_rows',
+            'employees', 'excluded_final_pay', 'blocked_mismatch'
+        ) if k in result}
+
+        return jsonify({
+            'success': True,
+            'run_id': run_id,
+            'company_id': company_id,
+            'company_name': module.COMPANY.get('name'),
+            'pay_month': pay_month,
+            'errors': result.get('errors', 0),
+            'warnings': result.get('warnings', 0),
+            'validation': result.get('validation', []),
+            'log': result.get('log', []),
+            'stats': stats,
+            'outputs': outputs,
+            'elapsed_seconds': round(elapsed, 1),
+            'retention_minutes': flex_services.RETENTION_MINUTES,
+        })
+
+    except flex_services.FlexInputError as e:
+        # Raised only for problems the operator can fix by uploading a corrected file.
+        if run_id:
+            flex_services.discard_run(PROCESSED_FOLDER, run_id)
+        logger.warning(f"Flex Report [{company_id}] input file rejected: {e}")
+        return jsonify({'error': 'Input file validation failed', 'details': str(e)}), 400
+
+    except Exception as e:
+        if run_id:
+            flex_services.discard_run(PROCESSED_FOLDER, run_id)
+        logger.error(f"Flex Report [{company_id}] failed: {e}\n{traceback.format_exc()}")
+        return jsonify({'error': 'Generation failed', 'details': f'{type(e).__name__}: {e}'}), 500
+
+
+@app.route('/api/flex/download/<run_id>/<int:index>', methods=['GET'])
+def flex_download(run_id, index):
+    """Download a single output file of a Flex Report run."""
+    try:
+        if not flex_services.is_valid_run_id(run_id):
+            return jsonify({'error': 'Invalid run id'}), 400
+
+        path = flex_services.output_path(PROCESSED_FOLDER, run_id, index)
+        if not path:
+            return jsonify({
+                'error': 'File not found',
+                'details': f'The run may have expired (files are kept for {flex_services.RETENTION_MINUTES} minutes)'
+            }), 404
+
+        extension = os.path.splitext(path)[1].lower()
+        return send_file(
+            path,
+            as_attachment=True,
+            download_name=os.path.basename(path),
+            mimetype=FLEX_MIMETYPES.get(extension, FLEX_MIMETYPES['.xlsx'])
+        )
+
+    except Exception as e:
+        logger.error(f"Error downloading flex output: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/flex/download-all/<run_id>', methods=['GET'])
+def flex_download_all(run_id):
+    """Download every output of a Flex Report run as a single zip."""
+    try:
+        if not flex_services.is_valid_run_id(run_id):
+            return jsonify({'error': 'Invalid run id'}), 400
+
+        buffer = flex_services.zip_run(PROCESSED_FOLDER, run_id)
+        if not buffer:
+            return jsonify({
+                'error': 'Run not found',
+                'details': f'The run may have expired (files are kept for {flex_services.RETENTION_MINUTES} minutes)'
+            }), 404
+
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=f'flex_report_{run_id}.zip',
+            mimetype='application/zip'
+        )
+
+    except Exception as e:
+        logger.error(f"Error zipping flex run: {e}")
         return jsonify({'error': str(e)}), 500
 
 
