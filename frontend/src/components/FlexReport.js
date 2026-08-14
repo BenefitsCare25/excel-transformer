@@ -217,22 +217,6 @@ const FlexReport = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="card">
-        <h2 className="text-xl font-semibold text-gray-800 mb-1">Flex Report</h2>
-        <p className="text-sm text-gray-600">
-          Generate each client company's monthly flexible benefits reimbursement pack. Pick the company, upload its
-          input files, set the payment month, and download the generated outputs together with a validation breakdown.
-          Every company has its own upload slots and transformation rules.
-        </p>
-        <div className="mt-3 px-3 py-2 bg-gray-50 border border-gray-200 rounded-md">
-          <p className="text-xs text-gray-600">
-            <span className="font-semibold">Data handling:</span> uploaded payroll files are deleted as soon as the
-            outputs are generated, and the generated files are removed from the server 30 minutes after the run.
-          </p>
-        </div>
-      </div>
-
       {/* Company registry */}
       <div className="card">
         <h3 className="text-lg font-semibold text-gray-800 mb-1">Client Company</h3>
