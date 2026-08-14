@@ -8,6 +8,7 @@ and downloads.
 
 from .errors import FlexInputError
 from .registry import catalog, get, load, load_errors
+from .upload_validation import flex_signature_error
 from .run_store import (
     RETENTION_MINUTES,
     create_run,
@@ -23,6 +24,7 @@ from .run_store import (
 
 __all__ = [
     'FlexInputError',
+    'flex_signature_error',
     'catalog',
     'get',
     'load',

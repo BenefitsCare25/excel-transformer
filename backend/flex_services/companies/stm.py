@@ -76,6 +76,31 @@ MAX_COMBINATION_ITEMS = 15
 # Errors that invalidate every claim of the employee, not just the offending row.
 EMPLOYEE_LEVEL_ERRORS = ('MISSING COST CENTRE', 'INVALID STAFF ID')
 
+# Hard errors that physically hold claim rows OUT of both output files (they need a source
+# fix and a re-run before those amounts can be submitted anywhere).
+HELD_ERROR_CHECKS = frozenset({
+    'INVALID STAFF ID', 'MISSING COST CENTRE', 'UNKNOWN ENTITY', 'UNKNOWN CLAIM TYPE',
+    'NEGATIVE AMOUNT', 'DUPLICATE CLAIM REF',
+})
+
+# One-line operator guidance per check, used to drive the include/exclude decision UI.
+HELD_GUIDANCE = {
+    'INVALID STAFF ID': 'Staff ID is not a usable 6-digit EEID. Correct it in the claims export and re-run.',
+    'MISSING COST CENTRE': 'No Cost Centre anywhere for this employee. Add it to the listing/master and re-run.',
+    'UNKNOWN ENTITY': 'Entity has no Legal Entity Code mapping. Add the mapping and re-run.',
+    'UNKNOWN CLAIM TYPE': 'Claim type is unmapped to a wage code. Confirm the type and re-run.',
+    'NEGATIVE AMOUNT': 'Negative amount (possible clawback). Handle manually — not placed on payroll.',
+    'DUPLICATE CLAIM REF': 'Same claim reference appears more than once. De-duplicate the export and re-run.',
+}
+WARN_GUIDANCE = {
+    'COST CENTRE FROM FALLBACK': 'Cost Centre came from a historical mapping — verify it is still current. Row is on the payroll.',
+    'ZERO/BLANK AMOUNT': 'Zero/blank amount — excluded from outputs automatically. No action needed.',
+    'NOT APPROVED': 'Not approved — excluded from outputs automatically. No action needed.',
+    'COST CENTRE / ENTITY MISMATCH': 'Cost Centre prefix and claim entity disagree. Verify the entity with HR. Row is on the payroll.',
+    'LEAVER MISSING LAST DAY': 'Leaver has claims but no last employment day. Fill it in the leavers file. Row is on the payroll.',
+    'LEAVER CATEGORY MISMATCH': 'Amount matched across categories and EXCLUDED from payroll. Ask HR to fix the category in the leavers file.',
+}
+
 # Payroll-user helper columns in the IT15 sheet (P = EE ID, Q = Cost Center, R = WT
 # lookup). Owned by payroll; only extended when new data runs past the template's rows.
 HELPER_COLUMNS = (16, 17, 18)
@@ -662,10 +687,77 @@ def run(files, pay_month, outdir):
     else:
         echo("All checks passed - no exception report needed.")
 
+    # ---------------- ACTIONABLE DISPOSITIONS ----------------
+    # Attach, per exception, the SGD at stake and a plain include/exclude recommendation so
+    # the frontend can tell the operator exactly what belongs in the payroll submission.
+    # All amounts come from structured data, never parsed from the Detail strings.
+    def _k6(v):
+        try:
+            return f'{int(v):06d}'
+        except (TypeError, ValueError):
+            return str(v)
+
+    # All three lookups are keyed per EEID and hold the employee-level total, so an exception
+    # amount is attributed once per (disposition, employee) below - never once per claim row.
+    blocked_amt = {_k6(k): float(v) for k, v in bd[bd['_unrec']].groupby('EEID')['Amount'].sum().items()}
+    held_amt = ({_k6(k): float(v) for k, v in held.groupby('EEID6')['Payment Amt'].sum().items()}
+                if len(held) else {})
+    # Emailed final-pay total per leaver, summed across mismatched categories. Compared against
+    # the employee's blocked-claims total (blocked_amt) - both employee-level, so neither the
+    # figure nor the recommendation double-counts when a leaver mismatches in >1 category.
+    emailed_by_eeid = {}
+    for (e6, _sub, _nm, _cat, tgt, _det) in leaver_mismatches:
+        k = _k6(e6)
+        emailed_by_eeid[k] = round(emailed_by_eeid.get(k, 0.0) + float(tgt), 2)
+
+    def _disposition(check, eeid):
+        e = _k6(eeid) if not pd.isna(eeid) else ''
+        if check == 'LEAVER AMOUNT MISMATCH':
+            emailed, here = emailed_by_eeid.get(e), blocked_amt.get(e)
+            if emailed is not None and here is not None:
+                if emailed >= here:
+                    action = 'Exclude from payroll'
+                    guidance = (f"Final-pay email {emailed:.2f} >= blocked claims {here:.2f} - the claim(s) are "
+                                "most likely already settled via final pay. Keep them EXCLUDED from the payroll "
+                                "file; confirm the claim references with HR.")
+                else:
+                    action = 'Split / include'
+                    guidance = (f"Final-pay email {emailed:.2f} < blocked claims {here:.2f} - about {here - emailed:.2f} "
+                                "is NOT covered by final pay. INCLUDE the uncovered portion in the payroll file; "
+                                "agree the split with HR.")
+            else:
+                action, guidance = 'Decide', "Reconcile the leaver's final-pay email against the claims with HR."
+            return {'disposition': 'blocked', 'action': action, 'amount': here, 'guidance': guidance}
+        if check in HELD_ERROR_CHECKS:
+            return {'disposition': 'held', 'action': 'Fix & re-run', 'amount': held_amt.get(e),
+                    'guidance': HELD_GUIDANCE.get(check, 'Fix the source data and re-run.')}
+        if check == 'LEAVER CATEGORY MISMATCH':
+            return {'disposition': 'excluded', 'action': 'Review', 'amount': None,
+                    'guidance': WARN_GUIDANCE[check]}
+        return {'disposition': 'warn', 'action': 'Review', 'amount': None,
+                'guidance': WARN_GUIDANCE.get(check, 'Review before submitting.')}
+
     validation = []
     if n_err or n_warn:
         allv = pd.concat([errors_df.assign(Sev='ERROR'), warnings_df.assign(Sev='WARNING')], ignore_index=True)
-        validation = allv[['Sev', 'Check', 'EEID', 'Name', 'Detail']].fillna('').astype(str).to_dict('records')
+        amount_seen = set()   # (disposition, EEID): show each employee's total once so group sums stay authoritative
+        for _, r in allv.iterrows():
+            d = _disposition(r['Check'], r['EEID'])
+            amount = d['amount']
+            if amount is not None:
+                akey = (d['disposition'], _k6(r['EEID']) if not pd.isna(r['EEID']) else '')
+                if akey in amount_seen:
+                    amount = None
+                else:
+                    amount_seen.add(akey)
+            validation.append({
+                'Sev': r['Sev'], 'Check': r['Check'],
+                'EEID': '' if pd.isna(r['EEID']) else str(r['EEID']),
+                'Name': '' if pd.isna(r.get('Name')) else str(r.get('Name')),
+                'Detail': '' if pd.isna(r['Detail']) else str(r['Detail']),
+                'amount': None if amount is None else round(float(amount), 2),
+                'disposition': d['disposition'], 'action': d['action'], 'guidance': d['guidance'],
+            })
 
     outputs = [sum_path, pay_path, master_path] + sea_paths
     if vpath:
@@ -680,6 +772,7 @@ def run(files, pay_month, outdir):
         'held_total': float(held['Payment Amt'].sum()) if n_err and len(held) else 0.0,
         'held_rows': int(len(held)) if n_err else 0,
         'grand_total': float(bd['Amount'].sum()),
+        'payroll_total': float(pay['Amount'].sum()),
         'breakdown_rows': int(len(bd)),
         'payroll_rows': int(len(agg)),
         'employees': int(bd['EEID'].nunique()),

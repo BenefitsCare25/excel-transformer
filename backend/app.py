@@ -6106,6 +6106,13 @@ def flex_run(company_id):
                 }), 400
             path = os.path.join(indir, secure_filename(f'{key}{ext}'))
             uploaded.save(path)
+            sig_error = flex_services.flex_signature_error(path, spec[key]['label'])
+            if sig_error:
+                flex_services.discard_run(PROCESSED_FOLDER, run_id)
+                return jsonify({
+                    'error': f"Invalid file for {spec[key]['label']}",
+                    'details': sig_error
+                }), 400
             files[key] = path
 
         missing = [s['label'] for k, s in spec.items() if s.get('required') and k not in files]

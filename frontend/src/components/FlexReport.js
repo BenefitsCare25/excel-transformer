@@ -21,9 +21,28 @@ const formatSize = (bytes) => {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 };
 
-const UploadSlot = ({ slot, file, onDrop, isProcessing }) => {
+// A real .xlsx/.xlsm is a ZIP archive (starts with "PK"). A password-protected workbook,
+// and the old binary .xls format, are both OLE2 compound documents (D0 CF 11 E0) — either
+// clears the extension filter yet fails server-side with "Can't find workbook in OLE2
+// compound document". Sniff the first bytes before accepting. (The server names which of
+// the two it is; client-side we give both fixes.)
+const validateExcelSignature = async (file) => {
+  try {
+    const bytes = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+    if (bytes[0] === 0x50 && bytes[1] === 0x4b) return null; // "PK" -> ZIP / real xlsx
+    if (bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0) {
+      return "Excel can't open this as a workbook — it's either password-protected or an old .xls saved with a .xlsx name. If it has a password, remove it (File → Info → Protect Workbook → Encrypt with Password → clear it). Otherwise use File → Save As → Excel Workbook (.xlsx). Then upload again.";
+    }
+    return "This isn't a valid .xlsx/.xlsm workbook. Re-save it in Excel as Excel Workbook (.xlsx), then upload again.";
+  } catch {
+    return null; // Reading failed — let the server perform the final check.
+  }
+};
+
+const UploadSlot = ({ slot, file, errorMsg, onDrop, onReject, isProcessing }) => {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    onDropRejected: onReject,
     accept: EXCEL_ACCEPT,
     multiple: false,
     disabled: isProcessing,
@@ -44,6 +63,8 @@ const UploadSlot = ({ slot, file, onDrop, isProcessing }) => {
         className={`border-2 border-dashed rounded-lg p-5 text-center cursor-pointer transition-colors ${
           isDragActive
             ? 'border-blue-500 bg-blue-50'
+            : errorMsg
+            ? 'border-red-400 bg-red-50'
             : file
             ? 'border-green-400 bg-green-50'
             : 'border-gray-300 hover:border-blue-400'
@@ -70,6 +91,9 @@ const UploadSlot = ({ slot, file, onDrop, isProcessing }) => {
           </div>
         )}
       </div>
+      {errorMsg && (
+        <p className="mt-1.5 text-xs text-red-600">{errorMsg}</p>
+      )}
     </div>
   );
 };
@@ -78,6 +102,7 @@ const FlexReport = () => {
   const [companies, setCompanies] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [files, setFiles] = useState({});
+  const [fileErrors, setFileErrors] = useState({});
   const [payMonth, setPayMonth] = useState(nextMonth);
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -109,16 +134,37 @@ const FlexReport = () => {
   const handleSelect = (companyId) => {
     setSelectedId(companyId);
     setFiles({});
+    setFileErrors({});
     setResult(null);
     setError(null);
   };
 
-  const handleDrop = useCallback((key) => (acceptedFiles) => {
-    if (acceptedFiles.length > 0) {
-      setFiles((prev) => ({ ...prev, [key]: acceptedFiles[0] }));
-      setError(null);
-      setResult(null);
+  const clearSlot = (key, setter) =>
+    setter((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+
+  const handleDrop = useCallback((key) => async (acceptedFiles) => {
+    if (acceptedFiles.length === 0) return;
+    const file = acceptedFiles[0];
+    const sigError = await validateExcelSignature(file);
+    if (sigError) {
+      clearSlot(key, setFiles);
+      setFileErrors((prev) => ({ ...prev, [key]: sigError }));
+      return;
     }
+    setFiles((prev) => ({ ...prev, [key]: file }));
+    clearSlot(key, setFileErrors);
+    setError(null);
+    setResult(null);
+  }, []);
+
+  const handleReject = useCallback((key) => () => {
+    clearSlot(key, setFiles);
+    setFileErrors((prev) => ({ ...prev, [key]: 'Only .xlsx or .xlsm files are accepted.' }));
   }, []);
 
   const missingRequired = selected
@@ -164,6 +210,7 @@ const FlexReport = () => {
 
   const handleReset = () => {
     setFiles({});
+    setFileErrors({});
     setResult(null);
     setError(null);
   };
@@ -281,7 +328,9 @@ const FlexReport = () => {
                   key={slot.key}
                   slot={slot}
                   file={files[slot.key]}
+                  errorMsg={fileErrors[slot.key]}
                   onDrop={handleDrop(slot.key)}
+                  onReject={handleReject(slot.key)}
                   isProcessing={isProcessing}
                 />
               ))}
