@@ -38,8 +38,6 @@ def saved_template():
     return DEFAULT_IT15_TEMPLATE if os.path.exists(DEFAULT_IT15_TEMPLATE) else None
 
 
-_HAS_SAVED_TEMPLATE = saved_template() is not None
-
 COMPANY = {
     "id": "stm",
     "name": "STMicroelectronics (STM)",
@@ -48,20 +46,11 @@ COMPANY = {
         {"key": "claims",   "label": "Employee claims export", "required": True},
         {"key": "leavers",  "label": "STM Leavers file", "required": True},
         {"key": "listing",  "label": "Employee listing report", "required": True},
-        {"key": "template",
-         "label": ("IT15 payroll template - leave empty to use the saved blank template"
-                   if _HAS_SAVED_TEMPLATE
-                   else "IT15 payroll template - blank template with formulas, or the prior month's file"),
-         "required": not _HAS_SAVED_TEMPLATE},
-        {"key": "master",   "label": "STM Mapping Master from last run (optional fallback)", "required": False},
     ],
     "notes": (
         "Generates: Summary Reimbursement Report, IT15 payroll upload, refreshed Mapping Master, "
         "SEA reports (TH/ID/VN) when applicable, plus a Validation Exceptions Report when issues are found. "
-        + ("The saved IT15 template is used automatically — only upload one to override it, e.g. when payroll "
-           "changes the format."
-           if _HAS_SAVED_TEMPLATE
-           else "No IT15 template is saved on the server yet, so it must be uploaded with each run.")
+        "The saved IT15 payroll template is applied automatically."
     ),
 }
 
@@ -576,11 +565,7 @@ def run(files, pay_month, outdir):
     styles = {c: ws.cell(START, c) for c in style_cols}
 
     def clone_style(src, dst):
-        dst.font = copy(src.font)
-        dst.border = copy(src.border)
-        dst.fill = copy(src.fill)
-        dst.number_format = src.number_format
-        dst.alignment = copy(src.alignment)
+        dst._style = copy(src._style)
 
     # Map the data area. The whole sheet is scanned rather than stopping at the first
     # blank cell (a gap would leave last month's rows in the file sent to payroll), but
