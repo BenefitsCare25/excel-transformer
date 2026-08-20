@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
+import * as XLSX from 'xlsx';
 import apiService from '../services/api';
 import FlexRunResult from './FlexRunResult';
 
@@ -8,11 +9,60 @@ const EXCEL_ACCEPT = {
   'application/vnd.ms-excel.sheet.macroEnabled.12': ['.xlsm'],
 };
 
-const nextMonth = () => {
+const monthForOffset = (offset) => {
   const date = new Date();
   date.setDate(1);
-  date.setMonth(date.getMonth() + 1);
+  date.setMonth(date.getMonth() + offset);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const defaultMonthForCompany = (company) => {
+  if (company?.month_detection) return '';
+  const offset = Number.isInteger(company?.default_month_offset)
+    ? company.default_month_offset
+    : 1;
+  return monthForOffset(offset);
+};
+
+const parseExcelDate = (value) => {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+  if (typeof value === 'number') {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    return parsed ? new Date(parsed.y, parsed.m - 1, parsed.d) : null;
+  }
+  if (typeof value !== 'string') return null;
+
+  const text = value.trim();
+  const dayFirst = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dayFirst) return new Date(Number(dayFirst[3]), Number(dayFirst[2]) - 1, Number(dayFirst[1]));
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const detectWorkbookMonth = async (file, column) => {
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true });
+  if (rows.length === 0) throw new Error('The claims workbook contains no rows.');
+
+  const header = Object.keys(rows[0]).find((key) => key.trim() === column);
+  if (!header) throw new Error(`The claims workbook is missing the ${column} column.`);
+
+  const months = new Set();
+  rows.forEach((row) => {
+    if (row[header] == null || row[header] === '') return;
+    const date = parseExcelDate(row[header]);
+    if (!date || Number.isNaN(date.getTime())) {
+      throw new Error(`The claims workbook contains an invalid ${column} value.`);
+    }
+    months.add(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+  });
+
+  if (months.size === 0) throw new Error(`The claims workbook has no ${column} values.`);
+  if (months.size > 1) {
+    throw new Error(`The claims workbook contains multiple paid months: ${[...months].sort().join(', ')}.`);
+  }
+  return [...months][0];
 };
 
 const formatSize = (bytes) => {
@@ -103,7 +153,7 @@ const FlexReport = () => {
   const [selectedId, setSelectedId] = useState(null);
   const [files, setFiles] = useState({});
   const [fileErrors, setFileErrors] = useState({});
-  const [payMonth, setPayMonth] = useState(nextMonth);
+  const [payMonth, setPayMonth] = useState(() => monthForOffset(1));
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState(null);
@@ -117,7 +167,10 @@ const FlexReport = () => {
         const list = response.data.companies || [];
         setCompanies(list);
         const firstActive = list.find((company) => company.status === 'active');
-        if (firstActive) setSelectedId(firstActive.id);
+        if (firstActive) {
+          setSelectedId(firstActive.id);
+          setPayMonth(defaultMonthForCompany(firstActive));
+        }
       } else {
         setError(response.details ? `${response.error}: ${response.details}` : response.error);
       }
@@ -132,7 +185,9 @@ const FlexReport = () => {
   const selected = companies.find((company) => company.id === selectedId) || null;
 
   const handleSelect = (companyId) => {
+    const company = companies.find((item) => item.id === companyId);
     setSelectedId(companyId);
+    setPayMonth(defaultMonthForCompany(company));
     setFiles({});
     setFileErrors({});
     setResult(null);
@@ -156,11 +211,22 @@ const FlexReport = () => {
       setFileErrors((prev) => ({ ...prev, [key]: sigError }));
       return;
     }
+    const detection = selected?.month_detection;
+    if (detection?.file_key === key) {
+      try {
+        setPayMonth(await detectWorkbookMonth(file, detection.column));
+      } catch (monthError) {
+        clearSlot(key, setFiles);
+        setPayMonth('');
+        setFileErrors((prev) => ({ ...prev, [key]: monthError.message }));
+        return;
+      }
+    }
     setFiles((prev) => ({ ...prev, [key]: file }));
     clearSlot(key, setFileErrors);
     setError(null);
     setResult(null);
-  }, []);
+  }, [selected]);
 
   const handleReject = useCallback((key) => () => {
     clearSlot(key, setFiles);
@@ -173,6 +239,9 @@ const FlexReport = () => {
   // Firefox and Safari fall back to a plain text box for <input type="month">, so the
   // value is only trustworthy after an explicit YYYY-MM check.
   const payMonthValid = /^\d{4}-(0[1-9]|1[0-2])$/.test(payMonth);
+  const isAwaitingMonthDetection = Boolean(
+    selected?.month_detection && !files[selected.month_detection.file_key]
+  );
   const canGenerate = Boolean(selected) && missingRequired.length === 0 && payMonthValid;
 
   const handleGenerate = async () => {
@@ -213,6 +282,7 @@ const FlexReport = () => {
     setFileErrors({});
     setResult(null);
     setError(null);
+    setPayMonth(defaultMonthForCompany(selected));
   };
 
   return (
@@ -330,14 +400,20 @@ const FlexReport = () => {
                 placeholder="YYYY-MM"
                 value={payMonth}
                 onChange={(event) => setPayMonth(event.target.value)}
-                disabled={isProcessing}
+                disabled={isProcessing || Boolean(selected?.month_detection)}
                 className={`px-3 py-2 border rounded-md text-sm focus:ring-blue-500 focus:border-blue-500 ${
-                  payMonthValid ? 'border-gray-300' : 'border-red-400 bg-red-50'
+                  payMonthValid || isAwaitingMonthDetection
+                    ? 'border-gray-300'
+                    : 'border-red-400 bg-red-50'
                 }`}
               />
               <span className={`text-xs ${payMonthValid ? 'text-gray-500' : 'text-red-600'}`}>
                 {payMonthValid
-                  ? 'Payment lands on the 28th of this month'
+                  ? selected?.month_detection
+                    ? `Detected from ${selected.month_detection.column} in the claims workbook`
+                    : 'Used for report titles, filenames, and period validation'
+                  : selected?.month_detection
+                  ? `Upload the claims workbook to detect ${selected.month_detection.column}`
                   : 'Enter the month as YYYY-MM, for example 2026-09'}
               </span>
             </div>
@@ -412,17 +488,17 @@ const FlexReport = () => {
           <div className="text-center p-3 bg-gray-50 rounded-lg">
             <div className="w-8 h-8 mx-auto mb-2 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 font-bold">2</div>
             <h4 className="text-sm font-medium text-gray-700">Upload &amp; Set Month</h4>
-            <p className="text-xs text-gray-500 mt-1">Claims, leavers, listing and the prior month's payroll template</p>
+            <p className="text-xs text-gray-500 mt-1">Provide the source files declared for the selected company</p>
           </div>
           <div className="text-center p-3 bg-gray-50 rounded-lg">
             <div className="w-8 h-8 mx-auto mb-2 bg-green-100 rounded-full flex items-center justify-center text-green-600 font-bold">3</div>
             <h4 className="text-sm font-medium text-gray-700">Validate</h4>
-            <p className="text-xs text-gray-500 mt-1">Errors hold rows out of the outputs; warnings are flagged only</p>
+            <p className="text-xs text-gray-500 mt-1">Company-specific checks flag source rows that need attention</p>
           </div>
           <div className="text-center p-3 bg-gray-50 rounded-lg">
             <div className="w-8 h-8 mx-auto mb-2 bg-orange-100 rounded-full flex items-center justify-center text-orange-600 font-bold">4</div>
             <h4 className="text-sm font-medium text-gray-700">Download</h4>
-            <p className="text-xs text-gray-500 mt-1">Individual files or the whole pack as a single zip</p>
+            <p className="text-xs text-gray-500 mt-1">Download individual outputs or the company-specific report pack</p>
           </div>
         </div>
       </div>

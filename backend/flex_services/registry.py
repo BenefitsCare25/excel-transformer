@@ -21,10 +21,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-ACTIVE_MODULES = ['stm']
+ACTIVE_MODULES = ['stm', 'ichor']
 
-# Reserved slots for companies whose logic is not configured yet.
-PLACEHOLDER_COUNT = 17
+# Total company slots shown in the Flex Report catalog.
+COMPANY_SLOT_COUNT = 18
 
 _registry = {}
 _load_errors = {}
@@ -65,10 +65,11 @@ def catalog():
             'status': spec.get('status', 'active'),
             'files': spec.get('files', []),
             'notes': spec.get('notes', ''),
+            'default_month_offset': spec.get('default_month_offset', 1),
+            'month_detection': spec.get('month_detection'),
         })
 
-    for offset in range(PLACEHOLDER_COUNT):
-        number = offset + 2
+    for number in range(len(items) + 1, COMPANY_SLOT_COUNT + 1):
         items.append({
             'id': f'pending-{number}',
             'name': f'Company {number:02d}',

@@ -159,6 +159,8 @@ const FlexRunResult = ({ result, onDownload, onDownloadAll }) => {
   const hasWarnings = result.warnings > 0;
   const [showLog, setShowLog] = useState(false);
   const [showValidation, setShowValidation] = useState(hasErrors || hasWarnings);
+  const resultUi = result.result_ui || {};
+  const statusNotes = resultUi.status_notes || {};
 
   const status = hasErrors
     ? {
@@ -166,7 +168,7 @@ const FlexRunResult = ({ result, onDownload, onDownloadAll }) => {
         pill: 'bg-red-100 text-red-800 border-red-300',
         panel: 'bg-red-50 border-red-200',
         text: 'text-red-800',
-        note:
+        note: statusNotes.error ||
           'Some claims were held back from the payroll file. Work through the decisions below to settle ' +
           'what belongs in the IT15 submission, then download the outputs.',
       }
@@ -176,21 +178,28 @@ const FlexRunResult = ({ result, onDownload, onDownloadAll }) => {
         pill: 'bg-amber-100 text-amber-800 border-amber-300',
         panel: 'bg-amber-50 border-amber-200',
         text: 'text-amber-800',
-        note: 'Outputs are complete and everything is on the payroll file. Review the noted rows before submitting.',
+        note: statusNotes.warning ||
+          'Outputs are complete and everything is on the payroll file. Review the noted rows before submitting.',
       }
     : {
         label: 'ALL CHECKS PASSED',
         pill: 'bg-green-100 text-green-800 border-green-300',
         panel: 'bg-green-50 border-green-200',
         text: 'text-green-800',
-        note: 'No exceptions found. The payroll file is ready to download and submit.',
+        note: statusNotes.success || 'No exceptions found. The payroll file is ready to download and submit.',
       };
 
   const stats = result.stats || {};
-  const tiles = STAT_TILES.filter((tile) => stats[tile.key] != null);
+  const tileDefinitions = Array.isArray(resultUi.stat_tiles) ? resultUi.stat_tiles : STAT_TILES;
+  const tiles = tileDefinitions.filter((tile) => stats[tile.key] != null);
   const rows = result.validation || [];
   const structured = rows.some((r) => r.disposition);
-  const grouped = GROUPS.map((g) => ({ ...g, rows: rows.filter((r) => r.disposition === g.key) }))
+  const groupOverrides = resultUi.groups || {};
+  const grouped = GROUPS.map((g) => ({
+    ...g,
+    ...(groupOverrides[g.key] || {}),
+    rows: rows.filter((r) => r.disposition === g.key),
+  }))
     .filter((g) => g.rows.length > 0);
 
   return (
@@ -213,7 +222,9 @@ const FlexRunResult = ({ result, onDownload, onDownloadAll }) => {
           <p className={`text-sm ${status.text}`}>{status.note}</p>
         </div>
 
-        {stats.grand_total != null && <SubmissionBreakdown stats={stats} />}
+        {resultUi.show_submission_breakdown !== false && stats.grand_total != null && (
+          <SubmissionBreakdown stats={stats} />
+        )}
 
         {tiles.length > 0 && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
@@ -271,7 +282,7 @@ const FlexRunResult = ({ result, onDownload, onDownloadAll }) => {
             className="w-full flex items-center justify-between text-left"
           >
             <h3 className="text-lg font-semibold text-gray-800">
-              Action Breakdown
+              {resultUi.validation_title || 'Action Breakdown'}
               {hasErrors && (
                 <span className="ml-2 px-2 py-1 text-xs bg-red-100 text-red-800 rounded-full">
                   {result.errors} to decide
@@ -279,7 +290,7 @@ const FlexRunResult = ({ result, onDownload, onDownloadAll }) => {
               )}
               {hasWarnings && (
                 <span className="ml-2 px-2 py-1 text-xs bg-amber-100 text-amber-800 rounded-full">
-                  {result.warnings} to review
+                  {result.warnings} {resultUi.warning_badge_verb || 'to review'}
                 </span>
               )}
             </h3>

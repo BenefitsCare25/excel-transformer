@@ -6139,7 +6139,7 @@ def flex_run(company_id):
 
         stats = {k: result.get(k) for k in (
             'grand_total', 'breakdown_rows', 'payroll_rows', 'held_total', 'held_rows',
-            'employees', 'excluded_final_pay', 'blocked_mismatch'
+            'employees', 'excluded_final_pay', 'blocked_mismatch', 'leavers'
         ) if k in result}
 
         return jsonify({
@@ -6147,6 +6147,7 @@ def flex_run(company_id):
             'run_id': run_id,
             'company_id': company_id,
             'company_name': module.COMPANY.get('name'),
+            'result_ui': module.COMPANY.get('result_ui', {}),
             'pay_month': pay_month,
             'errors': result.get('errors', 0),
             'warnings': result.get('warnings', 0),
