@@ -88,6 +88,7 @@ WARN_GUIDANCE = {
     'COST CENTRE / ENTITY MISMATCH': 'Cost Centre prefix and claim entity disagree. Verify the entity with HR. Row is on the payroll.',
     'LEAVER MISSING LAST DAY': 'Leaver has claims but no last employment day. Fill it in the leavers file. Row is on the payroll.',
     'LEAVER CATEGORY MISMATCH': 'Amount matched across categories and EXCLUDED from payroll. Ask HR to fix the category in the leavers file.',
+    'LEAVER AMOUNT MISMATCH': 'No current claim matches the final-pay amount. Current claims remain on the payroll; verify the leavers report with HR.',
 }
 
 # Payroll-user helper columns in the IT15 sheet (P = EE ID, Q = Cost Center, R = WT
@@ -376,27 +377,26 @@ def run(files, pay_month, outdir):
                 if _cross_category_match():
                     continue
                 other = df[(df['EEID6'] == e6) & (~df['CoveredByLeaverEmail'])]
-                df.loc[other.index, 'LeaverUnreconciled'] = True
                 leaver_mismatches.append((e6, other, lrow.get('Name'), cat, target,
                     f"Leavers file shows {float(target):.2f} emailed under {cat} but this export has no {cat} "
-                    f"claims - cannot tell which claim it covers, so this leaver's remaining claims are blocked "
-                    f"from payroll pending manual check (double-pay risk)"))
+                    f"claims - no current claim can be identified as already paid, so this leaver's current "
+                    f"claims remain included in payroll; verify the leavers report with HR"))
                 continue
 
             match = _find_subset(list(zip(sub.index, sub['Payment Amt'].round(2))), target)
             if match is None:
                 if _cross_category_match():
                     continue
-                df.loc[sub.index, 'LeaverUnreconciled'] = True
                 leaver_mismatches.append((e6, sub, sub['Employee Name'].iloc[0], cat, target,
                     f"Leaver amount {float(target):.2f} does not match any combination of current {cat} claims "
-                    f"(claims total {sub['Payment Amt'].round(2).sum():.2f}) - double-pay risk, category excluded "
-                    f"from payroll pending manual check"))
+                    f"(claims total {sub['Payment Amt'].round(2).sum():.2f}) - no current claim can be identified "
+                    f"as already paid, so the current claims remain included in payroll; verify the leavers "
+                    f"report with HR"))
             else:
                 df.loc[match, 'CoveredByLeaverEmail'] = True
     # email date only shown on rows actually covered by the leavers email
     df.loc[~df['CoveredByLeaverEmail'], 'EmailDate'] = pd.NaT
-    df['FinalPayThisCycle'] = df['CoveredByLeaverEmail'] | df['LeaverUnreconciled']
+    df['FinalPayThisCycle'] = df['CoveredByLeaverEmail']
 
     # SEA split
     df['SEA'] = df['Location Description'].map(lambda x: SEA_MAP.get(x, (None, None))[0])
@@ -442,7 +442,7 @@ def run(files, pay_month, outdir):
     if leaver_mismatches:
         mm_rows = [{'Check': 'LEAVER AMOUNT MISMATCH', 'Claim Reference': None, 'EEID': e6, 'Name': nm, 'Detail': det}
                    for (e6, _sub, nm, cat, tgt, det) in leaver_mismatches]
-        errors_df = pd.concat([errors_df, pd.DataFrame(mm_rows)], ignore_index=True)
+        warnings_df = pd.concat([warnings_df, pd.DataFrame(mm_rows)], ignore_index=True)
 
     # ---------------- REFRESH MAPPING MASTER ----------------
     cur = bd.drop_duplicates('EEID', keep='first')[['EEID', 'Name', 'Cost Centre', 'Entity', 'Legal Entity Code']].copy()
@@ -640,8 +640,8 @@ def run(files, pay_month, outdir):
     echo(f"Payroll rows: {len(agg)} | total: {agg['Amount'].sum():,.2f}")
     echo(f"Excluded from payroll - already emailed to STM HR (final pay): "
          f"{excluded['EEID'].nunique()} leavers / {len(excluded)} claims / {excluded['Amount'].sum():,.2f}")
-    echo(f"Blocked from payroll - leaver amount mismatch, manual check: "
-         f"{blocked['EEID'].nunique()} employees / {blocked['Amount'].sum():,.2f}")
+    echo(f"Leaver amount mismatches - current claims remain included in payroll: "
+         f"{len(leaver_mismatches)} mismatch(es)")
     echo(f"SEA claims rows: {len(sea_df)} -> reports: {[os.path.basename(p) for p in sea_paths] or 'none'}")
     echo(f"Mapping master refreshed: {len(new_master)} employees ({len(cur)} updated this run)")
     echo(f"Inactive employees flagged: {bd[bd['Active/Inactive'] == 'Inactive']['EEID'].nunique()}")
@@ -682,37 +682,34 @@ def run(files, pay_month, outdir):
         except (TypeError, ValueError):
             return str(v)
 
-    # All three lookups are keyed per EEID and hold the employee-level total, so an exception
+    # All lookups are keyed per EEID and hold the employee-level total, so an exception
     # amount is attributed once per (disposition, employee) below - never once per claim row.
-    blocked_amt = {_k6(k): float(v) for k, v in bd[bd['_unrec']].groupby('EEID')['Amount'].sum().items()}
     held_amt = ({_k6(k): float(v) for k, v in held.groupby('EEID6')['Payment Amt'].sum().items()}
                 if len(held) else {})
-    # Emailed final-pay total per leaver, summed across mismatched categories. Compared against
-    # the employee's blocked-claims total (blocked_amt) - both employee-level, so neither the
-    # figure nor the recommendation double-counts when a leaver mismatches in >1 category.
+    # Emailed final-pay and current-claim totals per leaver. Claim indices are unioned so
+    # overlapping mismatch scopes do not double-count the amount shown in the frontend.
     emailed_by_eeid = {}
-    for (e6, _sub, _nm, _cat, tgt, _det) in leaver_mismatches:
+    mismatch_indices = {}
+    for (e6, mismatch_claims, _nm, _cat, tgt, _det) in leaver_mismatches:
         k = _k6(e6)
         emailed_by_eeid[k] = round(emailed_by_eeid.get(k, 0.0) + float(tgt), 2)
+        mismatch_indices.setdefault(k, set()).update(mismatch_claims.index)
+    mismatch_amt = {
+        e: float(df.loc[list(indices), 'Amount'].sum())
+        for e, indices in mismatch_indices.items()
+    }
 
     def _disposition(check, eeid):
         e = _k6(eeid) if not pd.isna(eeid) else ''
         if check == 'LEAVER AMOUNT MISMATCH':
-            emailed, here = emailed_by_eeid.get(e), blocked_amt.get(e)
-            if emailed is not None and here is not None:
-                if emailed >= here:
-                    action = 'Exclude from payroll'
-                    guidance = (f"Final-pay email {emailed:.2f} >= blocked claims {here:.2f} - the claim(s) are "
-                                "most likely already settled via final pay. Keep them EXCLUDED from the payroll "
-                                "file; confirm the claim references with HR.")
-                else:
-                    action = 'Split / include'
-                    guidance = (f"Final-pay email {emailed:.2f} < blocked claims {here:.2f} - about {here - emailed:.2f} "
-                                "is NOT covered by final pay. INCLUDE the uncovered portion in the payroll file; "
-                                "agree the split with HR.")
-            else:
-                action, guidance = 'Decide', "Reconcile the leaver's final-pay email against the claims with HR."
-            return {'disposition': 'blocked', 'action': action, 'amount': here, 'guidance': guidance}
+            emailed, here = emailed_by_eeid.get(e), mismatch_amt.get(e)
+            guidance = (
+                f"Final-pay email {emailed:.2f} does not match the current claims totalling {here:.2f}. "
+                "The current claims are INCLUDED in the payroll file; verify the separate leavers amount with HR."
+                if emailed is not None and here is not None
+                else WARN_GUIDANCE[check]
+            )
+            return {'disposition': 'warn', 'action': 'Review', 'amount': here, 'guidance': guidance}
         if check in HELD_ERROR_CHECKS:
             return {'disposition': 'held', 'action': 'Fix & re-run', 'amount': held_amt.get(e),
                     'guidance': HELD_GUIDANCE.get(check, 'Fix the source data and re-run.')}
