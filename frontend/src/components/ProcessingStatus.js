@@ -7,7 +7,7 @@ const ProcessingStatus = ({ status, result, onDownload, onDownloadAll, onReset }
   const hasResults = result && result.results && result.results.length > 0;
 
   return (
-    <div className="card mt-6">
+    <div className="card mt-6" aria-live="polite">
       <h3 className="text-xl font-bold text-gray-800 mb-4">Processing Status</h3>
 
       {status === 'processing' && (
@@ -64,6 +64,22 @@ const ProcessingStatus = ({ status, result, onDownload, onDownloadAll, onReset }
               {result.message}
             </p>
           </div>
+
+          {result.regional_merge?.enabled && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-1 text-sm text-blue-800">
+              <p className="font-medium break-words">
+                Combined {result.regional_merge.source_sheet_count} regional sheets into List
+              </p>
+              <p className="break-words">
+                Sources: {result.regional_merge.source_sheets.join(', ')}
+              </p>
+              {result.regional_merge.duplicate_records_detected > 0 && (
+                <p className="text-amber-800" role="status">
+                  {result.regional_merge.duplicate_records_detected} possible duplicate record{result.regional_merge.duplicate_records_detected === 1 ? '' : 's'} retained for review
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Filtered Provider Codes */}
           {result.filtered_provider_codes && result.filtered_provider_codes.length > 0 && (

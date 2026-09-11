@@ -316,7 +316,7 @@ function App() {
 
               {/* Batch Results Display */}
               {batchResults.length > 0 && (
-                <div className="mt-6 card">
+                <div className="mt-6 card" aria-live="polite">
                   <h3 className="text-lg font-semibold text-gray-800 mb-4">
                     Processing Results
                   </h3>
@@ -329,13 +329,30 @@ function App() {
                             <div>
                               <h4 className="text-sm font-medium text-gray-900">{result.filename}</h4>
                               {result.success ? (
-                                <div className="flex items-center space-x-4 mt-1 text-xs text-gray-600">
-                                  <span className="text-green-600">✓ {result.sheets_processed} sheets processed</span>
-                                  <span>{result.total_records} total records</span>
-                                  {result.terminated_clinics_filtered > 0 && (
-                                    <span className="text-orange-600">
-                                      {result.terminated_clinics_filtered} terminated clinics filtered
-                                    </span>
+                                <div className="mt-1 text-xs text-gray-600">
+                                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                                    <span className="text-green-700">{result.sheets_processed} output sheets generated</span>
+                                    <span>{result.total_records} total records</span>
+                                    {result.terminated_clinics_filtered > 0 && (
+                                      <span className="text-orange-700">
+                                        {result.terminated_clinics_filtered} terminated clinics filtered
+                                      </span>
+                                    )}
+                                  </div>
+                                  {result.regional_merge?.enabled && (
+                                    <div className="mt-2 space-y-1 text-blue-800">
+                                      <p className="font-medium break-words">
+                                        Combined {result.regional_merge.source_sheet_count} regional sheets into List
+                                      </p>
+                                      <p className="break-words">
+                                        Sources: {result.regional_merge.source_sheets.join(', ')}
+                                      </p>
+                                      {result.regional_merge.duplicate_records_detected > 0 && (
+                                        <p className="text-amber-800" role="status">
+                                          {result.regional_merge.duplicate_records_detected} possible duplicate record{result.regional_merge.duplicate_records_detected === 1 ? '' : 's'} retained for review
+                                        </p>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                               ) : (

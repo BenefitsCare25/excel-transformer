@@ -40,6 +40,14 @@ npm start
 - Files with header rows similar to the IHP clinic data structure
 - Files containing clinic information with address details
 
+### Automatic Regional Sheet Consolidation
+- Workbooks with two or more compatible geographic tabs are combined automatically.
+- Supported tab labels include North, North-East, Central, East, West, Singapore, and Malaysia, with common GP/panel/list suffixes.
+- Each tab may place its header on a different row; the transformer locates and validates every header before merging.
+- The generated workbook contains one worksheet named `List` and preserves the source workbook's sheet and row order.
+- Possible duplicate clinic/address rows are retained and reported for review rather than silently removed.
+- If any detected regional tab has incompatible or missing headers, processing stops with a specific validation error so no region is omitted.
+
 ### Expected Data Structure
 Your input file should have columns similar to:
 - S/N, IHP CLINIC ID, REGION, AREA, CLINIC NAME

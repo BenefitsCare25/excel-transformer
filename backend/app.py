@@ -453,6 +453,31 @@ class GeocodingService:
         return self.geocode_stats.copy()
 
 class ExcelTransformer:
+    GEOGRAPHIC_SHEET_NAMES = {
+        'NORTH',
+        'NORTH EAST',
+        'NORTHEAST',
+        'CENTRAL',
+        'EAST',
+        'WEST',
+        'SOUTH',
+        'SINGAPORE',
+        'SG',
+        'MALAYSIA',
+        'MY',
+        'MSIA',
+    }
+    GEOGRAPHIC_SHEET_NOISE_WORDS = {
+        'REGION',
+        'REGIONAL',
+        'GP',
+        'PANEL',
+        'CLINIC',
+        'CLINICS',
+        'LIST',
+        'LISTING',
+    }
+
     @staticmethod
     def detect_alliance_tokio_format(ws):
         """
@@ -740,6 +765,225 @@ class ExcelTransformer:
         return panel_sheets, termination_sheets
 
     @staticmethod
+    def is_geographic_sheet_name(sheet_name):
+        """Return whether a tab name represents a geographic panel list."""
+        normalized = re.sub(r'[^A-Z0-9]+', ' ', str(sheet_name).upper()).strip()
+        meaningful_words = [
+            word
+            for word in normalized.split()
+            if word not in ExcelTransformer.GEOGRAPHIC_SHEET_NOISE_WORDS
+        ]
+        geographic_name = ' '.join(meaningful_words)
+        return geographic_name in ExcelTransformer.GEOGRAPHIC_SHEET_NAMES
+
+    @staticmethod
+    def _normalized_header_name(column):
+        """Normalize a header for compatibility checks and canonicalization."""
+        return re.sub(r'\s+', ' ', str(column)).strip().lower()
+
+    @staticmethod
+    def _normalized_header_signature(columns):
+        """Build a stable signature used to prevent unsafe sheet merges."""
+        signature = []
+        for column in columns:
+            normalized = ExcelTransformer._normalized_header_name(column)
+            if not normalized or normalized.startswith('unnamed:'):
+                continue
+            signature.append(normalized)
+        return tuple(signature)
+
+    @staticmethod
+    def detect_regional_sheets(file_path, sheet_names):
+        """Detect and validate geographic sheets before consolidation.
+
+        Sheet names identify candidates, while the table headers prove that a
+        candidate contains panel data. Invalid candidates are returned so a
+        partial merge cannot silently omit a region.
+        """
+        candidate_names = [
+            sheet_name
+            for sheet_name in sheet_names
+            if ExcelTransformer.is_geographic_sheet_name(sheet_name)
+        ]
+        valid_sheets = []
+        invalid_sheets = []
+
+        for sheet_name in candidate_names:
+            try:
+                header_row = ExcelTransformer.find_header_row(file_path, sheet_name)
+                header_frame = ExcelTransformer.safe_read_excel(
+                    file_path,
+                    sheet_name=sheet_name,
+                    header=header_row,
+                    nrows=0,
+                )
+                header_frame.columns = [
+                    column.strip() if isinstance(column, str) else column
+                    for column in header_frame.columns
+                ]
+                column_map = ExcelTransformer.map_columns(header_frame.columns)
+                has_address = any(
+                    key in column_map
+                    for key in (
+                        'address',
+                        'address1',
+                        'address_blk',
+                        'address_road',
+                    )
+                )
+                has_location = 'region' in column_map or 'area' in column_map
+
+                missing_fields = []
+                if 'clinic_name' not in column_map:
+                    missing_fields.append('clinic name')
+                if not has_address:
+                    missing_fields.append('address')
+                if not has_location:
+                    missing_fields.append('region or area')
+
+                if missing_fields:
+                    invalid_sheets.append({
+                        'sheet_name': sheet_name,
+                        'reason': f"missing {', '.join(missing_fields)} header(s)",
+                    })
+                    continue
+
+                header_signature = (
+                    ExcelTransformer._normalized_header_signature(
+                        header_frame.columns
+                    )
+                )
+                if len(header_signature) != len(set(header_signature)):
+                    invalid_sheets.append({
+                        'sheet_name': sheet_name,
+                        'reason': 'contains duplicate headers after normalization',
+                    })
+                    continue
+
+                valid_sheets.append({
+                    'sheet_name': sheet_name,
+                    'header_row': header_row,
+                    'header_signature': header_signature,
+                })
+            except Exception as error:
+                invalid_sheets.append({
+                    'sheet_name': sheet_name,
+                    'reason': str(error),
+                })
+
+        if valid_sheets:
+            reference_signature = valid_sheets[0]['header_signature']
+            compatible_sheets = []
+            for sheet in valid_sheets:
+                if sheet['header_signature'] == reference_signature:
+                    compatible_sheets.append(sheet)
+                else:
+                    invalid_sheets.append({
+                        'sheet_name': sheet['sheet_name'],
+                        'reason': 'headers do not match the other regional sheets',
+                    })
+            valid_sheets = compatible_sheets
+
+        return {
+            'candidate_sheets': candidate_names,
+            'valid_sheets': valid_sheets,
+            'invalid_sheets': invalid_sheets,
+        }
+
+    @staticmethod
+    def combine_regional_sheets(file_path, regional_sheets):
+        """Combine validated regional tables while preserving workbook order."""
+        dataframes = []
+        source_record_counts = {}
+        canonical_headers = None
+
+        for regional_sheet in regional_sheets:
+            sheet_name = regional_sheet['sheet_name']
+            dataframe = ExcelTransformer.safe_read_excel(
+                file_path,
+                sheet_name=sheet_name,
+                header=regional_sheet['header_row'],
+            )
+            dataframe.columns = [
+                column.strip() if isinstance(column, str) else column
+                for column in dataframe.columns
+            ]
+            dataframe = dataframe.dropna(how='all').copy()
+
+            if canonical_headers is None:
+                canonical_headers = {
+                    ExcelTransformer._normalized_header_name(column): column
+                    for column in dataframe.columns
+                    if not ExcelTransformer._normalized_header_name(
+                        column
+                    ).startswith('unnamed:')
+                }
+            else:
+                canonical_renames = {}
+                for column in dataframe.columns:
+                    normalized = ExcelTransformer._normalized_header_name(column)
+                    canonical_name = canonical_headers.get(normalized)
+                    if canonical_name is not None and column != canonical_name:
+                        canonical_renames[column] = canonical_name
+                if canonical_renames:
+                    dataframe = dataframe.rename(columns=canonical_renames)
+
+            column_map = ExcelTransformer.map_columns(dataframe.columns)
+            clinic_column = column_map['clinic_name']
+            valid_clinic_rows = (
+                dataframe[clinic_column].notna()
+                & (dataframe[clinic_column].astype(str).str.strip() != '')
+            )
+            source_record_counts[sheet_name] = int(valid_clinic_rows.sum())
+
+            region_column = column_map.get('region')
+            if region_column is None:
+                dataframe['Region'] = sheet_name
+            else:
+                missing_region = (
+                    dataframe[region_column].isna()
+                    | (dataframe[region_column].astype(str).str.strip() == '')
+                )
+                dataframe.loc[missing_region, region_column] = sheet_name
+
+            dataframes.append(dataframe)
+
+        if not dataframes:
+            raise ValueError('No validated regional sheets were available to combine')
+
+        combined = pd.concat(dataframes, ignore_index=True, sort=False)
+        return combined, source_record_counts
+
+    @staticmethod
+    def count_possible_duplicate_clinics(dataframe):
+        """Count repeated clinic/address rows without removing source data."""
+        if 'Name' not in dataframe.columns or 'Address1' not in dataframe.columns:
+            return 0
+
+        names = (
+            dataframe['Name']
+            .fillna('')
+            .astype(str)
+            .str.upper()
+            .str.replace(r'\s+', ' ', regex=True)
+            .str.strip()
+        )
+        addresses = (
+            dataframe['Address1']
+            .fillna('')
+            .astype(str)
+            .str.upper()
+            .str.replace(r'\s+', ' ', regex=True)
+            .str.strip()
+        )
+        valid_keys = (names != '') & (addresses != '')
+        duplicate_mask = pd.DataFrame({
+            'name': names[valid_keys],
+            'address': addresses[valid_keys],
+        }).duplicated(keep='first')
+        return int(duplicate_mask.sum())
+
+    @staticmethod
     def normalize_code(value):
         """Normalize provider code or postal code by removing unnecessary decimal points
 
@@ -899,13 +1143,18 @@ class ExcelTransformer:
         return df
     
     @staticmethod
-    def write_excel_with_text_postal_codes(df, file_path):
+    def write_excel_with_text_postal_codes(df, file_path, sheet_name='Sheet1'):
         """Write DataFrame to Excel with PostalCode column formatted as text"""
         from openpyxl import load_workbook
         from openpyxl.styles import numbers
         
         # Write the DataFrame to Excel
-        df.to_excel(file_path, index=False, engine='openpyxl')
+        df.to_excel(
+            file_path,
+            index=False,
+            engine='openpyxl',
+            sheet_name=sheet_name,
+        )
         
         # Open the workbook and apply text formatting to PostalCode column
         if 'PostalCode' in df.columns:
@@ -982,7 +1231,8 @@ class ExcelTransformer:
                 'operation hours', 'mon to fri',  # MY GP List format
                 'mon - fri',  # AIA SP format
                 'weekdays',  # AIA dental format - direct weekdays column
-                'operating hour monday - friday'  # Singlife format - direct text extraction (cleaned with spaces)
+                'operating hour monday - friday',  # Singlife format - direct text extraction (cleaned with spaces)
+                'opening hours 1'  # Income regional panel format
             ],
             'mon_fri_pm': [
                 'mon - fri (pm)', 'monday - friday (evening)', 'weekday pm', 'mon-fri pm', 'weekdays pm'
@@ -993,15 +1243,29 @@ class ExcelTransformer:
             'sat_am': ['sat (am)', 'saturday', 'sat am', 'saturday am'],
             'sat_pm': ['sat (pm)', 'sat pm', 'saturday pm'],
             'sat_night': ['sat (night)', 'sat night', 'saturday night'],
-            'sat_simple': ['sat', 'operating hours (saturday)'],  # Simple Saturday column + Income format
+            'sat_simple': [
+                'sat',
+                'operating hours (saturday)',
+                'opening hours 2',  # Income regional panel format
+            ],
             'sun_am': ['sun (am)', 'sunday', 'sun am', 'sunday am'],
             'sun_pm': ['sun (pm)', 'sun pm', 'sunday pm'],
             'sun_night': ['sun (night)', 'sun night', 'sunday night'],
-            'sun_simple': ['sun', 'operating hours (sunday)'],  # Simple Sunday column + Income format
+            'sun_simple': [
+                'sun',
+                'operating hours (sunday)',
+                'opening hours 3',  # Income regional panel format
+            ],
             'holiday_am': ['public holiday (am)', 'public holiday', 'holiday am', 'ph am', 'ph', 'publicday'],
             'holiday_pm': ['public holiday (pm)', 'holiday pm', 'ph pm'],
             'holiday_night': ['public holiday (night)', 'holiday night', 'ph night'],
-            'holiday_simple': ['holiday', 'ph', 'operating hours (holiday(s))', 'operating hours (holidays)'],  # Simple Holiday column + Income format
+            'holiday_simple': [
+                'holiday',
+                'ph',
+                'operating hours (holiday(s))',
+                'operating hours (holidays)',
+                'opening hours 4',  # Income regional panel format
+            ],
             # Address components for composite address construction
             'address_blk': ['blk', 'block', 'building no', 'bldg no', 'unit block', 'blk & road name'],
             'address_road': ['road name', 'street name', 'street', 'road', 'avenue', 'ave', 'blk & road name'],
@@ -2221,7 +2485,10 @@ class ExcelTransformer:
             # Get all sheet names (with fallback for corrupted XML)
             try:
                 xl_file = pd.ExcelFile(input_path)
-                sheet_names = xl_file.sheet_names
+                try:
+                    sheet_names = list(xl_file.sheet_names)
+                finally:
+                    xl_file.close()
             except ValueError as e:
                 if "could not assign names" in str(e) or "invalid XML" in str(e):
                     logger.warning(f"Excel file has corrupted metadata, using patched openpyxl to read sheet names")
@@ -2247,7 +2514,10 @@ class ExcelTransformer:
 
                     try:
                         xl_file = pd.ExcelFile(input_path)
-                        sheet_names = xl_file.sheet_names
+                        try:
+                            sheet_names = list(xl_file.sheet_names)
+                        finally:
+                            xl_file.close()
                     finally:
                         # Restore original method
                         WorkbookParser.assign_names = original_assign_names
@@ -2256,9 +2526,44 @@ class ExcelTransformer:
 
             # Classify sheets
             panel_sheets, termination_sheets = ExcelTransformer.classify_sheets(sheet_names)
+            regional_detection = ExcelTransformer.detect_regional_sheets(
+                input_path,
+                sheet_names,
+            )
+
+            has_regional_workbook = (
+                len(regional_detection['candidate_sheets']) >= 2
+            )
+            if has_regional_workbook and regional_detection['invalid_sheets']:
+                invalid_details = '; '.join(
+                    f"{item['sheet_name']}: {item['reason']}"
+                    for item in regional_detection['invalid_sheets']
+                )
+                return {
+                    'success': False,
+                    'message': (
+                        'Regional sheet validation failed. No regional data was '
+                        f'omitted or processed: {invalid_details}'
+                    ),
+                    'error_details': invalid_details,
+                }
+
+            regional_sheets = regional_detection['valid_sheets']
+            should_combine_regions = (
+                has_regional_workbook and len(regional_sheets) >= 2
+            )
+
+            if len(regional_sheets) == 1:
+                regional_sheet_name = regional_sheets[0]['sheet_name']
+                if regional_sheet_name not in panel_sheets:
+                    panel_sheets.append(regional_sheet_name)
 
             logger.info(f"Detected {len(panel_sheets)} panel sheets: {panel_sheets}")
             logger.info(f"Detected {len(termination_sheets)} termination sheets: {termination_sheets}")
+            logger.info(
+                f"Detected {len(regional_sheets)} validated regional sheets: "
+                f"{[sheet['sheet_name'] for sheet in regional_sheets]}"
+            )
 
             # Extract terminated clinic IDs
             terminated_ids = ExcelTransformer.extract_terminated_clinic_ids(input_path, termination_sheets)
@@ -2266,6 +2571,119 @@ class ExcelTransformer:
             # Process each panel sheet
             results = []
             output_files = []
+            regional_merge = None
+
+            if should_combine_regions:
+                regional_names = [
+                    sheet['sheet_name']
+                    for sheet in regional_sheets
+                ]
+                logger.info(
+                    f"Combining {len(regional_names)} regional sheets into List: "
+                    f"{regional_names}"
+                )
+                combined_dataframe, source_record_counts = (
+                    ExcelTransformer.combine_regional_sheets(
+                        input_path,
+                        regional_sheets,
+                    )
+                )
+
+                temporary_workbook = tempfile.NamedTemporaryFile(
+                    delete=False,
+                    suffix='.xlsx',
+                )
+                temporary_workbook_path = temporary_workbook.name
+                temporary_workbook.close()
+
+                try:
+                    combined_dataframe.to_excel(
+                        temporary_workbook_path,
+                        index=False,
+                        engine='openpyxl',
+                        sheet_name='List',
+                    )
+                    combined_result = ExcelTransformer.transform_sheet(
+                        temporary_workbook_path,
+                        'List',
+                        terminated_ids,
+                        use_google_api,
+                    )
+                finally:
+                    try:
+                        os.unlink(temporary_workbook_path)
+                    except OSError as cleanup_error:
+                        logger.warning(
+                            'Could not remove temporary regional workbook %s: %s',
+                            temporary_workbook_path,
+                            cleanup_error,
+                        )
+
+                if not combined_result['success']:
+                    return {
+                        'success': False,
+                        'message': (
+                            'Failed to process the combined regional List: '
+                            f"{combined_result['message']}"
+                        ),
+                        'error_details': combined_result.get('error_details', ''),
+                    }
+
+                combined_output = combined_result['dataframe']
+                duplicate_records = (
+                    ExcelTransformer.count_possible_duplicate_clinics(
+                        combined_output
+                    )
+                )
+                combined_output = ExcelTransformer.format_postal_codes(
+                    combined_output
+                )
+                output_filename = f'{job_id}_List.xlsx'
+                output_path = os.path.join(output_dir, output_filename)
+                ExcelTransformer.write_excel_with_text_postal_codes(
+                    combined_output,
+                    output_path,
+                    sheet_name='List',
+                )
+
+                regional_merge = {
+                    'enabled': True,
+                    'output_sheet': 'List',
+                    'source_sheet_count': len(regional_names),
+                    'source_sheets': regional_names,
+                    'source_record_counts': source_record_counts,
+                    'duplicate_records_detected': duplicate_records,
+                }
+                results.append({
+                    'sheet_name': 'List',
+                    'output_filename': output_filename,
+                    'output_path': output_path,
+                    'records_processed': combined_result['records_processed'],
+                    'terminated_clinics_filtered': combined_result[
+                        'terminated_clinics_filtered'
+                    ],
+                    'filtered_provider_codes': combined_result.get(
+                        'filtered_provider_codes',
+                        [],
+                    ),
+                    'geocoding_stats': combined_result['geocoding_stats'],
+                    'source_sheets': regional_names,
+                    'source_record_counts': source_record_counts,
+                    'duplicate_records_detected': duplicate_records,
+                })
+                output_files.append(output_filename)
+
+                regional_name_set = set(regional_names)
+                panel_sheets = [
+                    sheet
+                    for sheet in panel_sheets
+                    if sheet not in regional_name_set
+                ]
+                logger.info(
+                    'SUCCESS: Combined %s regional sheets into List with %s records',
+                    len(regional_names),
+                    combined_result['records_processed'],
+                )
 
             for sheet in panel_sheets:
                 logger.info(f"Processing sheet: {sheet}")
@@ -2399,15 +2817,27 @@ class ExcelTransformer:
             # Remove duplicates while preserving order
             unique_filtered_codes = list(dict.fromkeys(all_filtered_codes))
 
+            if regional_merge:
+                message = (
+                    f"Combined {regional_merge['source_sheet_count']} regional "
+                    f"sheets into List and processed {total_records} total records"
+                )
+            else:
+                message = (
+                    f'Successfully processed {len(results)} sheets with '
+                    f'{total_records} total records'
+                )
+
             return {
                 'success': True,
-                'message': f'Successfully processed {len(results)} sheets with {total_records} total records',
+                'message': message,
                 'sheets_processed': len(results),
                 'total_records': total_records,
                 'terminated_clinics_filtered': total_terminated,
                 'filtered_provider_codes': unique_filtered_codes,
                 'output_files': output_files,
                 'results': results,
+                'regional_merge': regional_merge,
                 'summary_stats': {
                     'total_successful_geocodes': total_geocodes,
                     'overall_geocoding_rate': f"{(total_geocodes/total_records*100):.1f}%" if total_records > 0 else "0%"
@@ -2531,6 +2961,7 @@ def process_single_file_in_batch(file_data, batch_id, use_google_api=True):
                 'success': True,
                 'filename': original_filename,
                 'job_id': job_id,
+                'message': result['message'],
                 'sheets_processed': result['sheets_processed'],
                 'total_records': result['total_records'],
                 'terminated_clinics_filtered': result['terminated_clinics_filtered'],
@@ -2538,6 +2969,7 @@ def process_single_file_in_batch(file_data, batch_id, use_google_api=True):
                 'output_files': result['output_files'],
                 'download_urls': [f'/download/{job_id}/{filename}' for filename in result['output_files']],
                 'results': result['results'],  # Individual sheet results
+                'regional_merge': result.get('regional_merge'),
                 'summary_stats': result['summary_stats']
             }
         else:
@@ -2934,6 +3366,7 @@ def upload_file():
                 'output_files': result['output_files'],
                 'download_urls': download_urls,
                 'results': result['results'],
+                'regional_merge': result.get('regional_merge'),
                 'summary_stats': result['summary_stats']
             })
         else:
