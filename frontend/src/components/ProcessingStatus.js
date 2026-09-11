@@ -68,7 +68,7 @@ const ProcessingStatus = ({ status, result, onDownload, onDownloadAll, onReset }
           {result.regional_merge?.enabled && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-1 text-sm text-blue-800">
               <p className="font-medium break-words">
-                Combined {result.regional_merge.source_sheet_count} regional sheets into List
+                Combined {result.regional_merge.source_sheet_count} regional sheets{result.regional_merge.split_by_country ? ', then split by country' : ' into List'}
               </p>
               <p className="break-words">
                 Sources: {result.regional_merge.source_sheets.join(', ')}

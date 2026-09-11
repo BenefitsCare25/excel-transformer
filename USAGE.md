@@ -44,7 +44,7 @@ npm start
 - Workbooks with two or more compatible geographic tabs are combined automatically.
 - Supported tab labels include North, North-East, Central, East, West, Singapore, and Malaysia, with common GP/panel/list suffixes.
 - Each tab may place its header on a different row; the transformer locates and validates every header before merging.
-- The generated workbook contains one worksheet named `List` and preserves the source workbook's sheet and row order.
+- Regional rows are split into separate Singapore and Malaysia output workbooks; each workbook contains one worksheet named `List` and preserves the source workbook's sheet and row order.
 - Possible duplicate clinic/address rows are retained and reported for review rather than silently removed.
 - If any detected regional tab has incompatible or missing headers, processing stops with a specific validation error so no region is omitted.
 

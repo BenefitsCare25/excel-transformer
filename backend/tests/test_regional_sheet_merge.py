@@ -232,7 +232,7 @@ class RegionalSheetMergeTests(unittest.TestCase):
         self.assertIn("WEST", result["message"])
         transform_sheet.assert_not_called()
 
-    def test_multi_sheet_transform_writes_one_list_output(self):
+    def test_multi_sheet_transform_splits_singapore_and_malaysia_outputs(self):
         transformed = pd.DataFrame(
             {
                 "Code": ["AUTO_0001", "AUTO_0002", "AUTO_0003"],
@@ -244,8 +244,8 @@ class RegionalSheetMergeTests(unittest.TestCase):
                 ],
                 "PostalCode": ["123456", "654321", "80000"],
                 "Country": ["SINGAPORE", "SINGAPORE", "MALAYSIA"],
-                "Latitude": [None, None, None],
-                "Longitude": [None, None, None],
+                "Latitude": [1.30, 1.31, None],
+                "Longitude": [103.80, 103.81, None],
             }
         )
 
@@ -256,16 +256,17 @@ class RegionalSheetMergeTests(unittest.TestCase):
             return {
                 "success": True,
                 "dataframe": transformed,
+                "geocoding_methods": ["postal_code", "address", None],
                 "records_processed": 3,
                 "terminated_clinics_filtered": 0,
                 "filtered_provider_codes": [],
                 "geocoding_stats": {
                     "total_records": 3,
-                    "successful_geocodes": 0,
-                    "postal_code_matches": 0,
-                    "address_geocodes": 0,
-                    "failed_geocodes": 3,
-                    "success_rate": "0.0%",
+                    "successful_geocodes": 2,
+                    "postal_code_matches": 1,
+                    "address_geocodes": 1,
+                    "failed_geocodes": 1,
+                    "success_rate": "66.7%",
                 },
             }
 
@@ -284,18 +285,65 @@ class RegionalSheetMergeTests(unittest.TestCase):
             )
 
         self.assertTrue(result["success"])
-        self.assertEqual(result["output_files"], ["job-123_List.xlsx"])
+        self.assertEqual(
+            result["output_files"],
+            [
+                "job-123_Singapore.xlsx",
+                "job-123_Malaysia.xlsx",
+            ],
+        )
+        self.assertEqual(
+            [item["sheet_name"] for item in result["results"]],
+            ["SINGAPORE", "MALAYSIA"],
+        )
+        self.assertEqual(
+            [item["records_processed"] for item in result["results"]],
+            [2, 1],
+        )
+        self.assertEqual(
+            result["results"][0]["geocoding_stats"],
+            {
+                "total_records": 2,
+                "successful_geocodes": 2,
+                "postal_code_matches": 1,
+                "address_geocodes": 1,
+                "failed_geocodes": 0,
+                "success_rate": "100.0%",
+            },
+        )
+        self.assertEqual(
+            result["results"][1]["geocoding_stats"],
+            {
+                "total_records": 1,
+                "successful_geocodes": 0,
+                "postal_code_matches": 0,
+                "address_geocodes": 0,
+                "failed_geocodes": 1,
+                "success_rate": "0.0%",
+            },
+        )
         self.assertEqual(result["regional_merge"]["source_sheet_count"], 3)
+        self.assertTrue(result["regional_merge"]["split_by_country"])
+        self.assertEqual(
+            result["regional_merge"]["output_countries"],
+            ["SINGAPORE", "MALAYSIA"],
+        )
         self.assertEqual(
             result["regional_merge"]["source_sheets"],
             ["NORTH", "EAST", "MALAYSIA"],
         )
-        output_path = os.path.join(output_dir, "job-123_List.xlsx")
-        output_workbook = load_workbook(output_path, read_only=True)
-        try:
-            self.assertEqual(output_workbook.sheetnames, ["List"])
-        finally:
-            output_workbook.close()
+        expected_rows = {
+            "job-123_Singapore.xlsx": 2,
+            "job-123_Malaysia.xlsx": 1,
+        }
+        for filename, row_count in expected_rows.items():
+            output_path = os.path.join(output_dir, filename)
+            output_workbook = load_workbook(output_path, read_only=True)
+            try:
+                self.assertEqual(output_workbook.sheetnames, ["List"])
+                self.assertEqual(output_workbook["List"].max_row - 1, row_count)
+            finally:
+                output_workbook.close()
 
 
 if __name__ == "__main__":

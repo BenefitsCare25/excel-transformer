@@ -984,6 +984,38 @@ class ExcelTransformer:
         return int(duplicate_mask.sum())
 
     @staticmethod
+    def geocoding_stats_for_subset(dataframe, geocoding_methods=None):
+        """Build accurate geocoding statistics for an output dataframe subset."""
+        total_records = len(dataframe)
+        if 'Latitude' in dataframe.columns:
+            successful_geocodes = int(dataframe['Latitude'].notna().sum())
+        else:
+            successful_geocodes = 0
+
+        if geocoding_methods is None:
+            postal_matches = 0
+            address_matches = 0
+        else:
+            subset_methods = geocoding_methods.reindex(dataframe.index)
+            postal_matches = int((subset_methods == 'postal_code').sum())
+            address_matches = int((subset_methods == 'address').sum())
+
+        failed_geocodes = total_records - successful_geocodes
+        success_rate = (
+            successful_geocodes / total_records * 100
+            if total_records > 0
+            else 0
+        )
+        return {
+            'total_records': total_records,
+            'successful_geocodes': successful_geocodes,
+            'postal_code_matches': postal_matches,
+            'address_geocodes': address_matches,
+            'failed_geocodes': failed_geocodes,
+            'success_rate': f'{success_rate:.1f}%',
+        }
+
+    @staticmethod
     def normalize_code(value):
         """Normalize provider code or postal code by removing unnecessary decimal points
 
@@ -2457,6 +2489,7 @@ class ExcelTransformer:
             return {
                 'success': True,
                 'dataframe': df_transformed,
+                'geocoding_methods': geocoding_methods,
                 'message': f'Successfully transformed {len(df_transformed)} records',
                 'records_processed': len(df_transformed),
                 'terminated_clinics_filtered': terminated_count,
@@ -2635,43 +2668,118 @@ class ExcelTransformer:
                         combined_output
                     )
                 )
-                combined_output = ExcelTransformer.format_postal_codes(
-                    combined_output
+
+                if 'Country' not in combined_output.columns:
+                    return {
+                        'success': False,
+                        'message': (
+                            'The combined regional List could not be split because '
+                            'the transformed country field is missing.'
+                        ),
+                    }
+
+                normalized_countries = (
+                    combined_output['Country']
+                    .fillna('')
+                    .astype(str)
+                    .str.strip()
+                    .str.upper()
                 )
-                output_filename = f'{job_id}_List.xlsx'
-                output_path = os.path.join(output_dir, output_filename)
-                ExcelTransformer.write_excel_with_text_postal_codes(
-                    combined_output,
-                    output_path,
-                    sheet_name='List',
+                supported_countries = ['SINGAPORE', 'MALAYSIA']
+                unexpected_countries = sorted(
+                    set(normalized_countries) - set(supported_countries)
                 )
+                if unexpected_countries:
+                    display_countries = [
+                        country if country else '(blank)'
+                        for country in unexpected_countries
+                    ]
+                    return {
+                        'success': False,
+                        'message': (
+                            'The combined regional List contains unsupported or '
+                            'undetected countries: '
+                            f"{', '.join(display_countries)}. No output was written."
+                        ),
+                    }
+
+                raw_geocoding_methods = combined_result.get(
+                    'geocoding_methods',
+                )
+                geocoding_methods = None
+                if (
+                    raw_geocoding_methods is not None
+                    and len(raw_geocoding_methods) == len(combined_output)
+                ):
+                    geocoding_methods = pd.Series(
+                        raw_geocoding_methods,
+                        index=combined_output.index,
+                    )
+
+                output_countries = []
+                for country in supported_countries:
+                    country_output = combined_output[
+                        normalized_countries == country
+                    ].copy()
+                    if country_output.empty:
+                        continue
+
+                    is_first_output = not output_countries
+                    display_name = country.title()
+                    output_filename = f'{job_id}_{display_name}.xlsx'
+                    output_path = os.path.join(output_dir, output_filename)
+                    country_output = ExcelTransformer.format_postal_codes(
+                        country_output
+                    )
+                    ExcelTransformer.write_excel_with_text_postal_codes(
+                        country_output,
+                        output_path,
+                        sheet_name='List',
+                    )
+
+                    country_duplicates = (
+                        ExcelTransformer.count_possible_duplicate_clinics(
+                            country_output
+                        )
+                    )
+                    results.append({
+                        'sheet_name': country,
+                        'output_filename': output_filename,
+                        'output_path': output_path,
+                        'records_processed': len(country_output),
+                        'terminated_clinics_filtered': (
+                            combined_result['terminated_clinics_filtered']
+                            if is_first_output
+                            else 0
+                        ),
+                        'filtered_provider_codes': (
+                            combined_result.get('filtered_provider_codes', [])
+                            if is_first_output
+                            else []
+                        ),
+                        'geocoding_stats': (
+                            ExcelTransformer.geocoding_stats_for_subset(
+                                country_output,
+                                geocoding_methods,
+                            )
+                        ),
+                        'source_sheets': regional_names,
+                        'source_record_counts': source_record_counts,
+                        'duplicate_records_detected': country_duplicates,
+                    })
+                    output_files.append(output_filename)
+                    output_countries.append(country)
 
                 regional_merge = {
                     'enabled': True,
                     'output_sheet': 'List',
+                    'split_by_country': True,
+                    'output_countries': output_countries,
                     'source_sheet_count': len(regional_names),
                     'source_sheets': regional_names,
                     'source_record_counts': source_record_counts,
                     'duplicate_records_detected': duplicate_records,
                 }
-                results.append({
-                    'sheet_name': 'List',
-                    'output_filename': output_filename,
-                    'output_path': output_path,
-                    'records_processed': combined_result['records_processed'],
-                    'terminated_clinics_filtered': combined_result[
-                        'terminated_clinics_filtered'
-                    ],
-                    'filtered_provider_codes': combined_result.get(
-                        'filtered_provider_codes',
-                        [],
-                    ),
-                    'geocoding_stats': combined_result['geocoding_stats'],
-                    'source_sheets': regional_names,
-                    'source_record_counts': source_record_counts,
-                    'duplicate_records_detected': duplicate_records,
-                })
-                output_files.append(output_filename)
 
                 regional_name_set = set(regional_names)
                 panel_sheets = [
@@ -2680,8 +2788,10 @@ class ExcelTransformer:
                     if sheet not in regional_name_set
                 ]
                 logger.info(
-                    'SUCCESS: Combined %s regional sheets into List with %s records',
+                    'SUCCESS: Combined %s regional sheets and split List into %s '
+                    'country output(s) with %s records',
                     len(regional_names),
+                    len(output_countries),
                     combined_result['records_processed'],
                 )
 
@@ -2820,7 +2930,8 @@ class ExcelTransformer:
             if regional_merge:
                 message = (
                     f"Combined {regional_merge['source_sheet_count']} regional "
-                    f"sheets into List and processed {total_records} total records"
+                    f"sheets and split List by country; processed "
+                    f"{total_records} total records"
                 )
             else:
                 message = (
