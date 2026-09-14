@@ -35,6 +35,11 @@ jobs:
           source antenv/bin/activate
           pip install -r requirements.txt
 
+      - name: Run backend tests
+        run: |
+          cd backend
+          antenv/bin/python -m unittest discover -s tests -v
+
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:

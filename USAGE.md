@@ -35,6 +35,18 @@ npm start
 
 ## File Requirements
 
+### LGI Flex Reports
+
+In **Flex Report**, select **Lion Global Investors (LGI)** and upload the employee
+claims export, built-in employee listing and utilisation summary. The claims' Paid
+Date sets the payment month. Download the unencrypted `.xlsx` Claims Detail, Claims
+Summary and Utilization Report, individually or as a ZIP.
+
+Use a utilisation export for the reporting month: cumulative claims and balances
+come from that export. Review the run's notes before using the files. LGI's field
+mappings and validation rules are documented in
+[the company profile guide](backend/flex_services/companies/lgi/README.md).
+
 ### Supported Input Formats
 - Excel files (.xlsx, .xls)
 - Files with header rows similar to the IHP clinic data structure
