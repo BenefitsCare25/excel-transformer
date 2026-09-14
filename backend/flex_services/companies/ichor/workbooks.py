@@ -1,6 +1,7 @@
 """Create the two Ichor workbooks in the reference report structure."""
 
 import os
+from itertools import groupby
 
 import openpyxl
 import pandas as pd
@@ -8,7 +9,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
 
-from .constants import DETAIL_HEADERS, SUMMARY_COLUMNS
+from .constants import DETAIL_HEADERS, SUMMARY_COLUMNS, SUMMARY_GROUPS, WELLNESS
 
 MONEY_FORMAT = '"$"#,##0.00'
 THIN_SIDE = Side(style="thin", color="000000")
@@ -22,6 +23,22 @@ PALETTE = {
     "total": "DDEBF7",
     "grand": "00B0F0",
 }
+
+FIRST_CATEGORY_COLUMN = 3
+
+
+def _summary_group_ranges():
+    column = FIRST_CATEGORY_COLUMN
+    for label, fill_key, categories in SUMMARY_GROUPS:
+        end_column = column + len(categories) - 1
+        yield label, fill_key, categories, column, end_column
+        column = end_column + 1
+
+
+def _summary_total_columns():
+    grand_total_column = FIRST_CATEGORY_COLUMN + len(SUMMARY_COLUMNS)
+    last_column = grand_total_column + len(SUMMARY_GROUPS)
+    return grand_total_column, last_column
 
 
 def _value_or_none(value):
@@ -131,26 +148,37 @@ def write_details(claims, pay_month, outdir):
 
 
 def _merge_summary_headers(sheet):
-    for reference in (
-        "A2:A3",
-        "B2:B3",
-        "A4:B4",
-        "C2:K2",
-        "L2:O2",
-        "P2:S2",
-        "F3:G3",
-        "H3:I3",
-        "J3:K3",
-        "L3:M3",
-        "N3:O3",
-        "P3:Q3",
-        "R3:S3",
-        "T2:T4",
-        "U2:U4",
-        "V2:V4",
-        "W2:W4",
-    ):
+    for reference in ("A2:A3", "B2:B3", "A4:B4"):
         sheet.merge_cells(reference)
+
+    for _, _, _, start_column, end_column in _summary_group_ranges():
+        sheet.merge_cells(
+            start_row=2,
+            start_column=start_column,
+            end_row=2,
+            end_column=end_column,
+        )
+
+    category_column = FIRST_CATEGORY_COLUMN
+    for _, category_rows in groupby(SUMMARY_COLUMNS, key=lambda item: item[0]):
+        category_count = len(list(category_rows))
+        if category_count > 1:
+            sheet.merge_cells(
+                start_row=3,
+                start_column=category_column,
+                end_row=3,
+                end_column=category_column + category_count - 1,
+            )
+        category_column += category_count
+
+    grand_total_column, last_column = _summary_total_columns()
+    for column in range(grand_total_column, last_column + 1):
+        sheet.merge_cells(
+            start_row=2,
+            start_column=column,
+            end_row=4,
+            end_column=column,
+        )
 
 
 def _write_summary_headers(sheet):
@@ -158,40 +186,43 @@ def _write_summary_headers(sheet):
     labels = {
         "A2": "Employee ID",
         "B2": "Employee Name",
-        "C2": "Non-Taxable \n& Non CPF Payable",
-        "L2": "Non-Taxable \n& CPF Payable",
-        "P2": "Taxable \n& CPF Payable ",
-        "T2": "Grand Total",
-        "U2": "Total for \nNon-Taxable \n& Non CPF Payable",
-        "V2": "Total for \nNon-Taxable \n& CPF Payable",
-        "W2": "Total for \nTaxable \n& CPF Payable",
         "A4": "Relation",
     }
     for cell, value in labels.items():
         sheet[cell] = value
 
-    category_starts = {3, 4, 5, 6, 8, 10, 12, 14, 16, 18}
-    for offset, (claim_type, relation) in enumerate(SUMMARY_COLUMNS, start=3):
-        if offset in category_starts:
-            sheet.cell(3, offset, claim_type)
-        sheet.cell(4, offset, relation)
+    for label, _, _, start_column, _ in _summary_group_ranges():
+        sheet.cell(2, start_column, label)
+
+    category_column = FIRST_CATEGORY_COLUMN
+    for claim_type, category_rows in groupby(SUMMARY_COLUMNS, key=lambda item: item[0]):
+        category_rows = list(category_rows)
+        sheet.cell(3, category_column, claim_type)
+        for _, relation in category_rows:
+            sheet.cell(4, category_column, relation)
+            category_column += 1
+
+    grand_total_column, _ = _summary_total_columns()
+    sheet.cell(2, grand_total_column, "Grand Total")
+    for offset, (label, _, _) in enumerate(SUMMARY_GROUPS, start=1):
+        sheet.cell(2, grand_total_column + offset, f"Total for \n{label}")
 
 
 def _style_summary_headers(sheet):
+    grand_total_column, last_column = _summary_total_columns()
     for row in range(2, 5):
-        for column in range(1, 24):
+        for column in range(1, last_column + 1):
             cell = sheet.cell(row, column)
             cell.font = Font(name="Calibri", size=11, bold=True)
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             cell.border = GRID_BORDER
             cell.number_format = MONEY_FORMAT if column >= 3 else "General"
-    fills = (
-        (1, 2, "identity"),
-        (3, 11, "non_tax_non_cpf"),
-        (12, 15, "non_tax_cpf"),
-        (16, 19, "taxable_cpf"),
-        (20, 23, "total"),
+    fills = [(1, 2, "identity")]
+    fills.extend(
+        (start_column, end_column, fill_key)
+        for _, fill_key, _, start_column, end_column in _summary_group_ranges()
     )
+    fills.append((grand_total_column, last_column, "total"))
     for start, end, color_key in fills:
         fill = PatternFill("solid", fgColor=PALETTE[color_key])
         for row in range(2, 5):
@@ -200,33 +231,26 @@ def _style_summary_headers(sheet):
 
 
 def _configure_summary_sheet(sheet):
-    widths = {
-        "A": 11.91,
-        "B": 37.18,
-        "C": 9.82,
-        "D": 9.82,
-        "E": 17.36,
-        "F": 10.82,
-        "G": 11,
-        "H": 10.82,
-        "I": 11,
-        "J": 10.82,
-        "K": 11,
-        "L": 9.82,
-        "M": 11,
-        "N": 9.82,
-        "O": 11,
-        "P": 13,
-        "Q": 14.36,
-        "R": 10.82,
-        "S": 11,
-        "T": 11.91,
-        "U": 17.63,
-        "V": 13.45,
-        "W": 13.45,
-    }
-    for column, width in widths.items():
-        sheet.column_dimensions[column].width = width
+    sheet.column_dimensions["A"].width = 11.91
+    sheet.column_dimensions["B"].width = 37.18
+    for column, (claim_type, relation) in enumerate(
+        SUMMARY_COLUMNS, start=FIRST_CATEGORY_COLUMN
+    ):
+        width = 11
+        if claim_type == "Panel Fullerton GP":
+            width = 17.36
+        elif claim_type == WELLNESS:
+            width = 20
+        elif relation == "Employee":
+            width = 10.82
+        sheet.column_dimensions[get_column_letter(column)].width = width
+
+    grand_total_column, _ = _summary_total_columns()
+    total_widths = (11.91, 17.63, 13.45, 13.45)
+    for offset, width in enumerate(total_widths):
+        sheet.column_dimensions[
+            get_column_letter(grand_total_column + offset)
+        ].width = width
     sheet.row_dimensions[2].height = 54
     sheet.row_dimensions[3].height = 72
     sheet.row_dimensions[4].height = 30
@@ -245,21 +269,25 @@ def _employee_summary_rows(claims):
             "PaymentAmount"
         ].sum()
         categories = [round(float(amounts.get(key, 0)), 2) for key in SUMMARY_COLUMNS]
-        non_tax_non_cpf = round(sum(categories[:9]), 2)
-        non_tax_cpf = round(sum(categories[9:13]), 2)
-        taxable_cpf = round(sum(categories[13:]), 2)
+        group_totals = []
+        category_offset = 0
+        for _, _, group_columns in SUMMARY_GROUPS:
+            group_end = category_offset + len(group_columns)
+            group_totals.append(round(sum(categories[category_offset:group_end]), 2))
+            category_offset = group_end
         rows.append(
             [staff_id, _excel_text(employee_name)]
             + [value if value else None for value in categories]
-            + [round(non_tax_non_cpf + non_tax_cpf + taxable_cpf, 2)]
-            + [non_tax_non_cpf, non_tax_cpf, taxable_cpf]
+            + [round(sum(group_totals), 2)]
+            + group_totals
         )
     return rows
 
 
 def _style_summary_data(sheet, start_row, end_row, total_row):
+    grand_total_column, last_column = _summary_total_columns()
     for row in range(start_row, total_row + 1):
-        for column in range(1, 24):
+        for column in range(1, last_column + 1):
             cell = sheet.cell(row, column)
             cell.border = GRID_BORDER
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -267,9 +295,11 @@ def _style_summary_data(sheet, start_row, end_row, total_row):
             if column >= 3:
                 cell.number_format = MONEY_FORMAT
     total_fill = PatternFill("solid", fgColor=PALETTE["non_tax_non_cpf"])
-    for column in range(1, 24):
+    for column in range(1, last_column + 1):
         sheet.cell(total_row, column).fill = total_fill
-    sheet.cell(total_row, 20).fill = PatternFill("solid", fgColor=PALETTE["grand"])
+    sheet.cell(total_row, grand_total_column).fill = PatternFill(
+        "solid", fgColor=PALETTE["grand"]
+    )
     for row in range(start_row, end_row + 1):
         sheet.cell(row, 1).number_format = "@"
 
@@ -292,7 +322,8 @@ def write_summary(claims, pay_month, outdir):
     total_row = start_row + len(rows)
     sheet.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=2)
     sheet.cell(total_row, 1, "Grand Total")
-    for column in range(3, 24):
+    _, last_column = _summary_total_columns()
+    for column in range(FIRST_CATEGORY_COLUMN, last_column + 1):
         total = round(sum(float(row[column - 1] or 0) for row in rows), 2)
         sheet.cell(total_row, column, total)
     _style_summary_data(sheet, start_row, total_row - 1, total_row)

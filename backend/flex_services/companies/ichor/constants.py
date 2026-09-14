@@ -42,26 +42,54 @@ APPLIANCES = (
     "Medical and Dental Appliances (e.g. splints, insoles, guards, braces, "
     "retainers & tooth veneers)"
 )
+WELLNESS = "Wellness Benefits (Gym membership & Entrance Fee / Fitness Classes)"
 
-# Column order is the business rule. The source TAX/CPF flags do not drive this report.
-SUMMARY_COLUMNS = (
-    ("A&E", "Employee"),
-    ("Polyclinic", "Employee"),
-    ("Panel Fullerton GP", "Employee"),
-    (MEDICAL, "Employee"),
-    (MEDICAL, "Dependent"),
-    ("Dental", "Employee"),
-    ("Dental", "Dependent"),
-    (TCM, "Employee"),
-    (TCM, "Dependent"),
-    ("Health Screening", "Employee"),
-    ("Health Screening", "Dependent"),
-    ("Vaccination", "Employee"),
-    ("Vaccination", "Dependent"),
-    (APPLIANCES, "Employee"),
-    (APPLIANCES, "Dependent"),
-    ("Vision", "Employee"),
-    ("Vision", "Dependent"),
+# Group membership and column order are the business rules. The source TAX/CPF flags do not
+# determine where a claim appears in the summary.
+SUMMARY_GROUPS = (
+    (
+        "Non-Taxable \n& Non CPF Payable",
+        "non_tax_non_cpf",
+        (
+            ("A&E", "Employee"),
+            ("Polyclinic", "Employee"),
+            ("Polyclinic", "Dependent"),
+            ("Panel Fullerton GP", "Employee"),
+            (MEDICAL, "Employee"),
+            (MEDICAL, "Dependent"),
+            ("Dental", "Employee"),
+            ("Dental", "Dependent"),
+            (TCM, "Employee"),
+            (TCM, "Dependent"),
+        ),
+    ),
+    (
+        "Non-Taxable \n& CPF Payable",
+        "non_tax_cpf",
+        (
+            ("Health Screening", "Employee"),
+            ("Health Screening", "Dependent"),
+            ("Vaccination", "Employee"),
+            ("Vaccination", "Dependent"),
+        ),
+    ),
+    (
+        "Taxable \n& CPF Payable",
+        "taxable_cpf",
+        (
+            (APPLIANCES, "Employee"),
+            (APPLIANCES, "Dependent"),
+            ("Vision", "Employee"),
+            ("Vision", "Dependent"),
+            (WELLNESS, "Employee"),
+        ),
+    ),
+)
+
+SUMMARY_COLUMNS = tuple(
+    column
+    for _, _, group_columns in SUMMARY_GROUPS
+    for column in group_columns
 )
 
 TYPE_ALIASES = {
