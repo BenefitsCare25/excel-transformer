@@ -95,6 +95,36 @@ WARN_GUIDANCE = {
 # lookup). Owned by payroll; only extended when new data runs past the template's rows.
 HELPER_COLUMNS = (16, 17, 18)
 
+# Claim types approved for the STM payroll output. Keep validation and wage-code
+# classification on the same function so a newly accepted type cannot silently
+# fall through to a different payroll code.
+CLAIM_TYPE_CONTAINS_WAGE_CODE_RULES = (
+    (('optical',), 'Optical(T)'),
+    (('childcare', 'health screening'), 'HealthS/ChildC(NT)'),
+    (
+        (
+            'dental',
+            'medical-related',
+            'outpatient gp',
+            'polyclinic',
+            'gym/fitness membership',
+            'alternative treatment (chiropractic)',
+        ),
+        'N-Medi/Dental(NT)',
+    ),
+)
+
+
+def claim_type_wage_code(claim_type):
+    """Return the STM wage code for a supported claim type, else ``None``."""
+    normalised = ' '.join(str(claim_type).strip().casefold().split())
+    if normalised.startswith('healths'):
+        return 'HealthS/ChildC(NT)'
+    for keywords, wage_code in CLAIM_TYPE_CONTAINS_WAGE_CODE_RULES:
+        if any(keyword in normalised for keyword in keywords):
+            return wage_code
+    return None
+
 
 def _require_columns(df, columns, label):
     missing = [c for c in columns if c not in df.columns]
@@ -153,13 +183,6 @@ def run(files, pay_month, outdir):
         'STMICROELECTRONICS PTE LTD TPY - G0005089': 800,
     }
 
-    # Rule 4: Claim Type -> Wage Code
-    def map_code(ct):
-        ct_l = str(ct).lower()
-        if 'optical' in ct_l:                                   return 'Optical(T)'
-        if 'childcare' in ct_l or 'health screening' in ct_l or ct_l.startswith('healths'): return 'HealthS/ChildC(NT)'
-        return 'N-Medi/Dental(NT)'   # Dental / Medical-related / Outpatient GP / Polyclinic / other medical
-
     # SEA locations -> legal entity code label
     SEA_MAP = {'Bangkok': ('Thailand', '7900TH'), 'Hanoi': ('Vietnam', '0800VN'), 'JAKARTA': ('Indonesia', '2800INDON')}
 
@@ -196,13 +219,6 @@ def run(files, pay_month, outdir):
         master = pd.DataFrame(columns=['EEID6', 'Name', 'Cost Centre', 'Entity', 'Legal Entity Code', 'Source', 'Last Updated'])
     master_cc = master.dropna(subset=['Cost Centre']).set_index('EEID6')['Cost Centre'].to_dict()
     lv_cc = lv[lv['CostCentre'].astype(str).str.match(r'[A-Z]{2}\d{4}', na=False)].set_index('EEID6')['CostCentre'].to_dict()
-
-    # ---------------- VALIDATE ----------------
-    def is_known_type(ct):
-        s = str(ct).strip().lower()
-        keywords = ['optical', 'childcare', 'health screening', 'dental', 'medical-related',
-                    'outpatient gp', 'polyclinic']
-        return any(k in s for k in keywords)
 
     # ---------------- VALIDATION ENGINE ----------------
     def run_validations(claims, listing, lv, ENTITY_LEC, FALLBACK_CC):
@@ -242,7 +258,7 @@ def run(files, pay_month, outdir):
             if r['Entity'] not in ENTITY_LEC:
                 add(E, 'UNKNOWN ENTITY', ref, e6, nm, f"No Legal Entity Code mapping for: {r['Entity']}", idx)
             # 3. Unknown claim type (would otherwise silently default)
-            if not is_known_type(r['Claim Type']):
+            if claim_type_wage_code(r['Claim Type']) is None:
                 add(E, 'UNKNOWN CLAIM TYPE', ref, e6, nm,
                     f"Unmapped claim type: {r['Claim Type']} - confirm wage code", idx)
             # 4. Amount problems
@@ -305,7 +321,7 @@ def run(files, pay_month, outdir):
     df = df.merge(lv[['EEID6', 'LastDay', 'LastClaimMonth', 'EmailDate']], on='EEID6', how='left')
 
     df['Legal Entity Code'] = df['Entity'].map(ENTITY_LEC)
-    df['Code'] = df['Claim Type'].map(map_code)
+    df['Code'] = df['Claim Type'].map(claim_type_wage_code)
     df['Amount'] = df['Payment Amt'].round(2)
     df['Termination Date'] = df['LastDay'].fillna(df['Last Day of Service'])
     df['Active/Inactive'] = df['Termination Date'].notna().map({True: 'Inactive', False: 'Active'})
