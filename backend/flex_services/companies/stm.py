@@ -95,24 +95,35 @@ WARN_GUIDANCE = {
 # lookup). Owned by payroll; only extended when new data runs past the template's rows.
 HELPER_COLUMNS = (16, 17, 18)
 
-# Claim types approved for the STM payroll output. Keep validation and wage-code
-# classification on the same function so a newly accepted type cannot silently
-# fall through to a different payroll code.
+# Claim types approved for the STM payroll output. Do not add a claim type until
+# payroll has confirmed both its Payment Item Long Text and numeric WT code.
+# Validation and classification share this table so an accepted type cannot
+# silently fall through to an unrelated payroll code.
 CLAIM_TYPE_CONTAINS_WAGE_CODE_RULES = (
     (('optical',), 'Optical(T)'),
     (('childcare', 'health screening'), 'HealthS/ChildC(NT)'),
+    (('alternative treatment (chiropractic)',), 'Chiropractic(T&C)'),
+    (('gym/fitness membership',), 'Gym/Fitness(T&C)'),
     (
         (
             'dental',
             'medical-related',
             'outpatient gp',
             'polyclinic',
-            'gym/fitness membership',
-            'alternative treatment (chiropractic)',
         ),
         'N-Medi/Dental(NT)',
     ),
 )
+
+# Authoritative additions supplied by STM payroll (new in August 2026). These
+# rows are also injected into older saved/uploaded IT15 templates at run time.
+PAYROLL_WAGE_TYPE_ROWS = (
+    (2234, 'Chiropractic(T&C)', '3 Earnings', 'Adhoc', 'Cash',
+     'Amount in SGD', 'Vendor', 'Subject to CPF + Tax'),
+    (2235, 'Gym/Fitness(T&C)', '3 Earnings', 'Adhoc', 'Cash',
+     'Amount in SGD', 'Vendor', 'Subject to CPF + Tax'),
+)
+PAYROLL_WAGE_TYPE_LOOKUP_SHEET = 'wt_notes (ref)'
 
 
 def claim_type_wage_code(claim_type):
@@ -124,6 +135,55 @@ def claim_type_wage_code(claim_type):
         if any(keyword in normalised for keyword in keywords):
             return wage_code
     return None
+
+
+def _ensure_payroll_wage_type_lookup(workbook):
+    """Add confirmed STM wage types to the IT15 lookup and return its last row."""
+    if PAYROLL_WAGE_TYPE_LOOKUP_SHEET not in workbook.sheetnames:
+        raise FlexInputError(
+            f"IT15 template: sheet '{PAYROLL_WAGE_TYPE_LOOKUP_SHEET}' not found. "
+            f"Sheets present: {', '.join(workbook.sheetnames)}"
+        )
+
+    worksheet = workbook[PAYROLL_WAGE_TYPE_LOOKUP_SHEET]
+    lookup_table = next(
+        (table for table in worksheet.tables.values() if table.ref.startswith('H4:')),
+        None,
+    )
+    if lookup_table is None:
+        raise FlexInputError(
+            "IT15 template: wage-type lookup table starting at H4 was not found on "
+            f"'{PAYROLL_WAGE_TYPE_LOOKUP_SHEET}'."
+        )
+
+    table_end_row = int(lookup_table.ref.rsplit('P', 1)[-1])
+    label_rows = {
+        str(worksheet.cell(row, 9).value).strip(): row
+        for row in range(5, table_end_row + 1)
+        if worksheet.cell(row, 9).value is not None
+    }
+    next_row = table_end_row + 1
+    style_row = max(5, table_end_row)
+
+    for wage_type_row in PAYROLL_WAGE_TYPE_ROWS:
+        wage_type_code, wage_type_label, *metadata = wage_type_row
+        row = label_rows.get(wage_type_label)
+        if row is None:
+            row = next_row
+            next_row += 1
+            for column in range(8, 17):
+                worksheet.cell(row, column)._style = copy(
+                    worksheet.cell(style_row, column)._style
+                )
+            label_rows[wage_type_label] = row
+
+        values = (wage_type_code, wage_type_label, wage_type_code, *metadata)
+        for column, value in enumerate(values, start=8):
+            worksheet.cell(row, column).value = value
+
+    lookup_end_row = max(table_end_row, next_row - 1)
+    lookup_table.ref = f'H4:P{lookup_end_row}'
+    return lookup_end_row
 
 
 def _require_columns(df, columns, label):
@@ -552,7 +612,13 @@ def run(files, pay_month, outdir):
     # claim disappear from the payroll file while still counting in the summary report.
     agg = pay.groupby(['EEID', 'Name', 'Cost Centre', 'Legal Entity Code', 'Code'],
                       as_index=False, dropna=False)['Amount'].sum()
-    code_order = {'HealthS/ChildC(NT)': 0, 'N-Medi/Dental(NT)': 1, 'Optical(T)': 2}
+    code_order = {
+        'HealthS/ChildC(NT)': 0,
+        'N-Medi/Dental(NT)': 1,
+        'Optical(T)': 2,
+        'Chiropractic(T&C)': 3,
+        'Gym/Fitness(T&C)': 4,
+    }
     agg['_c'] = agg['Code'].map(code_order)
     agg = agg.sort_values(['_c', 'EEID']).reset_index(drop=True)   # matches May file: grouped by wage item, then EEID
 
@@ -571,6 +637,7 @@ def run(files, pay_month, outdir):
             f"Sheets present: {', '.join(wb.sheetnames)}"
         )
     ws = wb[PAYROLL_TEMPLATE_SHEET]
+    wage_type_lookup_end_row = _ensure_payroll_wage_type_lookup(wb)
 
     # month of request cell L3
     ws.cell(3, 12).value = PAY_MONTH
@@ -626,7 +693,16 @@ def run(files, pay_month, outdir):
         for helper_col in HELPER_COLUMNS:
             src = ws.cell(START, helper_col)
             dst = ws.cell(r, helper_col)
-            if src.value is None or dst.value is not None:
+            if src.value is None:
+                continue
+            if helper_col == 18:
+                dst.value = (
+                    f"=VLOOKUP(H{r},'{PAYROLL_WAGE_TYPE_LOOKUP_SHEET}'!"
+                    f'$I$4:$J${wage_type_lookup_end_row},2,0)'
+                )
+                clone_style(src, dst)
+                continue
+            if dst.value is not None:
                 continue
             dst.value = (
                 Translator(src.value, origin=src.coordinate).translate_formula(dst.coordinate)
