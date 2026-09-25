@@ -48,8 +48,11 @@ original upload is not saved.
 Processing runs as a background job and shows completed pages in the tab. Keep the
 tab open while processing a batch. There is no processing time limit. If the page
 reloads, the browser resumes checking jobs that were already submitted. Completed
-results and redacted PDFs remain in the server's hospital output directory. If the
-server restarts during OCR, submit that file again.
+results and redacted PDFs remain in the server's hospital output directory until
+you click **Delete saved data**. That button removes all hospital bill runs recorded
+by this browser, including previous batches, and clears their browser records. It
+does not remove files you already downloaded. If the server restarts during OCR,
+submit that file again.
 
 Check every redacted page before sharing it. OCR can miss an identifier on an
 unusual or low-quality scan, and patient names remain visible.

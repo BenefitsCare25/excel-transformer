@@ -7,7 +7,8 @@ function readRuns() {
   try {
     const value = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || '[]');
     return Array.isArray(value) ? value.filter((run) =>
-      /^[0-9a-f]{32}$/.test(run.run_id) && typeof run.filename === 'string') : [];
+      /^[0-9a-f]{32}$/.test(run.run_id) && typeof run.filename === 'string')
+      .map((run) => ({ ...run, archived: run.archived === true })) : [];
   } catch (_) {
     return [];
   }
@@ -15,7 +16,8 @@ function readRuns() {
 
 function saveRuns(runs) {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(runs));
+    if (runs.length) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(runs));
+    else window.localStorage.removeItem(STORAGE_KEY);
   } catch (_) {
     // Processing remains available when browser storage is disabled.
   }
@@ -63,23 +65,29 @@ export default function useHospitalJobs() {
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [progress, setProgress] = useState(null);
+  const [savedRuns, setSavedRuns] = useState(readRuns);
   const controllerRef = useRef(null);
-  const savedRunsRef = useRef(readRuns());
+  const savedRunsRef = useRef(savedRuns);
+
+  const persistRuns = (runs) => {
+    savedRunsRef.current = runs;
+    setSavedRuns(runs);
+    saveRuns(runs);
+  };
 
   useEffect(() => {
-    const runs = savedRunsRef.current;
+    const runs = savedRunsRef.current.filter((run) => !run.archived);
     if (!runs.length) return () => controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
     setBusy(true);
     trackRuns(runs, controller.signal, setProgress, setResult).then((outcome) => {
       if (!outcome || controller.signal.aborted) return;
-      const completedIds = new Set(outcome.completed.map(({ run_id }) => run_id));
-      savedRunsRef.current = runs.filter(({ run_id }) => completedIds.has(run_id));
-      saveRuns(savedRunsRef.current);
       setError(outcome.failures.join(' '));
       setProgress(null);
       setBusy(false);
@@ -88,7 +96,7 @@ export default function useHospitalJobs() {
   }, []);
 
   const selectFiles = (candidates) => {
-    if (busy) return;
+    if (busy || deleting) return;
     const chosen = Array.from(candidates || []);
     if (chosen.length > 5 || chosen.some((file) =>
       !file.name.toLowerCase().endsWith('.pdf') || file.size > 25 * 1024 * 1024)) {
@@ -101,14 +109,14 @@ export default function useHospitalJobs() {
   };
 
   const process = async () => {
-    if (!files.length || busy) return;
+    if (!files.length || busy || deleting) return;
     const controller = new AbortController();
     controllerRef.current = controller;
     setBusy(true);
     setError('');
+    setNotice('');
     setResult(null);
-    savedRunsRef.current = [];
-    saveRuns([]);
+    persistRuns(savedRunsRef.current.map((run) => ({ ...run, archived: true })));
     const completed = [];
     const failures = [];
     for (const file of files) {
@@ -121,8 +129,7 @@ export default function useHospitalJobs() {
         continue;
       }
       const run = { run_id: started.data.run_id, filename: file.name };
-      savedRunsRef.current.push(run);
-      saveRuns(savedRunsRef.current);
+      persistRuns([...savedRunsRef.current, run]);
       if (controller.signal.aborted) return;
       const response = await apiService.waitForHospitalBill(run.run_id,
         (status) => setProgress({ filename: file.name, ...status }), controller.signal);
@@ -132,8 +139,6 @@ export default function useHospitalJobs() {
         setResult(combineResults(completed));
       } else {
         failures.push(`${file.name}: ${response.error}`);
-        savedRunsRef.current = savedRunsRef.current.filter(({ run_id }) => run_id !== run.run_id);
-        saveRuns(savedRunsRef.current);
       }
     }
     setError(failures.join(' '));
@@ -147,7 +152,7 @@ export default function useHospitalJobs() {
   }));
 
   const download = async (kind, runId) => {
-    if (!result || downloading) return;
+    if (!result || downloading || deleting) return;
     setDownloading(true);
     setError('');
     const filename = result.redacted.find((item) => item.run_id === runId)?.filename;
@@ -158,6 +163,31 @@ export default function useHospitalJobs() {
     setDownloading(false);
   };
 
-  return { files, busy, downloading, result, error, progress,
-    selectFiles, process, updateRow, download };
+  const deleteSavedData = async () => {
+    const runs = [...savedRunsRef.current];
+    if (!runs.length || busy || downloading || deleting) return;
+    const count = runs.length;
+    if (!window.confirm(`Delete saved extracted data and redacted PDFs for ${count} hospital bill run${count === 1 ? '' : 's'} from this server? Downloaded copies on your device will remain.`)) return;
+
+    setDeleting(true);
+    setError('');
+    setNotice('');
+    const failures = [];
+    for (const run of runs) {
+      const response = await apiService.deleteHospitalRun(run.run_id);
+      if (response.success) {
+        persistRuns(savedRunsRef.current.filter(({ run_id }) => run_id !== run.run_id));
+      } else {
+        failures.push(`${run.filename}: ${response.error}`);
+      }
+    }
+    setResult(null);
+    setFiles([]);
+    setDeleting(false);
+    if (failures.length) setError(`Some saved data could not be deleted. Retry with the button. ${failures.join(' ')}`);
+    else setNotice('Saved hospital bill data was deleted from this server. Downloaded copies on your device remain.');
+  };
+
+  return { files, busy, downloading, deleting, savedRunCount: savedRuns.length,
+    result, error, notice, progress, selectFiles, process, updateRow, download, deleteSavedData };
 }

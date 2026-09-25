@@ -60,6 +60,19 @@ def download_redacted(run_id):
                      download_name="hospital_bill_redacted.pdf")
 
 
+@hospital_blueprint.delete("/runs/<run_id>")
+def delete_hospital_run(run_id):
+    if not RUN_ID.fullmatch(run_id):
+        return jsonify(error="Invalid result ID."), 400
+    try:
+        if not jobs.delete(run_id, current_app.config["HOSPITAL_OUTPUT_DIR"]):
+            return jsonify(error="This bill is still processing. Try again when it finishes."), 409
+    except OSError:
+        current_app.logger.exception("Could not delete hospital run %s", run_id)
+        return jsonify(error="Could not delete saved bill data. Please retry."), 500
+    return "", 204
+
+
 @hospital_blueprint.post("/export")
 def export_hospital_workbook():
     from .processor import make_workbook

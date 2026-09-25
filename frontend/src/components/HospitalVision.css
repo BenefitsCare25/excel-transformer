@@ -96,6 +96,16 @@
   background: var(--muted);
 }
 
+.hospital-button.danger {
+  background: var(--error-soft);
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.hospital-button.danger:hover:not(:disabled) {
+  background: var(--muted);
+}
+
 .hospital-actions,
 .hospital-export,
 .hospital-results-head {

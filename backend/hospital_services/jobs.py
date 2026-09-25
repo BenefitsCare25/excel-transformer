@@ -66,6 +66,21 @@ def status(run_id: str, output_dir: str) -> dict | None:
         return None
 
 
+def delete(run_id: str, output_dir: str) -> bool:
+    """Remove one completed run's persisted result and redacted PDF."""
+    with _lock:
+        if _active_job == run_id:
+            return False
+
+    for path in (_result_path(run_id, output_dir),
+                 Path(output_dir) / f"{run_id}_redacted.pdf"):
+        path.unlink(missing_ok=True)
+
+    with _lock:
+        _jobs.pop(run_id, None)
+    return True
+
+
 def _process(run_id: str, source: bytes, output_dir: str, logger: logging.Logger) -> None:
     global _active_job
     target = Path(output_dir) / f"{run_id}_redacted.pdf"

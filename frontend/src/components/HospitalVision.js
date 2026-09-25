@@ -7,8 +7,8 @@ export default function HospitalVision() {
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);
   const {
-    files, busy, downloading, result, error, progress,
-    selectFiles, process, updateRow, download,
+    files, busy, downloading, deleting, savedRunCount, result, error, notice, progress,
+    selectFiles, process, updateRow, download, deleteSavedData,
   } = useHospitalJobs();
 
   const onDrop = (event) => {
@@ -34,7 +34,7 @@ export default function HospitalVision() {
             type="file"
             accept="application/pdf,.pdf"
             multiple
-            disabled={busy}
+            disabled={busy || deleting}
             className="hospital-file-input"
             onChange={(event) => {
               selectFiles(event.target.files);
@@ -42,18 +42,24 @@ export default function HospitalVision() {
             }}
             aria-label="Choose hospital bill PDFs"
           />
-          <button type="button" className="hospital-button secondary" disabled={busy} onClick={() => inputRef.current?.click()}>
+          <button type="button" className="hospital-button secondary" disabled={busy || deleting} onClick={() => inputRef.current?.click()}>
             Choose PDFs
           </button>
         </div>
         <div className="hospital-actions">
-          <button type="button" className="hospital-button primary" disabled={!files.length || busy} onClick={process}>
+          {savedRunCount > 0 && (
+            <button type="button" className="hospital-button danger" disabled={busy || downloading || deleting} onClick={deleteSavedData}>
+              {deleting ? 'Deleting saved data…' : `Delete saved data (${savedRunCount} run${savedRunCount === 1 ? '' : 's'})`}
+            </button>
+          )}
+          <button type="button" className="hospital-button primary" disabled={!files.length || busy || deleting} onClick={process}>
             {busy ? 'Processing…' : 'Process bills'}
           </button>
         </div>
       </div>
 
       {error && <div className="hospital-alert error" role="alert">{error}</div>}
+      {notice && <div className="hospital-alert" role="status">{notice}</div>}
       {busy && progress && (
         <p className="hospital-status" role="status">
           {progress.state === 'reconnecting'
@@ -68,7 +74,7 @@ export default function HospitalVision() {
         <HospitalResults
           result={result}
           busy={busy}
-          downloading={downloading}
+          downloading={downloading || deleting}
           updateRow={updateRow}
           download={download}
         />

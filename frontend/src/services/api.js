@@ -579,6 +579,18 @@ class ApiService {
     }
   }
 
+  async deleteHospitalRun(runId) {
+    try {
+      await this.api.delete(`/api/hospital/runs/${runId}`);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Could not delete saved bill data. Please retry.',
+      };
+    }
+  }
+
   async exportHospitalWorkbook(rows) {
     try {
       const response = await this.api.post('/api/hospital/export', { rows }, {
