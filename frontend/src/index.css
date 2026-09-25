@@ -2,24 +2,94 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --background: #f6f8fc;
+  --foreground: #172238;
+  --card: #ffffff;
+  --muted: #f1f5fa;
+  --muted-foreground: #59667a;
+  --border: #d8e0eb;
+  --accent: #235dba;
+  --accent-hover: #174b9c;
+  --accent-foreground: #ffffff;
+  --accent-soft: #e8f0ff;
+  --focus-ring: #78a9ff;
+  --error: #a4272f;
+  --error-soft: #fff0f0;
+  --success: #16803e;
+  --success-hover: #116532;
+  --shadow: rgba(23, 34, 56, .08);
+}
+
+.app-tab {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: .5rem;
+  color: var(--foreground);
+  font-weight: 600;
+  padding: .5rem 1.1rem;
+  transition: background .15s ease;
+}
+
+.app-tab:hover { background: var(--muted); }
+.app-tab.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-foreground);
+}
+.app-tab:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.app-shell { background: var(--background); }
+.app-title { color: var(--foreground); }
+
+.queue-button {
+  border: 1px solid var(--border);
+  border-radius: .4rem;
+  font-size: .875rem;
+  font-weight: 600;
+  padding: .5rem 1rem;
+}
+.queue-button:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+.queue-button:disabled { opacity: .5; }
+.queue-button.neutral { background: var(--muted); color: var(--foreground); }
+.queue-button.neutral:hover { background: var(--accent-soft); }
+.queue-button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-foreground); }
+.queue-button.primary:hover { background: var(--accent-hover); }
+.queue-button.success { background: var(--success); border-color: var(--success); color: var(--accent-foreground); }
+.queue-button.success:hover { background: var(--success-hover); }
+
 @layer components {
   .btn-primary {
-    @apply px-6 py-3 bg-blue-600 text-white font-medium rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors duration-200;
+    @apply px-6 py-3 font-medium rounded-lg shadow-md focus:ring-2 focus:ring-offset-2 transition-colors duration-200;
+    background: var(--accent);
+    color: var(--accent-foreground);
   }
+  .btn-primary:hover { background: var(--accent-hover); }
   
   .btn-secondary {
-    @apply px-6 py-3 bg-gray-200 text-gray-800 font-medium rounded-lg shadow-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 transition-colors duration-200;
+    @apply px-6 py-3 font-medium rounded-lg shadow-md focus:ring-2 focus:ring-offset-2 transition-colors duration-200;
+    background: var(--muted);
+    color: var(--foreground);
   }
+  .btn-secondary:hover { background: var(--accent-soft); }
   
   .card {
-    @apply bg-white rounded-lg shadow-lg border border-gray-200 p-6;
+    @apply rounded-lg shadow-lg border p-6;
+    background: var(--card);
+    border-color: var(--border);
   }
   
   .upload-area {
-    @apply border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer transition-colors duration-200 hover:border-blue-400 hover:bg-blue-50;
+    @apply border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors duration-200;
+    border-color: var(--border);
   }
+  .upload-area:hover { border-color: var(--accent); background: var(--accent-soft); }
   
   .upload-area.dragover {
-    @apply border-blue-500 bg-blue-100;
+    border-color: var(--accent);
+    background: var(--accent-soft);
   }
 }

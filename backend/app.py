@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
+from hospital_services.routes import hospital_blueprint
 import pandas as pd
 import os
 import sys
@@ -116,11 +117,13 @@ load_dotenv()
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
+app.register_blueprint(hospital_blueprint)
 
 
 # Configuration
 UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'uploads')
 PROCESSED_FOLDER = os.getenv('PROCESSED_FOLDER', 'processed')
+app.config['HOSPITAL_OUTPUT_DIR'] = PROCESSED_FOLDER
 
 # Postal code master file paths (in order of preference)
 POSTAL_CODE_PATHS = [

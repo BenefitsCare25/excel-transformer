@@ -528,6 +528,61 @@ class ApiService {
       };
     }
   }
+
+  async processHospitalBill(file) {
+    const data = new FormData();
+    data.append('file', file);
+    try {
+      const response = await this.api.post('/api/hospital/process', data, {
+        timeout: 600000,
+      });
+      return { success: true, data: response.data };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Could not process the PDF',
+      };
+    }
+  }
+
+  async downloadHospitalPdf(runId, sourceName) {
+    try {
+      const response = await this.api.get(`/api/hospital/redacted/${runId}`, { responseType: 'blob' });
+      const baseName = (sourceName || 'hospital_bill.pdf').replace(/\.pdf$/i, '');
+      this.saveBlob(response.data, `${baseName}_redacted.pdf`);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: 'Redacted PDF is no longer available' };
+    }
+  }
+
+  async exportHospitalWorkbook(rows) {
+    try {
+      const response = await this.api.post('/api/hospital/export', { rows }, { responseType: 'blob' });
+      this.saveBlob(response.data, 'hospital_bills.xlsx');
+      return { success: true };
+    } catch (error) {
+      let message = 'Could not generate the Excel file';
+      if (error.response?.data instanceof Blob) {
+        try {
+          const details = JSON.parse(await error.response.data.text());
+          message = details.error || message;
+        } catch (_) { /* Keep the fallback message. */ }
+      }
+      return { success: false, error: message };
+    }
+  }
+
+  saveBlob(data, filename) {
+    const url = window.URL.createObjectURL(new Blob([data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 10000);
+  }
 }
 
 const apiServiceInstance = new ApiService();

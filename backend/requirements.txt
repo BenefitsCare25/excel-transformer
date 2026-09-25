@@ -12,3 +12,6 @@ requests==2.34.2
 anthropic>=0.40.0
 openai>=1.50.0
 google-genai>=0.5.0
+PyMuPDF>=1.26.0
+rapidocr==3.9.2
+onnxruntime>=1.22.0

@@ -35,6 +35,19 @@ npm start
 
 ## File Requirements
 
+### Hospital Bill OCR / Vision
+
+Open **OCR / Vision** and choose up to five scanned hospital bill PDFs. Each file can
+be up to 25 MB and 40 pages. The server blanks NRIC and FIN-like identifiers in
+the page images before reading bill data. Review the extracted rows, edit any OCR
+mistakes, then download one Excel workbook and each redacted PDF. The workbook
+uses the eight columns in the supplied billing template; cash payable is an Excel
+formula. Redacted PDFs are eligible for cleanup after 15 minutes. The original
+upload is not saved.
+
+Check every redacted page before sharing it. OCR can miss an identifier on an
+unusual or low-quality scan, and patient names remain visible.
+
 ### LGI Flex Reports
 
 In **Flex Report**, select **Lion Global Investors (LGI)** and upload the employee

@@ -1,0 +1,256 @@
+.hospital-vision {
+  color: var(--foreground);
+}
+
+.hospital-intro {
+  margin-bottom: 1.5rem;
+}
+
+.hospital-eyebrow {
+  color: var(--accent);
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+
+.hospital-intro h2 {
+  font-size: clamp(1.8rem, 3vw, 2.5rem);
+  font-weight: 750;
+  line-height: 1.15;
+  margin: .4rem 0 .6rem;
+}
+
+.hospital-intro p,
+.hospital-results-head p,
+.hospital-actions p,
+.hospital-export span {
+  color: var(--muted-foreground);
+  font-size: .92rem;
+}
+
+.hospital-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: 0 10px 30px var(--shadow);
+  padding: 1.5rem;
+}
+
+.hospital-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin-bottom: 1.25rem;
+}
+
+.hospital-steps span {
+  background: var(--muted);
+  color: var(--muted-foreground);
+  border-radius: 999px;
+  font-size: .74rem;
+  font-weight: 650;
+  padding: .38rem .7rem;
+}
+
+.hospital-drop {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: .55rem;
+  padding: 2rem 1rem;
+  border: 2px dashed var(--border);
+  border-radius: .85rem;
+  background: var(--muted);
+  text-align: center;
+}
+
+.hospital-drop.is-dragging {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.hospital-drop span {
+  color: var(--muted-foreground);
+  font-size: .82rem;
+}
+
+.hospital-file-icon {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: .75rem;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: .8rem;
+  font-weight: 800;
+}
+
+.hospital-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.hospital-button {
+  border: 1px solid var(--border);
+  border-radius: .6rem;
+  cursor: pointer;
+  font-size: .86rem;
+  font-weight: 700;
+  padding: .7rem 1rem;
+  transition: background .15s ease;
+}
+
+.hospital-button:focus-visible,
+.hospital-table input:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.hospital-button:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+.hospital-button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.hospital-button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.hospital-button.secondary {
+  background: var(--card);
+  color: var(--foreground);
+}
+
+.hospital-button.secondary:hover:not(:disabled) {
+  background: var(--muted);
+}
+
+.hospital-actions,
+.hospital-export,
+.hospital-results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.hospital-actions {
+  margin-top: 1.2rem;
+}
+
+.hospital-actions p {
+  max-width: 33rem;
+}
+
+.hospital-results {
+  margin-top: 1.25rem;
+}
+
+.hospital-results h3 {
+  font-size: 1.35rem;
+  font-weight: 750;
+  margin: .25rem 0;
+}
+
+.hospital-pdf-downloads {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: .5rem;
+}
+
+.hospital-alert {
+  background: var(--accent-soft);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: .6rem;
+  margin-top: 1rem;
+  padding: .8rem 1rem;
+  font-size: .84rem;
+}
+
+.hospital-alert.error {
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.hospital-alert ul {
+  margin: .35rem 0 0 1.25rem;
+  list-style: disc;
+}
+
+.hospital-status {
+  color: var(--muted-foreground);
+  margin-top: .8rem;
+}
+
+.hospital-table-wrap {
+  overflow-x: auto;
+  margin-top: 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: .7rem;
+}
+
+.hospital-table {
+  width: 100%;
+  min-width: 1050px;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.hospital-table th,
+.hospital-table td {
+  padding: .7rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.hospital-table th {
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: .75rem;
+  white-space: nowrap;
+}
+
+.hospital-table td {
+  font-size: .82rem;
+}
+
+.hospital-table input {
+  width: 100%;
+  min-width: 6.5rem;
+  background: var(--card);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: .35rem;
+  padding: .45rem;
+}
+
+.hospital-table td:first-child input,
+.hospital-table td:nth-child(3) input {
+  min-width: 9rem;
+}
+
+.hospital-cash {
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.hospital-export {
+  margin-top: 1.2rem;
+}
+
+@media (max-width: 640px) {
+  .hospital-panel { padding: 1rem; }
+  .hospital-actions, .hospital-export, .hospital-results-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

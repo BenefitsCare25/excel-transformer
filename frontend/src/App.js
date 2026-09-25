@@ -6,11 +6,22 @@ import MediacorpProcessor from './components/MediacorpProcessor';
 import GPPanelComparison from './components/GPPanelComparison';
 import RenewalComparison from './components/RenewalComparison';
 import FlexReport from './components/FlexReport';
+import HospitalVision from './components/HospitalVision';
 import apiService from './services/api';
 import './index.css';
 
+const tabs = [
+  ['transformer', 'Excel Transformer'],
+  ['matcher', 'Clinic Matcher'],
+  ['mediacorp', 'Mediacorp ADC'],
+  ['gppanel', 'GP Panel'],
+  ['renewal', 'Renewal Comparison'],
+  ['flex', 'Flex Report'],
+  ['hospital', 'OCR / Vision'],
+];
+
 function App() {
-  const [activeTab, setActiveTab] = useState('transformer'); // 'transformer', 'matcher', 'mediacorp', 'gppanel', 'renewal', 'flex'
+  const [activeTab, setActiveTab] = useState('transformer');
   const [processingStatus, setProcessingStatus] = useState('idle');
   const [result, setResult] = useState(null);
   const [backendHealth, setBackendHealth] = useState(null);
@@ -159,77 +170,28 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+    <div className="min-h-screen app-shell">
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <header className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-800 mb-4">
+          <h1 className="text-4xl font-bold app-title mb-4">
             Excel Template Transformer
           </h1>
 
           {/* Tab Navigation */}
-          <div className="flex flex-wrap justify-center gap-2 mt-6">
-            <button
-              onClick={() => setActiveTab('transformer')}
-              className={`px-6 py-2 font-medium rounded-lg transition-colors ${
-                activeTab === 'transformer'
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
-              }`}
-            >
-              Excel Transformer
-            </button>
-            <button
-              onClick={() => setActiveTab('matcher')}
-              className={`px-6 py-2 font-medium rounded-lg transition-colors ${
-                activeTab === 'matcher'
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
-              }`}
-            >
-              Clinic Matcher
-            </button>
-            <button
-              onClick={() => setActiveTab('mediacorp')}
-              className={`px-6 py-2 font-medium rounded-lg transition-colors ${
-                activeTab === 'mediacorp'
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
-              }`}
-            >
-              Mediacorp ADC
-            </button>
-            <button
-              onClick={() => setActiveTab('gppanel')}
-              className={`px-6 py-2 font-medium rounded-lg transition-colors ${
-                activeTab === 'gppanel'
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
-              }`}
-            >
-              GP Panel
-            </button>
-            <button
-              onClick={() => setActiveTab('renewal')}
-              className={`px-6 py-2 font-medium rounded-lg transition-colors ${
-                activeTab === 'renewal'
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
-              }`}
-            >
-              Renewal Comparison
-            </button>
-            <button
-              onClick={() => setActiveTab('flex')}
-              className={`px-6 py-2 font-medium rounded-lg transition-colors ${
-                activeTab === 'flex'
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
-              }`}
-            >
-              Flex Report
-            </button>
-          </div>
+          <nav className="flex flex-wrap justify-center gap-2 mt-6" aria-label="Tools">
+            {tabs.map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setActiveTab(key)}
+                aria-current={activeTab === key ? 'page' : undefined}
+                className={`app-tab ${activeTab === key ? 'is-active' : ''}`}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
         </header>
 
         {/* Backend Status Indicator */}
@@ -243,7 +205,7 @@ function App() {
         </div>
 
         {/* Main Content */}
-        <div className="max-w-4xl mx-auto">
+        <div className={`${activeTab === 'hospital' ? 'max-w-7xl' : 'max-w-4xl'} mx-auto`}>
           {backendHealth === false ? (
             <div className="card">
               <div className="text-center py-8">
@@ -290,21 +252,21 @@ function App() {
                       <button
                         onClick={handleClearQueue}
                         disabled={processingStatus === 'processing'}
-                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 disabled:opacity-50"
+                        className="queue-button neutral"
                       >
                         Clear All
                       </button>
                       <button
                         onClick={handleProcessFiles}
                         disabled={processingStatus === 'processing' || fileQueue.every(f => f.status !== 'pending')}
-                        className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                        className="queue-button primary"
                       >
                         {processingStatus === 'processing' ? 'Processing...' : 'Process Files'}
                       </button>
                       {fileQueue.some(f => f.status === 'completed') && (
                         <button
                           onClick={handleDownloadAllBatch}
-                          className="px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                          className="queue-button success"
                         >
                           Download All
                         </button>
@@ -486,6 +448,8 @@ function App() {
               {/* Flex Report Component */}
               <FlexReport />
             </>
+          ) : activeTab === 'hospital' ? (
+            <HospitalVision />
           ) : (
             <>
               {/* Clinic Matcher Component */}
