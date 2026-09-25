@@ -546,7 +546,7 @@ class ApiService {
   }
 
   async waitForHospitalBill(runId, onProgress) {
-    const deadline = Date.now() + 30 * 60 * 1000;
+    const deadline = Date.now() + 45 * 60 * 1000;
     let connectionFailures = 0;
     while (Date.now() < deadline) {
       try {
@@ -566,7 +566,7 @@ class ApiService {
       }
       await new Promise((resolve) => window.setTimeout(resolve, 2000));
     }
-    return { success: false, error: 'Processing exceeded 30 minutes. Please try a smaller PDF.' };
+    return { success: false, error: 'Processing exceeded 45 minutes. Please try a smaller PDF.' };
   }
 
   async downloadHospitalPdf(runId, sourceName) {

@@ -27,11 +27,27 @@ function latestBillRows(rows) {
     a.bill_date.localeCompare(b.bill_date) || a.bill_ref.localeCompare(b.bill_ref));
 }
 
+function combineResults(completed) {
+  const allRows = completed.flatMap((item) => item.rows);
+  const rows = latestBillRows(allRows);
+  const warnings = completed.flatMap((item) => item.warnings);
+  if (rows.length < allRows.length) {
+    warnings.push('Repeated bill references were consolidated; the latest bill date was kept.');
+  }
+  return {
+    rows,
+    warnings,
+    redactions: completed.reduce((sum, item) => sum + item.redactions, 0),
+    redacted: completed.map(({ run_id, filename }) => ({ run_id, filename })),
+  };
+}
+
 export default function HospitalVision() {
   const inputRef = useRef(null);
   const [files, setFiles] = useState([]);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(null);
@@ -55,6 +71,7 @@ export default function HospitalVision() {
     setBusy(true);
     setError('');
     setProgress(null);
+    setResult(null);
     const completed = [];
     const failures = [];
     for (const file of files) {
@@ -66,20 +83,10 @@ export default function HospitalVision() {
       }
       const response = await apiService.waitForHospitalBill(started.data.run_id,
         (status) => setProgress({ filename: file.name, ...status }));
-      if (response.success) completed.push({ ...response.data, filename: file.name });
-      else failures.push(`${file.name}: ${response.error}`);
-    }
-    if (completed.length) {
-      const allRows = completed.flatMap((item) => item.rows);
-      const rows = latestBillRows(allRows);
-      const warnings = completed.flatMap((item) => item.warnings);
-      if (rows.length < allRows.length) warnings.push('Repeated bill references were consolidated; the latest bill date was kept.');
-      setResult({
-        rows,
-        warnings,
-        redactions: completed.reduce((sum, item) => sum + item.redactions, 0),
-        redacted: completed.map(({ run_id, filename }) => ({ run_id, filename })),
-      });
+      if (response.success) {
+        completed.push({ ...response.data, filename: file.name });
+        setResult(combineResults(completed));
+      } else failures.push(`${file.name}: ${response.error}`);
     }
     if (failures.length) setError(failures.join(' '));
     setBusy(false);
@@ -94,14 +101,14 @@ export default function HospitalVision() {
   };
 
   const download = async (kind, runId) => {
-    if (!result || busy) return;
-    setBusy(true);
+    if (!result || downloading) return;
+    setDownloading(true);
     setError('');
     const response = kind === 'pdf'
       ? await apiService.downloadHospitalPdf(runId, result.redacted.find((item) => item.run_id === runId)?.filename)
       : await apiService.exportHospitalWorkbook(result.rows);
     if (!response.success) setError(response.error);
-    setBusy(false);
+    setDownloading(false);
   };
 
   return (
@@ -128,7 +135,7 @@ export default function HospitalVision() {
         >
           <div className="hospital-file-icon" aria-hidden="true">PDF</div>
           <strong>{files.length ? `${files.length} PDF${files.length === 1 ? '' : 's'} selected` : 'Drop hospital bills here'}</strong>
-          <span>{files.length ? files.map((item) => item.name).join(' · ') : 'Up to 5 PDFs · 25 MB and 40 pages per file'}</span>
+          <span>{files.length ? files.map((item) => item.name).join(' · ') : 'Up to 5 PDFs · 25 MB and 100 pages per file'}</span>
           <input
             ref={inputRef}
             type="file"
@@ -149,7 +156,7 @@ export default function HospitalVision() {
         <div className="hospital-actions">
           <p>Raw pages are processed on this server without a third-party OCR provider. Redacted PDFs are scheduled for cleanup after 15 minutes.</p>
           <button type="button" className="hospital-button primary" disabled={!files.length || busy} onClick={process}>
-            {busy && !result ? 'Redacting and reading…' : 'Process bills'}
+            {busy ? 'Redacting and reading…' : 'Process bills'}
           </button>
         </div>
       </div>
@@ -167,13 +174,13 @@ export default function HospitalVision() {
         <div className="hospital-panel hospital-results">
           <div className="hospital-results-head">
             <div>
-              <span className="hospital-eyebrow">READY FOR REVIEW</span>
-              <h3>{result.rows.length} bill{result.rows.length === 1 ? '' : 's'} found</h3>
+              <span className="hospital-eyebrow">{busy ? 'PROCESSING / REVIEW' : 'READY FOR REVIEW'}</span>
+              <h3>{result.rows.length} bill{result.rows.length === 1 ? '' : 's'} found{busy ? ' so far' : ''}</h3>
               <p>{result.redactions} identifier location{result.redactions === 1 ? '' : 's'} blanked. Check all values against the redacted PDF before exporting.</p>
             </div>
             <div className="hospital-pdf-downloads">
               {result.redacted.map(({ run_id, filename }) => (
-                <button key={run_id} type="button" className="hospital-button secondary" disabled={busy} onClick={() => download('pdf', run_id)}>
+                <button key={run_id} type="button" className="hospital-button secondary" disabled={downloading} onClick={() => download('pdf', run_id)}>
                   Redacted PDF · {filename}
                 </button>
               ))}
@@ -211,7 +218,7 @@ export default function HospitalVision() {
           </div>
           <div className="hospital-export">
             <span>Excel follows the eight columns in your template, with a cash payable formula per row.</span>
-            <button type="button" className="hospital-button primary" disabled={busy} onClick={() => download('excel')}>
+            <button type="button" className="hospital-button primary" disabled={busy || downloading} onClick={() => download('excel')}>
               Download Excel
             </button>
           </div>

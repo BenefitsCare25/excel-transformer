@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from io import BytesIO
+import gc
 import math
 import re
 from typing import Callable
@@ -27,7 +28,7 @@ DATE_PATTERN = re.compile(r"(?<!\d)(\d{1,2})\s+([A-Z]{3})\s+(\d{4})\b", re.I)
 MONEY_PATTERN = re.compile(r"^-?\d{1,3}(?:,\d{3})*(?:\.\d{2})$")
 REF_PATTERN = re.compile(r"^(?:\d{8}[A-Z]|H\d{8,}[A-Z0-9]*)$", re.I)
 HRN_PATTERN = re.compile(r"\b[A-Z]\d{3,}[A-Z0-9]{6,}\b", re.I)
-MAX_PAGES = 40
+MAX_PAGES = 100
 MAX_BYTES = 25 * 1024 * 1024
 
 
@@ -160,8 +161,12 @@ def process_pdf(
         document = fitz.open(stream=source, filetype="pdf")
     except Exception as exc:
         raise ValueError("Could not open the PDF.") from exc
-    if document.is_encrypted or not 1 <= len(document) <= MAX_PAGES:
-        raise ValueError("PDF must be unencrypted and contain 1 to 40 pages.")
+    if document.is_encrypted:
+        raise ValueError("PDF is encrypted. Upload an unencrypted copy.")
+    if not len(document):
+        raise ValueError("PDF contains no pages.")
+    if len(document) > MAX_PAGES:
+        raise ValueError(f"PDF has {len(document)} pages; the limit is {MAX_PAGES} pages per file.")
 
     engine = RapidOCR(params={
         "EngineConfig.onnxruntime.intra_op_num_threads": 2,
@@ -200,6 +205,7 @@ def process_pdf(
         output_page.insert_image(output_page.rect, stream=png.tobytes())
         if on_page:
             on_page(page_number, len(document))
+        gc.collect()
     document.close()
     rows, warnings = _merge_pages(extracted)
     if unreadable:

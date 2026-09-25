@@ -38,7 +38,7 @@ npm start
 ### Hospital Bill OCR / Vision
 
 Open **OCR / Vision** and choose up to five scanned hospital bill PDFs. Each file can
-be up to 25 MB and 40 pages. The server blanks NRIC and FIN-like identifiers in
+be up to 25 MB and 100 pages. The server blanks NRIC and FIN-like identifiers in
 the page images before reading bill data. Review the extracted rows, edit any OCR
 mistakes, then download one Excel workbook and each redacted PDF. The workbook
 uses the eight columns in the supplied billing template; cash payable is an Excel
@@ -46,8 +46,10 @@ formula. Redacted PDFs are eligible for cleanup after 15 minutes. The original
 upload is not saved.
 
 Processing runs as a background job and shows completed pages in the tab. Keep the
-tab open until the rows appear, then download the redacted PDF before its 15-minute
-retention period ends. If the server restarts during OCR, submit the file again.
+tab open; results from each file appear as soon as that file finishes. Download each
+redacted PDF promptly, including while later files are processing, before its
+15-minute retention period ends. If the server restarts during OCR, submit the file
+again.
 
 Check every redacted page before sharing it. OCR can miss an identifier on an
 unusual or low-quality scan, and patient names remain visible.
