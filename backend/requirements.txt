@@ -15,3 +15,4 @@ google-genai>=0.5.0
 PyMuPDF>=1.26.0
 rapidocr==3.9.2
 onnxruntime>=1.22.0
+opencv-python-headless>=4.10.0

@@ -34,6 +34,9 @@ jobs:
           python -m venv antenv
           source antenv/bin/activate
           pip install -r requirements.txt
+          pip uninstall -y opencv-python
+          pip install --no-deps --force-reinstall 'opencv-python-headless>=4.10.0'
+          python -c 'import cv2; print(cv2.__version__)'
 
       - name: Run backend tests
         run: |

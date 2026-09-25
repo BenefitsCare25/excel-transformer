@@ -7,9 +7,6 @@ from uuid import uuid4
 
 from flask import Blueprint, current_app, jsonify, request, send_file
 
-from .processor import MAX_BYTES, make_workbook, process_pdf
-
-
 hospital_blueprint = Blueprint("hospital", __name__, url_prefix="/api/hospital")
 RUN_ID = re.compile(r"^[0-9a-f]{32}$")
 
@@ -23,6 +20,8 @@ def prevent_cache(response):
 
 @hospital_blueprint.post("/process")
 def process_hospital_bill():
+    from .processor import MAX_BYTES, process_pdf
+
     uploaded = request.files.get("file")
     if not uploaded or not uploaded.filename or not uploaded.filename.lower().endswith(".pdf"):
         return jsonify(error="Select a PDF hospital bill."), 400
@@ -58,6 +57,8 @@ def download_redacted(run_id):
 
 @hospital_blueprint.post("/export")
 def export_hospital_workbook():
+    from .processor import make_workbook
+
     payload = request.get_json(silent=True) or {}
     try:
         output = make_workbook(payload.get("rows"))

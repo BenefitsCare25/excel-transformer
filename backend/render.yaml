@@ -5,6 +5,8 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install --no-cache-dir -r requirements.txt
+      pip uninstall -y opencv-python
+      pip install --no-cache-dir --no-deps --force-reinstall 'opencv-python-headless>=4.10.0'
     startCommand: gunicorn --config gunicorn.conf.py app:app --check-config
     plan: free
     envVars:
