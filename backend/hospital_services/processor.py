@@ -16,6 +16,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from rapidocr import RapidOCR
 
+from .fields import REF_PATTERN, extract_page
+
 
 HEADERS = (
     "Bill Ref No.", "Bill Date", "HRN", "Visit Date",
@@ -24,10 +26,6 @@ HEADERS = (
 )
 ID_PATTERN = re.compile(r"(?<![A-Z0-9])[STFGM][0-9X*]{7}[A-Z0-9X*](?![A-Z0-9])", re.I)
 MASKED_ID_PATTERN = re.compile(r"(?<![A-Z0-9])[A-Z0-9]*[X*]{3,}[A-Z0-9]*(?![A-Z0-9])", re.I)
-DATE_PATTERN = re.compile(r"(?<!\d)(\d{1,2})\s+([A-Z]{3})\s+(\d{4})\b", re.I)
-MONEY_PATTERN = re.compile(r"^-?\d{1,3}(?:,\d{3})*(?:\.\d{2})$")
-REF_PATTERN = re.compile(r"^(?:\d{8}[A-Z]|H\d{8,}[A-Z0-9]*)$", re.I)
-HRN_PATTERN = re.compile(r"\b[A-Z]\d{3,}[A-Z0-9]{6,}\b", re.I)
 MAX_PAGES = 100
 MAX_BYTES = 25 * 1024 * 1024
 
@@ -63,60 +61,9 @@ def _redact_image(image: np.ndarray, lines: list[tuple[str, np.ndarray]]) -> int
     return count
 
 
-def _date(text: str):
-    match = DATE_PATTERN.search(text)
-    if not match:
-        return None
-    try:
-        return datetime.strptime(" ".join(match.groups()).upper(), "%d %b %Y").date()
-    except ValueError:
-        return None
-
-
-def _nearby_date(texts: list[str], label: str):
-    for index, text in enumerate(texts):
-        if label in text.upper():
-            for candidate in texts[index:index + 7]:
-                found = _date(candidate)
-                if found:
-                    return found
-    return None
-
-
-def _money_near(texts: list[str], label: str):
-    for index, text in enumerate(texts):
-        if label not in text.upper():
-            continue
-        for candidate in texts[index + 1:index + 5]:
-            value = candidate.strip().replace(" ", "").replace("$", "")
-            if MONEY_PATTERN.fullmatch(value):
-                return abs(float(value.replace(",", "")))
-    return None
-
-
-def _extract_page(lines: list[tuple[str, np.ndarray]], page_number: int) -> dict | None:
-    texts = [text for text, _ in lines]
-    ref = next((text.upper() for text in texts[:30] if REF_PATTERN.fullmatch(text)), None)
-    bill_date = _nearby_date(texts[:30], "BILL DATE")
-    if not ref or not bill_date:
-        return None
-    visit_date = _nearby_date(texts[:35], "VISIT DATE") or _nearby_date(texts[:35], "ADMISSION DATE")
-    hrn = next((match.group() for text in texts[:45] for match in HRN_PATTERN.finditer(text)
-                if match.group().upper() != ref and not _identifier(match.group())), None)
-    return {
-        "bill_ref": ref,
-        "bill_date": bill_date.isoformat(),
-        "hrn": hrn or "",
-        "visit_date": visit_date.isoformat() if visit_date else "",
-        "total": _money_near(texts, "TOTAL AMOUNT (AFTER GOVT SUBSIDY)"),
-        "medishield": _money_near(texts, "PAYABLE BY MEDISHIELD LIFE"),
-        "medisave": _money_near(texts, "PAYABLE BY MEDISAVE"),
-        "pages": [page_number],
-    }
-
-
 def _merge_pages(pages: list[dict]) -> tuple[list[dict], list[str]]:
     groups = {}
+    warnings = []
     for page in pages:
         key = (page["bill_ref"], page["bill_date"])
         if key not in groups:
@@ -124,29 +71,43 @@ def _merge_pages(pages: list[dict]) -> tuple[list[dict], list[str]]:
             continue
         entry = groups[key]
         entry["pages"].extend(page["pages"])
-        for field in ("hrn", "visit_date", "total", "medishield", "medisave"):
+        for field in ("hrn", "visit_date", "total", "medishield", "medisave",
+                      "other_schemes", "cash"):
             if entry[field] in (None, "") and page[field] not in (None, ""):
                 entry[field] = page[field]
+            elif (entry[field] not in (None, "") and page[field] not in (None, "")
+                  and entry[field] != page[field]):
+                if (field == "hrn" and entry[field][:-1] == page[field][:-1]
+                        and {entry[field][-1], page[field][-1]} == {"1", "I"}):
+                    entry[field] = entry[field][:-1] + "I"
+                    warnings.append(f'{page["bill_ref"]}: HRN ends in I/1 across pages; I kept for review.')
+                    continue
+                warnings.append(f'{page["bill_ref"]}: conflicting {field} across pages; review the source.')
 
     latest = {}
-    warnings = []
     for entry in groups.values():
         previous = latest.get(entry["bill_ref"])
         if not previous or entry["bill_date"] > previous["bill_date"]:
             latest[entry["bill_ref"]] = entry
         if previous and entry["bill_date"] != previous["bill_date"]:
-            warnings.append(f'{entry["bill_ref"]}: multiple bill dates found; latest version kept.')
+            warnings.append(f'{entry["bill_ref"]}: conflicting bill dates across pages; latest kept for review.')
     rows = sorted(latest.values(), key=lambda row: (row["bill_date"], row["bill_ref"]))
     for row in rows:
         if not row["hrn"]:
             row["hrn"] = "-"
-        for field in ("medishield", "medisave"):
+        for field in ("medishield", "medisave", "other_schemes"):
             if row[field] is None:
                 row[field] = 0.0
         if row["total"] is None:
             warnings.append(f'{row["bill_ref"]}: total amount needs review.')
         if not row["visit_date"]:
             warnings.append(f'{row["bill_ref"]}: visit date needs review.')
+        if row["cash"] is None:
+            warnings.append(f'{row["bill_ref"]}: cash payable needs review.')
+        if row["total"] is not None and row["cash"] is not None:
+            paid = row["medishield"] + row["medisave"] + row["other_schemes"] + row["cash"]
+            if abs(round(paid - row["total"], 2)) > 0.01:
+                warnings.append(f'{row["bill_ref"]}: payment amounts do not reconcile to total.')
     return rows, warnings
 
 
@@ -193,7 +154,7 @@ def process_pdf(
         clean_lines = _lines(image, engine)
         if any(_identifier(text) for text, _ in clean_lines):
             raise ValueError(f"Page {page_number}: an identifier remains after redaction.")
-        data = _extract_page(clean_lines, page_number)
+        data = extract_page(clean_lines, page_number)
         if data:
             extracted.append(data)
         else:
@@ -245,14 +206,15 @@ def make_workbook(rows: list[dict]) -> bytes:
             total = float(row["total"])
             medishield = float(row.get("medishield") or 0)
             medisave = float(row.get("medisave") or 0)
+            cash = float(row["cash"])
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"Row {index}: check dates and amounts.") from exc
-        if min(total, medishield, medisave) < 0:
+        if min(total, medishield, medisave, cash) < 0:
             raise ValueError(f"Row {index}: amounts must be zero or greater.")
-        if not all(math.isfinite(value) for value in (total, medishield, medisave)):
+        if not all(math.isfinite(value) for value in (total, medishield, medisave, cash)):
             raise ValueError(f"Row {index}: amounts must be finite numbers.")
         sheet.append((ref, bill_date, hrn, visit_date,
-                      total, medishield, medisave, f"=E{index}-F{index}-G{index}"))
+                      total, medishield, medisave, cash))
         for col in ("B", "D"):
             sheet[f"{col}{index}"].number_format = "dd mmm yyyy"
         for col in ("E", "F", "G", "H"):

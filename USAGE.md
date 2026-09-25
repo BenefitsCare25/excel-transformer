@@ -41,8 +41,9 @@ Open **Hospital Bill** and choose up to five scanned hospital bill PDFs. Each fi
 be up to 25 MB and 100 pages. The server blanks NRIC and FIN-like identifiers in
 the page images before reading bill data. Review the extracted rows, edit any OCR
 mistakes, then download one Excel workbook and each redacted PDF. The workbook
-uses the eight columns in the supplied billing template; cash payable is an Excel
-formula. The original upload is not saved.
+uses the eight columns in the supplied billing template; cash payable comes from
+the invoice's printed value so other payment schemes do not appear as cash. The
+original upload is not saved.
 
 Processing runs as a background job and shows completed pages in the tab. Keep the
 tab open while processing a batch. There is no processing time limit. If the page

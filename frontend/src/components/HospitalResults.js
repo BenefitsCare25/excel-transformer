@@ -8,12 +8,8 @@ const columns = [
   ['total', 'Total After Subsidy', 'number'],
   ['medishield', 'MediShield Life', 'number'],
   ['medisave', 'MediSave', 'number'],
+  ['cash', 'Cash Payable', 'number'],
 ];
-
-function cashPayable(row) {
-  if (row.total === '' || row.total == null) return '—';
-  return (Number(row.total) - Number(row.medishield || 0) - Number(row.medisave || 0)).toFixed(2);
-}
 
 export default function HospitalResults({ result, busy, downloading, updateRow, download }) {
   return (
@@ -39,12 +35,12 @@ export default function HospitalResults({ result, busy, downloading, updateRow, 
       )}
       <div className="hospital-table-wrap">
         <table className="hospital-table">
-          <thead><tr>{columns.map(([, label]) => <th key={label} scope="col">{label}</th>)}<th scope="col">Cash Payable</th></tr></thead>
+          <thead><tr>{columns.map(([, label]) => <th key={label} scope="col">{label}</th>)}</tr></thead>
           <tbody>
             {result.rows.map((row, index) => (
               <tr key={`${row.bill_ref}-${index}`}>
                 {columns.map(([key, label, type]) => (
-                  <td key={key}>
+                  <td key={key} className={key === 'cash' ? 'hospital-cash' : undefined}>
                     <input
                       aria-label={`${label}, row ${index + 1}`}
                       type={type}
@@ -55,7 +51,6 @@ export default function HospitalResults({ result, busy, downloading, updateRow, 
                     />
                   </td>
                 ))}
-                <td className="hospital-cash">{cashPayable(row)}</td>
               </tr>
             ))}
           </tbody>
