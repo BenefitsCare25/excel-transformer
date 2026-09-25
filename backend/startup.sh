@@ -20,7 +20,7 @@ echo "Environment: $FLASK_ENV"
 # Start Gunicorn with Azure-optimized settings
 echo "Starting Gunicorn..."
 gunicorn --bind=0.0.0.0:8000 \
-         --workers=2 \
+         --workers=1 \
          --worker-class=sync \
          --timeout=300 \
          --access-logfile=- \

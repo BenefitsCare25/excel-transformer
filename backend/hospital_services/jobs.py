@@ -1,34 +1,38 @@
-"""Short-lived OCR jobs for uploads that exceed the HTTP request window."""
+"""Background OCR jobs with persistent completed results."""
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
 import threading
-import time
 from uuid import uuid4
 
 
-RETENTION_SECONDS = 15 * 60
 _lock = threading.Lock()
 _jobs: dict[str, dict] = {}
 _active_job: str | None = None
 
 
-def _prune(now: float) -> None:
-    expired = [run_id for run_id, job in _jobs.items()
-               if job["state"] in ("completed", "failed")
-               and now - job["finished_at"] > RETENTION_SECONDS]
-    for run_id in expired:
-        del _jobs[run_id]
+def _result_path(run_id: str, output_dir: str) -> Path:
+    return Path(output_dir) / f"{run_id}.json"
+
+
+def _save_result(run_id: str, output_dir: str, result: dict) -> None:
+    path = _result_path(run_id, output_dir)
+    pending = path.with_suffix(".pending")
+    try:
+        pending.write_text(json.dumps(result), encoding="utf-8")
+        os.replace(pending, path)
+    finally:
+        pending.unlink(missing_ok=True)
 
 
 def submit(source: bytes, output_dir: str, logger: logging.Logger) -> str | None:
     """Accept one active OCR job per worker to bound model memory use."""
     global _active_job
     with _lock:
-        _prune(time.monotonic())
         if _active_job is not None:
             return None
         run_id = uuid4().hex
@@ -51,11 +55,15 @@ def submit(source: bytes, output_dir: str, logger: logging.Logger) -> str | None
     return run_id
 
 
-def status(run_id: str) -> dict | None:
+def status(run_id: str, output_dir: str) -> dict | None:
     with _lock:
-        _prune(time.monotonic())
         job = _jobs.get(run_id)
-        return dict(job) if job else None
+        if job:
+            return dict(job)
+    try:
+        return json.loads(_result_path(run_id, output_dir).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
 
 
 def _process(run_id: str, source: bytes, output_dir: str, logger: logging.Logger) -> None:
@@ -77,7 +85,6 @@ def _process(run_id: str, source: bytes, output_dir: str, logger: logging.Logger
         result = {
             "state": "completed", "run_id": run_id, "rows": rows,
             "redactions": redactions, "warnings": warnings,
-            "retention_minutes": 15,
         }
     except ValueError as exc:
         result = {"state": "failed", "error": str(exc)}
@@ -91,5 +98,11 @@ def _process(run_id: str, source: bytes, output_dir: str, logger: logging.Logger
             logger.warning("Could not remove temporary hospital output for %s", run_id)
         with _lock:
             _jobs[run_id].update(result)
-            _jobs[run_id]["finished_at"] = time.monotonic()
             _active_job = None
+        try:
+            _save_result(run_id, output_dir, result)
+        except OSError:
+            logger.exception("Could not save hospital result %s", run_id)
+        else:
+            with _lock:
+                _jobs.pop(run_id, None)

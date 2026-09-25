@@ -17,7 +17,7 @@ const tabs = [
   ['gppanel', 'GP Panel'],
   ['renewal', 'Renewal Comparison'],
   ['flex', 'Flex Report'],
-  ['hospital', 'OCR / Vision'],
+  ['hospital', 'Hospital Bill'],
 ];
 
 function App() {
@@ -39,6 +39,10 @@ function App() {
     
     checkHealth();
   }, []);
+
+  useEffect(() => {
+    document.title = activeTab === 'hospital' ? 'Hospital Bill' : 'Excel Template Transformer';
+  }, [activeTab]);
 
   const handleFileUpload = async (files) => {
     // Convert file objects to queue items with status tracking
@@ -206,7 +210,7 @@ function App() {
 
         {/* Main Content */}
         <div className={`${activeTab === 'hospital' ? 'max-w-7xl' : 'max-w-4xl'} mx-auto`}>
-          {backendHealth === false ? (
+          {backendHealth === false && activeTab !== 'hospital' ? (
             <div className="card">
               <div className="text-center py-8">
                 <div className="w-16 h-16 mx-auto mb-4 text-red-500">

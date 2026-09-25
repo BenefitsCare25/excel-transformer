@@ -35,7 +35,7 @@ def process_hospital_bill():
     run_id = jobs.submit(source, current_app.config["HOSPITAL_OUTPUT_DIR"],
                          current_app.logger)
     if run_id is None:
-        return jsonify(error="Another hospital bill is processing. Try again shortly."), 429
+        return jsonify(error="Another hospital bill is processing. Submit this PDF when it finishes."), 429
     return jsonify(run_id=run_id), 202
 
 
@@ -43,10 +43,9 @@ def process_hospital_bill():
 def hospital_status(run_id):
     if not RUN_ID.fullmatch(run_id):
         return jsonify(error="Invalid result ID."), 400
-    result = jobs.status(run_id)
+    result = jobs.status(run_id, current_app.config["HOSPITAL_OUTPUT_DIR"])
     if result is None:
-        return jsonify(error="Processing was interrupted or the result expired. Please retry."), 404
-    result.pop("finished_at", None)
+        return jsonify(error="Processing was interrupted or the result was not found."), 404
     return jsonify(result)
 
 
@@ -56,7 +55,7 @@ def download_redacted(run_id):
         return jsonify(error="Invalid result ID."), 400
     path = os.path.join(current_app.config["HOSPITAL_OUTPUT_DIR"], f"{run_id}_redacted.pdf")
     if not os.path.isfile(path):
-        return jsonify(error="Redacted PDF expired or was not found."), 404
+        return jsonify(error="Redacted PDF was not found."), 404
     return send_file(path, mimetype="application/pdf", as_attachment=True,
                      download_name="hospital_bill_redacted.pdf")
 

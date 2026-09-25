@@ -123,7 +123,10 @@ app.register_blueprint(hospital_blueprint)
 # Configuration
 UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'uploads')
 PROCESSED_FOLDER = os.getenv('PROCESSED_FOLDER', 'processed')
-app.config['HOSPITAL_OUTPUT_DIR'] = PROCESSED_FOLDER
+hospital_root = os.getenv('HOME', '/home') if os.getenv('WEBSITE_SITE_NAME') else PROCESSED_FOLDER
+app.config['HOSPITAL_OUTPUT_DIR'] = os.getenv(
+    'HOSPITAL_OUTPUT_DIR', os.path.join(hospital_root, 'hospital_bills')
+)
 
 # Postal code master file paths (in order of preference)
 POSTAL_CODE_PATHS = [
@@ -153,6 +156,7 @@ GOVERNMENT_HOSPITALS = {
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+os.makedirs(app.config['HOSPITAL_OUTPUT_DIR'], exist_ok=True)
 
 # Initialize cleanup service
 from cleanup_service import CleanupService

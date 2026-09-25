@@ -534,7 +534,7 @@ class ApiService {
     data.append('file', file);
     try {
       const response = await this.api.post('/api/hospital/process', data, {
-        timeout: 60000,
+        timeout: 0,
       });
       return { success: true, data: response.data };
     } catch (error) {
@@ -545,44 +545,45 @@ class ApiService {
     }
   }
 
-  async waitForHospitalBill(runId, onProgress) {
-    const deadline = Date.now() + 45 * 60 * 1000;
-    let connectionFailures = 0;
-    while (Date.now() < deadline) {
+  async waitForHospitalBill(runId, onProgress, signal) {
+    while (!signal?.aborted) {
       try {
-        const response = await this.api.get(`/api/hospital/status/${runId}`, { timeout: 15000 });
-        connectionFailures = 0;
+        const response = await this.api.get(`/api/hospital/status/${runId}`, {
+          timeout: 0, signal,
+        });
         if (response.data.state === 'completed') return { success: true, data: response.data };
         if (response.data.state === 'failed') return { success: false, error: response.data.error };
         onProgress(response.data);
       } catch (error) {
-        if (error.response) {
+        if (signal?.aborted) break;
+        if (error.response?.status === 404 || (error.response && error.response.status < 500)) {
           return { success: false, error: error.response.data?.error || 'Could not check processing status.' };
         }
-        connectionFailures += 1;
-        if (connectionFailures >= 5) {
-          return { success: false, error: 'Connection lost while processing. Please retry.' };
-        }
+        onProgress({ state: 'reconnecting' });
       }
-      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      await new Promise((resolve) => window.setTimeout(resolve, 3000));
     }
-    return { success: false, error: 'Processing exceeded 45 minutes. Please try a smaller PDF.' };
+    return { success: false, cancelled: true };
   }
 
   async downloadHospitalPdf(runId, sourceName) {
     try {
-      const response = await this.api.get(`/api/hospital/redacted/${runId}`, { responseType: 'blob' });
+      const response = await this.api.get(`/api/hospital/redacted/${runId}`, {
+        responseType: 'blob', timeout: 0,
+      });
       const baseName = (sourceName || 'hospital_bill.pdf').replace(/\.pdf$/i, '');
       this.saveBlob(response.data, `${baseName}_redacted.pdf`);
       return { success: true };
     } catch (error) {
-      return { success: false, error: 'Redacted PDF is no longer available' };
+      return { success: false, error: 'Could not download the redacted PDF.' };
     }
   }
 
   async exportHospitalWorkbook(rows) {
     try {
-      const response = await this.api.post('/api/hospital/export', { rows }, { responseType: 'blob' });
+      const response = await this.api.post('/api/hospital/export', { rows }, {
+        responseType: 'blob', timeout: 0,
+      });
       this.saveBlob(response.data, 'hospital_bills.xlsx');
       return { success: true };
     } catch (error) {

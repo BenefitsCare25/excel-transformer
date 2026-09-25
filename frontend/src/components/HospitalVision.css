@@ -2,28 +2,7 @@
   color: var(--foreground);
 }
 
-.hospital-intro {
-  margin-bottom: 1.5rem;
-}
-
-.hospital-eyebrow {
-  color: var(--accent);
-  font-size: .72rem;
-  font-weight: 800;
-  letter-spacing: .12em;
-}
-
-.hospital-intro h2 {
-  font-size: clamp(1.8rem, 3vw, 2.5rem);
-  font-weight: 750;
-  line-height: 1.15;
-  margin: .4rem 0 .6rem;
-}
-
-.hospital-intro p,
-.hospital-results-head p,
-.hospital-actions p,
-.hospital-export span {
+.hospital-results-head p {
   color: var(--muted-foreground);
   font-size: .92rem;
 }
@@ -34,22 +13,6 @@
   border-radius: 1rem;
   box-shadow: 0 10px 30px var(--shadow);
   padding: 1.5rem;
-}
-
-.hospital-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: .5rem;
-  margin-bottom: 1.25rem;
-}
-
-.hospital-steps span {
-  background: var(--muted);
-  color: var(--muted-foreground);
-  border-radius: 999px;
-  font-size: .74rem;
-  font-weight: 650;
-  padding: .38rem .7rem;
 }
 
 .hospital-drop {
@@ -144,17 +107,14 @@
 
 .hospital-actions {
   margin-top: 1.2rem;
-}
-
-.hospital-actions p {
-  max-width: 33rem;
+  justify-content: flex-end;
 }
 
 .hospital-results {
   margin-top: 1.25rem;
 }
 
-.hospital-results h3 {
+.hospital-results h2 {
   font-size: 1.35rem;
   font-weight: 750;
   margin: .25rem 0;
@@ -245,6 +205,7 @@
 
 .hospital-export {
   margin-top: 1.2rem;
+  justify-content: flex-end;
 }
 
 @media (max-width: 640px) {
