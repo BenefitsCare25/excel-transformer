@@ -534,15 +534,39 @@ class ApiService {
     data.append('file', file);
     try {
       const response = await this.api.post('/api/hospital/process', data, {
-        timeout: 600000,
+        timeout: 60000,
       });
       return { success: true, data: response.data };
     } catch (error) {
       return {
         success: false,
-        error: error.response?.data?.error || 'Could not process the PDF',
+        error: error.response?.data?.error || 'Could not start processing. Please retry.',
       };
     }
+  }
+
+  async waitForHospitalBill(runId, onProgress) {
+    const deadline = Date.now() + 30 * 60 * 1000;
+    let connectionFailures = 0;
+    while (Date.now() < deadline) {
+      try {
+        const response = await this.api.get(`/api/hospital/status/${runId}`, { timeout: 15000 });
+        connectionFailures = 0;
+        if (response.data.state === 'completed') return { success: true, data: response.data };
+        if (response.data.state === 'failed') return { success: false, error: response.data.error };
+        onProgress(response.data);
+      } catch (error) {
+        if (error.response) {
+          return { success: false, error: error.response.data?.error || 'Could not check processing status.' };
+        }
+        connectionFailures += 1;
+        if (connectionFailures >= 5) {
+          return { success: false, error: 'Connection lost while processing. Please retry.' };
+        }
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    }
+    return { success: false, error: 'Processing exceeded 30 minutes. Please try a smaller PDF.' };
   }
 
   async downloadHospitalPdf(runId, sourceName) {

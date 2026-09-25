@@ -45,6 +45,10 @@ uses the eight columns in the supplied billing template; cash payable is an Exce
 formula. Redacted PDFs are eligible for cleanup after 15 minutes. The original
 upload is not saved.
 
+Processing runs as a background job and shows completed pages in the tab. Keep the
+tab open until the rows appear, then download the redacted PDF before its 15-minute
+retention period ends. If the server restarts during OCR, submit the file again.
+
 Check every redacted page before sharing it. OCR can miss an identifier on an
 unusual or low-quality scan, and patient names remain visible.
 

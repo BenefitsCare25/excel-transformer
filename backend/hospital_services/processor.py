@@ -6,6 +6,7 @@ from datetime import datetime
 from io import BytesIO
 import math
 import re
+from typing import Callable
 
 import cv2
 import fitz
@@ -148,7 +149,9 @@ def _merge_pages(pages: list[dict]) -> tuple[list[dict], list[str]]:
     return rows, warnings
 
 
-def process_pdf(source: bytes) -> tuple[bytes, list[dict], int, list[str]]:
+def process_pdf(
+    source: bytes, on_page: Callable[[int, int], None] | None = None
+) -> tuple[bytes, list[dict], int, list[str]]:
     if len(source) > MAX_BYTES:
         raise ValueError("PDF is too large (25 MB limit).")
     if not source.startswith(b"%PDF-"):
@@ -160,11 +163,17 @@ def process_pdf(source: bytes) -> tuple[bytes, list[dict], int, list[str]]:
     if document.is_encrypted or not 1 <= len(document) <= MAX_PAGES:
         raise ValueError("PDF must be unencrypted and contain 1 to 40 pages.")
 
-    engine = RapidOCR()
+    engine = RapidOCR(params={
+        "EngineConfig.onnxruntime.intra_op_num_threads": 2,
+        "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+        "Global.log_level": "warning",
+    })
     redacted = fitz.open()
     extracted = []
     redaction_count = 0
     unreadable = []
+    if on_page:
+        on_page(0, len(document))
     for page_number, page in enumerate(document, 1):
         if page.rect.width * 2 > 5000 or page.rect.height * 2 > 5000:
             raise ValueError(f"Page {page_number}: page dimensions are too large.")
@@ -189,6 +198,8 @@ def process_pdf(source: bytes) -> tuple[bytes, list[dict], int, list[str]]:
             raise ValueError(f"Page {page_number}: could not create redacted page.")
         output_page = redacted.new_page(width=page.rect.width, height=page.rect.height)
         output_page.insert_image(output_page.rect, stream=png.tobytes())
+        if on_page:
+            on_page(page_number, len(document))
     document.close()
     rows, warnings = _merge_pages(extracted)
     if unreadable:

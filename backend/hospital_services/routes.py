@@ -3,9 +3,9 @@
 from io import BytesIO
 import os
 import re
-from uuid import uuid4
 
 from flask import Blueprint, current_app, jsonify, request, send_file
+from . import jobs
 
 hospital_blueprint = Blueprint("hospital", __name__, url_prefix="/api/hospital")
 RUN_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -20,7 +20,7 @@ def prevent_cache(response):
 
 @hospital_blueprint.post("/process")
 def process_hospital_bill():
-    from .processor import MAX_BYTES, process_pdf
+    from .processor import MAX_BYTES
 
     uploaded = request.files.get("file")
     if not uploaded or not uploaded.filename or not uploaded.filename.lower().endswith(".pdf"):
@@ -28,20 +28,26 @@ def process_hospital_bill():
     if request.content_length and request.content_length > MAX_BYTES + 1024 * 1024:
         return jsonify(error="PDF is too large (25 MB limit)."), 413
     source = uploaded.read(MAX_BYTES + 1)
-    try:
-        pdf_bytes, rows, redactions, warnings = process_pdf(source)
-    except ValueError as exc:
-        return jsonify(error=str(exc)), 400
-    except Exception:
-        current_app.logger.exception("Hospital bill processing failed")
-        return jsonify(error="Could not process the hospital bill."), 500
+    if len(source) > MAX_BYTES:
+        return jsonify(error="PDF is too large (25 MB limit)."), 413
+    if not source.startswith(b"%PDF-"):
+        return jsonify(error="Upload a valid PDF file."), 400
+    run_id = jobs.submit(source, current_app.config["HOSPITAL_OUTPUT_DIR"],
+                         current_app.logger)
+    if run_id is None:
+        return jsonify(error="Another hospital bill is processing. Try again shortly."), 429
+    return jsonify(run_id=run_id), 202
 
-    run_id = uuid4().hex
-    path = os.path.join(current_app.config["HOSPITAL_OUTPUT_DIR"], f"{run_id}_redacted.pdf")
-    with open(path, "wb") as output:
-        output.write(pdf_bytes)
-    return jsonify(run_id=run_id, rows=rows, redactions=redactions,
-                   warnings=warnings, retention_minutes=15)
+
+@hospital_blueprint.get("/status/<run_id>")
+def hospital_status(run_id):
+    if not RUN_ID.fullmatch(run_id):
+        return jsonify(error="Invalid result ID."), 400
+    result = jobs.status(run_id)
+    if result is None:
+        return jsonify(error="Processing was interrupted or the result expired. Please retry."), 404
+    result.pop("finished_at", None)
+    return jsonify(result)
 
 
 @hospital_blueprint.get("/redacted/<run_id>")

@@ -34,6 +34,7 @@ export default function HospitalVision() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const [progress, setProgress] = useState(null);
 
   const selectFiles = (candidates) => {
     if (busy) return;
@@ -53,10 +54,18 @@ export default function HospitalVision() {
     if (!files.length || busy) return;
     setBusy(true);
     setError('');
+    setProgress(null);
     const completed = [];
     const failures = [];
     for (const file of files) {
-      const response = await apiService.processHospitalBill(file);
+      setProgress({ filename: file.name, completed_pages: 0, total_pages: 0 });
+      const started = await apiService.processHospitalBill(file);
+      if (!started.success) {
+        failures.push(`${file.name}: ${started.error}`);
+        continue;
+      }
+      const response = await apiService.waitForHospitalBill(started.data.run_id,
+        (status) => setProgress({ filename: file.name, ...status }));
       if (response.success) completed.push({ ...response.data, filename: file.name });
       else failures.push(`${file.name}: ${response.error}`);
     }
@@ -74,6 +83,7 @@ export default function HospitalVision() {
     }
     if (failures.length) setError(failures.join(' '));
     setBusy(false);
+    setProgress(null);
   };
 
   const updateRow = (index, key, value) => {
@@ -145,7 +155,13 @@ export default function HospitalVision() {
       </div>
 
       {error && <div className="hospital-alert error" role="alert">{error}</div>}
-      {busy && <p className="hospital-status" role="status">Processing may take a few minutes for scanned pages.</p>}
+      {busy && progress && (
+        <p className="hospital-status" role="status">
+          Processing {progress.filename}: {progress.total_pages
+            ? `${progress.completed_pages} of ${progress.total_pages} pages complete`
+            : 'starting OCR'}. This may take several minutes. Keep this tab open.
+        </p>
+      )}
 
       {result && (
         <div className="hospital-panel hospital-results">
