@@ -180,6 +180,11 @@ az webapp create \
 2. **Click "Save"** → "Continue"
    - App will restart automatically
 
+For the hospital OCR feature, also set
+`POST_BUILD_COMMAND=bash scripts/azure-postbuild.sh`. Azure's Oryx build installs
+Python requirements again during deployment; this post-build step removes
+desktop OpenCV and installs the headless build required by the Linux runtime.
+
 ### Using Azure CLI
 
 ```bash
