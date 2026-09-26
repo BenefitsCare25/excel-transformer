@@ -64,6 +64,10 @@ export default function HospitalVision() {
         <p className="hospital-status" role="status">
           {progress.state === 'reconnecting'
             ? `Reconnecting to ${progress.filename}…`
+            : progress.state === 'uploading'
+              ? `Uploading ${progress.filename}… Keep this page open until the upload is confirmed.`
+            : progress.state === 'queued'
+              ? `${progress.filename}: uploaded and waiting in the server queue.`
             : `${progress.filename}: ${progress.total_pages
               ? `${progress.completed_pages} of ${progress.total_pages} pages`
               : 'Starting OCR…'}`}

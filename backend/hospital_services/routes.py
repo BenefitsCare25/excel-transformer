@@ -3,12 +3,18 @@
 from io import BytesIO
 import os
 import re
+from pathlib import PureWindowsPath
 
 from flask import Blueprint, current_app, jsonify, request, send_file
 from . import jobs
 
 hospital_blueprint = Blueprint("hospital", __name__, url_prefix="/api/hospital")
 RUN_ID = re.compile(r"^[0-9a-f]{32}$")
+
+
+@hospital_blueprint.before_app_request
+def resume_queue():
+    jobs.start(current_app.config["HOSPITAL_OUTPUT_DIR"], current_app.logger)
 
 
 @hospital_blueprint.after_request
@@ -32,11 +38,46 @@ def process_hospital_bill():
         return jsonify(error="PDF is too large (25 MB limit)."), 413
     if not source.startswith(b"%PDF-"):
         return jsonify(error="Upload a valid PDF file."), 400
-    run_id = jobs.submit(source, current_app.config["HOSPITAL_OUTPUT_DIR"],
-                         current_app.logger)
-    if run_id is None:
-        return jsonify(error="Another hospital bill is processing. Submit this PDF when it finishes."), 429
+    try:
+        run_id = jobs.submit(source, current_app.config["HOSPITAL_OUTPUT_DIR"], current_app.logger)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 429
     return jsonify(run_id=run_id), 202
+
+
+@hospital_blueprint.route("/batches/<batch_id>", methods=["GET", "POST"])
+def hospital_batch(batch_id):
+    from .processor import MAX_BYTES
+    from .queue_store import batch
+
+    if not RUN_ID.fullmatch(batch_id):
+        return jsonify(error="Invalid batch ID."), 400
+    existing = batch(batch_id, current_app.config["HOSPITAL_OUTPUT_DIR"])
+    if existing is not None:
+        return jsonify(existing), 200
+    if request.method == "GET":
+        return jsonify(error="This upload was not accepted. Select the PDFs and upload them again."), 404
+    if request.content_length and request.content_length > 5 * MAX_BYTES + 1024 * 1024:
+        return jsonify(error="Batch is too large. Choose up to five PDFs, each up to 25 MB."), 413
+    uploaded = request.files.getlist("files")
+    if not 1 <= len(uploaded) <= 5:
+        return jsonify(error="Choose one to five hospital bill PDFs."), 400
+    files = []
+    for item in uploaded:
+        filename = PureWindowsPath(item.filename or "").name
+        if not filename.lower().endswith(".pdf") or len(filename) > 200:
+            return jsonify(error="Each document must have a PDF filename of at most 200 characters."), 400
+        source = item.read(MAX_BYTES + 1)
+        if len(source) > MAX_BYTES:
+            return jsonify(error=f"{filename}: PDF is too large (25 MB limit)."), 413
+        if not source.startswith(b"%PDF-"):
+            return jsonify(error=f"{filename}: upload a valid PDF file."), 400
+        files.append((filename, source))
+    try:
+        result = jobs.submit_batch(batch_id, files, current_app.config["HOSPITAL_OUTPUT_DIR"], current_app.logger)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 429
+    return jsonify(result), 202
 
 
 @hospital_blueprint.get("/status/<run_id>")

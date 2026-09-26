@@ -529,11 +529,11 @@ class ApiService {
     }
   }
 
-  async processHospitalBill(file) {
+  async processHospitalBatch(batchId, files) {
     const data = new FormData();
-    data.append('file', file);
+    files.forEach((file) => data.append('files', file));
     try {
-      const response = await this.api.post('/api/hospital/process', data, {
+      const response = await this.api.post(`/api/hospital/batches/${batchId}`, data, {
         timeout: 0,
       });
       return { success: true, data: response.data };
@@ -542,6 +542,16 @@ class ApiService {
         success: false,
         error: error.response?.data?.error || 'Could not start processing. Please retry.',
       };
+    }
+  }
+
+  async getHospitalBatch(batchId, signal) {
+    try {
+      const response = await this.api.get(`/api/hospital/batches/${batchId}`, { signal });
+      return { success: true, data: response.data };
+    } catch (error) {
+      return { success: false, cancelled: signal?.aborted, status: error.response?.status,
+        error: error.response?.data?.error || 'Could not reconnect to the upload. Reopen this page to retry.' };
     }
   }
 

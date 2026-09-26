@@ -1,123 +1,109 @@
-"""Background OCR jobs with persistent completed results."""
+"""Run every accepted document independently of browser connections."""
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from pathlib import Path
 import threading
 from uuid import uuid4
 
+from . import queue_store
+
 
 _lock = threading.Lock()
-_jobs: dict[str, dict] = {}
-_active_job: str | None = None
+_workers: dict[str, threading.Thread] = {}
+_wake = threading.Event()
 
 
-def _result_path(run_id: str, output_dir: str) -> Path:
-    return Path(output_dir) / f"{run_id}.json"
-
-
-def _save_result(run_id: str, output_dir: str, result: dict) -> None:
-    path = _result_path(run_id, output_dir)
-    pending = path.with_suffix(".pending")
-    try:
-        pending.write_text(json.dumps(result), encoding="utf-8")
-        os.replace(pending, path)
-    finally:
-        pending.unlink(missing_ok=True)
-
-
-def submit(source: bytes, output_dir: str, logger: logging.Logger) -> str | None:
-    """Accept one active OCR job per worker to bound model memory use."""
-    global _active_job
+def start(output_dir: str, logger: logging.Logger) -> None:
+    """Start in the serving process, including after a preloaded worker forks."""
+    key = str(Path(output_dir).resolve())
     with _lock:
-        if _active_job is not None:
-            return None
-        run_id = uuid4().hex
-        _jobs[run_id] = {
-            "state": "processing", "completed_pages": 0, "total_pages": 0,
-        }
-        _active_job = run_id
-
-    worker = threading.Thread(
-        target=_process, args=(run_id, source, output_dir, logger),
-        name=f"hospital-ocr-{run_id[:8]}", daemon=True,
-    )
-    try:
+        existing = _workers.get(key)
+        if existing and existing.is_alive():
+            _wake.set()
+            return
+        worker = threading.Thread(target=_work, args=(key, logger), name="hospital-queue", daemon=True)
+        _workers[key] = worker
         worker.start()
-    except Exception:
-        with _lock:
-            _jobs.pop(run_id, None)
-            _active_job = None
-        raise
-    return run_id
+
+
+def submit_batch(batch_id: str, files: list[tuple[str, bytes]], output_dir: str,
+                 logger: logging.Logger) -> dict:
+    result = queue_store.enqueue(batch_id, files, output_dir)
+    start(output_dir, logger)
+    return result
+
+
+def submit(source: bytes, output_dir: str, logger: logging.Logger) -> str:
+    result = submit_batch(uuid4().hex, [("hospital_bill.pdf", source)], output_dir, logger)
+    return result["runs"][0]["run_id"]
 
 
 def status(run_id: str, output_dir: str) -> dict | None:
-    with _lock:
-        job = _jobs.get(run_id)
-        if job:
-            return dict(job)
-    try:
-        return json.loads(_result_path(run_id, output_dir).read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None
+    return queue_store.read(queue_store.result_path(run_id, output_dir))
 
 
 def delete(run_id: str, output_dir: str) -> bool:
-    """Remove one completed run's persisted result and redacted PDF."""
-    with _lock:
-        if _active_job == run_id:
-            return False
-
-    for path in (_result_path(run_id, output_dir),
-                 Path(output_dir) / f"{run_id}_redacted.pdf"):
-        path.unlink(missing_ok=True)
-
-    with _lock:
-        _jobs.pop(run_id, None)
-    return True
+    return queue_store.delete(run_id, output_dir)
 
 
-def _process(run_id: str, source: bytes, output_dir: str, logger: logging.Logger) -> None:
-    global _active_job
+def _work(output_dir: str, logger: logging.Logger) -> None:
+    try:
+        with queue_store.locked(queue_store.root(output_dir) / "worker.lock", blocking=False):
+            queue_store.clean_inputs(output_dir)
+            while True:
+                try:
+                    runs = queue_store.pending_runs(output_dir)
+                    if runs:
+                        _process(runs[0], output_dir, logger)
+                        continue
+                except Exception:
+                    logger.exception("Hospital queue iteration failed; retrying")
+                _wake.wait(2)
+                _wake.clear()
+    except OSError:
+        logger.exception("Hospital queue worker stopped or its lock is held by another worker")
+    except Exception:
+        logger.exception("Hospital queue worker stopped unexpectedly")
+
+
+def _process(run: dict, output_dir: str, logger: logging.Logger) -> None:
+    run_id = run["run_id"]
     target = Path(output_dir) / f"{run_id}_redacted.pdf"
     pending = target.with_suffix(".pending")
+    source = queue_store.root(output_dir) / f"{run_id}.source.pdf"
 
     def on_page(completed: int, total: int) -> None:
-        with _lock:
-            _jobs[run_id]["completed_pages"] = completed
-            _jobs[run_id]["total_pages"] = total
+        queue_store.save(queue_store.result_path(run_id, output_dir), {
+            "state": "processing", **run, "completed_pages": completed, "total_pages": total,
+        })
 
     try:
         from .processor import process_pdf
 
-        pdf_bytes, rows, redactions, warnings = process_pdf(source, on_page=on_page)
-        pending.write_bytes(pdf_bytes)
+        on_page(0, 0)
+        pdf_bytes, rows, redactions, warnings = process_pdf(source.read_bytes(), on_page=on_page)
+        with pending.open("wb") as handle:
+            handle.write(pdf_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(pending, target)
-        result = {
-            "state": "completed", "run_id": run_id, "rows": rows,
-            "redactions": redactions, "warnings": warnings,
-        }
+        result = {"state": "completed", **run, "rows": rows,
+                  "redactions": redactions, "warnings": warnings}
     except ValueError as exc:
-        result = {"state": "failed", "error": str(exc)}
+        result = {"state": "failed", **run, "error": str(exc)}
     except Exception:
-        logger.exception("Hospital bill processing failed")
-        result = {"state": "failed", "error": "Could not process the hospital bill."}
+        logger.exception("Hospital bill processing failed for %s", run_id)
+        result = {"state": "failed", **run, "error": "Could not process the hospital bill."}
     finally:
         try:
             pending.unlink(missing_ok=True)
         except OSError:
-            logger.warning("Could not remove temporary hospital output for %s", run_id)
-        with _lock:
-            _jobs[run_id].update(result)
-            _active_job = None
-        try:
-            _save_result(run_id, output_dir, result)
-        except OSError:
-            logger.exception("Could not save hospital result %s", run_id)
-        else:
-            with _lock:
-                _jobs.pop(run_id, None)
+            logger.exception("Could not remove temporary hospital output for %s", run_id)
+    queue_store.save(queue_store.result_path(run_id, output_dir), result)
+    try:
+        source.unlink(missing_ok=True)
+    except OSError:
+        logger.exception("Could not remove hospital queue input for %s", run_id)

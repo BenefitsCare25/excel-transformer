@@ -35,6 +35,11 @@ user = None
 group = None
 tmp_upload_dir = None
 
+
+def post_worker_init(worker):
+    from hospital_services.jobs import start
+    start(worker.wsgi.config['HOSPITAL_OUTPUT_DIR'], worker.log)
+
 # SSL
 keyfile = None
 certfile = None
