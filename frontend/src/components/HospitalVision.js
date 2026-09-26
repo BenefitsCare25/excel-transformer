@@ -8,7 +8,7 @@ export default function HospitalVision() {
   const [dragging, setDragging] = useState(false);
   const {
     files, busy, downloading, deleting, savedRunCount, result, error, notice, progress,
-    selectFiles, process, updateRow, download, deleteSavedData,
+    selectFiles, process, download, deleteSavedData,
   } = useHospitalJobs();
 
   const onDrop = (event) => {
@@ -75,7 +75,6 @@ export default function HospitalVision() {
           result={result}
           busy={busy}
           downloading={downloading || deleting}
-          updateRow={updateRow}
           download={download}
         />
       )}

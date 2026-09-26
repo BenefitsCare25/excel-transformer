@@ -66,8 +66,7 @@
   transition: background .15s ease;
 }
 
-.hospital-button:focus-visible,
-.hospital-table input:focus-visible {
+.hospital-button:focus-visible {
   outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
@@ -191,26 +190,48 @@
 
 .hospital-table td {
   font-size: .82rem;
-}
-
-.hospital-table input {
-  width: 100%;
-  min-width: 6.5rem;
-  background: var(--card);
-  color: var(--foreground);
-  border: 1px solid var(--border);
-  border-radius: .35rem;
-  padding: .45rem;
-}
-
-.hospital-table td:first-child input,
-.hospital-table td:nth-child(3) input {
-  min-width: 9rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .hospital-cash {
   font-weight: 750;
   font-variant-numeric: tabular-nums;
+}
+
+.hospital-field-review {
+  color: var(--foreground);
+  font-weight: 400;
+  margin-top: .35rem;
+}
+
+.hospital-field-review summary {
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.hospital-field-review summary:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.hospital-field-review div {
+  max-width: 18rem;
+  padding: .5rem;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: .4rem;
+  white-space: normal;
+}
+
+.hospital-field-review ul {
+  margin: 0 0 .35rem 1rem;
+  list-style: disc;
+}
+
+.hospital-field-review p {
+  margin: .25rem 0;
 }
 
 .hospital-export {

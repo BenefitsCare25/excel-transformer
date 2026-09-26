@@ -1,23 +1,56 @@
 import React from 'react';
 
 const columns = [
-  ['bill_ref', 'Bill Ref No.', 'text'],
-  ['bill_date', 'Bill Date', 'date'],
-  ['hrn', 'HRN', 'text'],
-  ['visit_date', 'Visit Date', 'date'],
-  ['total', 'Total After Subsidy', 'number'],
-  ['medishield', 'MediShield Life', 'number'],
-  ['medisave', 'MediSave', 'number'],
-  ['cash', 'Cash Payable', 'number'],
+  ['bill_ref', 'Bill Ref No.'],
+  ['bill_date', 'Bill Date'],
+  ['hrn', 'HRN'],
+  ['visit_date', 'Visit Date'],
+  ['total', 'Total After Subsidy'],
+  ['medishield', 'MediShield Life'],
+  ['medisave', 'MediSave'],
+  ['cash', 'Cash Payable'],
 ];
 
-export default function HospitalResults({ result, busy, downloading, updateRow, download }) {
+function displayValue(key, value) {
+  if (value === null || value === undefined || value === '') return '—';
+  if (key === 'bill_date' || key === 'visit_date') {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
+  }
+  if (['total', 'medishield', 'medisave', 'cash'].includes(key)) {
+    const amount = Number(value);
+    return Number.isFinite(amount) ? amount.toFixed(2) : value;
+  }
+  return value;
+}
+
+function FieldReview({ row, field }) {
+  if (!row.review_fields?.includes(field)) return null;
+  const candidates = row.field_candidates?.[field] || [];
+  return (
+    <details className="hospital-field-review">
+      <summary>Review</summary>
+      <div>
+        {candidates.length ? (
+          <ul>{candidates.map((candidate, index) => (
+            <li key={index}>
+              {displayValue(field, candidate.value)} — page{candidate.pages.length === 1 ? '' : 's'} {candidate.pages.join(', ')}
+            </li>
+          ))}</ul>
+        ) : <p>No readable value found.</p>}
+        <p>Check {row.source_file || 'source PDF'}, page{row.pages.length === 1 ? '' : 's'} {row.pages.join(', ')}. OCR readings are provisional.</p>
+      </div>
+    </details>
+  );
+}
+
+export default function HospitalResults({ result, busy, downloading, download }) {
   return (
     <div className="hospital-panel hospital-results">
       <div className="hospital-results-head">
         <div>
           <h2>{result.rows.length} bill{result.rows.length === 1 ? '' : 's'} found{busy ? ' so far' : ''}</h2>
-          <p>{result.redactions} identifier location{result.redactions === 1 ? '' : 's'} blanked. Review the values before exporting.</p>
+          <p>{result.redactions} identifier location{result.redactions === 1 ? '' : 's'} blanked. Results are read-only; review the values against the PDFs before exporting.</p>
         </div>
         <div className="hospital-pdf-downloads">
           {result.redacted.map(({ run_id, filename }) => (
@@ -39,16 +72,10 @@ export default function HospitalResults({ result, busy, downloading, updateRow, 
           <tbody>
             {result.rows.map((row, index) => (
               <tr key={`${row.bill_ref}-${index}`}>
-                {columns.map(([key, label, type]) => (
+                {columns.map(([key]) => (
                   <td key={key} className={key === 'cash' ? 'hospital-cash' : undefined}>
-                    <input
-                      aria-label={`${label}, row ${index + 1}`}
-                      type={type}
-                      min={type === 'number' ? '0' : undefined}
-                      step={type === 'number' ? '0.01' : undefined}
-                      value={row[key] ?? ''}
-                      onChange={(event) => updateRow(index, key, event.target.value)}
-                    />
+                    {displayValue(key, row[key])}
+                    <FieldReview row={row} field={key} />
                   </td>
                 ))}
               </tr>

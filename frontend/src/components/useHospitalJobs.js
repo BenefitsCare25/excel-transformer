@@ -24,14 +24,16 @@ function saveRuns(runs) {
 }
 
 function combineResults(completed) {
-  const allRows = completed.flatMap((item) => item.rows);
+  const allRows = completed.flatMap((item) => item.rows.map((row) => ({ ...row, source_file: item.filename })));
   const byReference = new Map();
-  allRows.forEach((row) => {
-    const previous = byReference.get(row.bill_ref);
-    if (!previous || row.bill_date > previous.bill_date) byReference.set(row.bill_ref, row);
+  allRows.forEach((row, index) => {
+    const key = row.bill_ref || `unreadable-${index}`;
+    const previous = byReference.get(key);
+    if (!previous || (row.bill_date || '') > (previous.bill_date || '')) byReference.set(key, row);
   });
   const rows = [...byReference.values()].sort((a, b) =>
-    a.bill_date.localeCompare(b.bill_date) || a.bill_ref.localeCompare(b.bill_ref));
+    (a.bill_date || '').localeCompare(b.bill_date || '') ||
+    (a.bill_ref || '').localeCompare(b.bill_ref || ''));
   const warnings = completed.flatMap((item) => item.warnings);
   if (rows.length < allRows.length) {
     warnings.push('Repeated bill references were consolidated; the latest bill date was kept.');
@@ -146,11 +148,6 @@ export default function useHospitalJobs() {
     setBusy(false);
   };
 
-  const updateRow = (index, key, value) => setResult((current) => ({
-    ...current,
-    rows: current.rows.map((row, rowIndex) => rowIndex === index ? { ...row, [key]: value } : row),
-  }));
-
   const download = async (kind, runId) => {
     if (!result || downloading || deleting) return;
     setDownloading(true);
@@ -189,5 +186,5 @@ export default function useHospitalJobs() {
   };
 
   return { files, busy, downloading, deleting, savedRunCount: savedRuns.length,
-    result, error, notice, progress, selectFiles, process, updateRow, download, deleteSavedData };
+    result, error, notice, progress, selectFiles, process, download, deleteSavedData };
 }
