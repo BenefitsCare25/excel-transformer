@@ -68,6 +68,15 @@ def result_path(run_id: str, output_dir: str) -> Path:
     return Path(output_dir) / f"{run_id}.json"
 
 
+def work_dir(run_id: str, output_dir: str) -> Path:
+    """Page checkpoints of a document that is still processing."""
+    return root(output_dir) / f"{run_id}.work"
+
+
+def remove_work(run_id: str, output_dir: str) -> None:
+    shutil.rmtree(work_dir(run_id, output_dir), ignore_errors=True)
+
+
 def batch(batch_id: str, output_dir: str) -> dict | None:
     return read(root(output_dir) / f"{batch_id}.batch.json")
 
@@ -145,6 +154,7 @@ def delete(run_id: str, output_dir: str) -> bool:
         for path in (result_path(run_id, output_dir), Path(output_dir) / f"{run_id}_redacted.pdf",
                      directory / f"{run_id}.source.pdf"):
             path.unlink(missing_ok=True)
+        remove_work(run_id, output_dir)
         for path in directory.glob("*.batch.json"):
             manifest = read(path)
             if manifest and any(run["run_id"] == run_id for run in manifest["runs"]):
@@ -163,6 +173,9 @@ def clean_inputs(output_dir: str) -> None:
         for path in directory.glob("*.source.pdf"):
             if path.name.removesuffix(".source.pdf") not in pending:
                 path.unlink(missing_ok=True)
+        for path in directory.glob("*.work"):
+            if path.name.removesuffix(".work") not in pending:
+                shutil.rmtree(path, ignore_errors=True)
         # Staged uploads from a request that died mid-copy; live uploads are far younger than this.
         cutoff = time.time() - STALE_UPLOAD_SECONDS
         for path in directory.glob(f"*{UPLOAD_SUFFIX}"):

@@ -75,6 +75,7 @@ def _process(run: dict, output_dir: str, logger: logging.Logger) -> None:
     target = Path(output_dir) / f"{run_id}_redacted.pdf"
     pending = target.with_suffix(".pending")
     source = queue_store.root(output_dir) / f"{run_id}.source.pdf"
+    work_dir = queue_store.work_dir(run_id, output_dir)
 
     def on_page(completed: int, total: int) -> None:
         queue_store.save(queue_store.result_path(run_id, output_dir), {
@@ -85,7 +86,7 @@ def _process(run: dict, output_dir: str, logger: logging.Logger) -> None:
         from .processor import process_pdf
 
         on_page(0, 0)
-        rows, redactions, warnings = process_pdf(source, pending, on_page=on_page)
+        rows, redactions, warnings = process_pdf(source, pending, work_dir, on_page=on_page)
         with pending.open("rb+") as handle:
             os.fsync(handle.fileno())
         os.replace(pending, target)
@@ -105,5 +106,6 @@ def _process(run: dict, output_dir: str, logger: logging.Logger) -> None:
     queue_store.save(queue_store.result_path(run_id, output_dir), result)
     try:
         source.unlink(missing_ok=True)
+        queue_store.remove_work(run_id, output_dir)
     except OSError:
         logger.exception("Could not remove hospital queue input for %s", run_id)

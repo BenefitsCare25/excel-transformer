@@ -15,6 +15,7 @@ import fitz
 import numpy as np
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from . import checkpoints
 from .fields import COMPETING_HEADERS, REF_PATTERN, extract_page
 from .merging import merge_pages
 from .ocr import MAX_IMAGE_SIDE, create_engine, read_lines, retry_fields
@@ -128,32 +129,45 @@ def _process_page(page: fitz.Page, page_number: int, engine) -> tuple[np.ndarray
 
 
 def process_pdf(
-    source: Path, target: Path, on_page: Callable[[int, int], None] | None = None
+    source: Path, target: Path, work_dir: Path, on_page: Callable[[int, int], None] | None = None
 ) -> tuple[list[dict], int, list[str]]:
-    """OCR ``source`` page by page, writing the redacted copy to ``target``."""
+    """OCR ``source`` page by page, writing the redacted copy to ``target``.
+
+    Each finished page is checkpointed in ``work_dir``, so a restarted worker resumes after the
+    last completed page instead of repeating the whole document.
+    """
     extracted = []
     redaction_count = 0
     unreadable = []
-    with _open_document(source) as document, fitz.open() as redacted:
-        engine = create_engine()
+    with _open_document(source) as document:
+        engine = None
         if on_page:
             on_page(0, len(document))
         for page_number, page in enumerate(document, 1):
-            image, count, data = _process_page(page, page_number, engine)
+            saved = checkpoints.load_page(work_dir, page_number)
+            if saved is None:
+                engine = engine or create_engine()
+                image, count, data = _process_page(page, page_number, engine)
+                ok, png = cv2.imencode(".png", cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+                if not ok:
+                    raise ValueError(f"Page {page_number}: could not create redacted page.")
+                checkpoints.save_page(work_dir, page_number, png.tobytes(), count, data)
+                del image, png
+                gc.collect()
+            else:
+                _, count, data = saved
             redaction_count += count
             if data:
                 extracted.append(data)
             else:
                 unreadable.append(page_number)
-            ok, png = cv2.imencode(".png", cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
-            if not ok:
-                raise ValueError(f"Page {page_number}: could not create redacted page.")
-            output_page = redacted.new_page(width=page.rect.width, height=page.rect.height)
-            output_page.insert_image(output_page.rect, stream=png.tobytes())
             if on_page:
                 on_page(page_number, len(document))
-            gc.collect()
-        redacted.save(str(target), garbage=4, deflate=True)
+        with fitz.open() as redacted:
+            for page_number, page in enumerate(document, 1):
+                output_page = redacted.new_page(width=page.rect.width, height=page.rect.height)
+                output_page.insert_image(output_page.rect, stream=checkpoints.page_image(work_dir, page_number))
+            redacted.save(str(target), garbage=4, deflate=True)
     rows, warnings = merge_pages(extracted)
     if unreadable:
         warnings.append(f"Pages without a readable bill reference: {', '.join(map(str, unreadable))}.")

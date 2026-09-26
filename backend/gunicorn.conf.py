@@ -11,9 +11,9 @@ worker_connections = 500  # Reduced for memory efficiency
 timeout = 300
 keepalive = 2
 
-# Restart workers more frequently to prevent memory leaks on free tier
-max_requests = 500  # Reduced from 1000
-max_requests_jitter = 25  # Reduced from 50
+# No request-count recycling: the worker hosts the hospital OCR queue thread, and a browser polling
+# progress every 3 s would otherwise restart it mid-document. Page checkpoints cover other restarts.
+max_requests = 0
 
 # Memory optimization
 preload_app = True
