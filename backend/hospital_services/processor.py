@@ -29,8 +29,15 @@ HEADERS = (
     "Payable by Medisave", "Total Amount Payable\nCash",
 )
 RENDER_SCALE = 2.0
+REDACTION_PASSES = 3
 ID_PATTERN = re.compile(r"(?<![A-Z0-9])[STFGM](?:[\s.\-]*[0-9XOIL*]){7}[\s.\-]*[A-Z0-9X*](?![A-Z0-9])", re.I)
 MASKED_ID_PATTERN = re.compile(r"(?<![A-Z0-9])[A-Z0-9]*[X*]{3,}[A-Z0-9]*(?![A-Z0-9])", re.I)
+# Labels of an NRIC/FIN field: "NRIC", "NRIC No.", "FIN", "IC No.", "ID No." and combinations such as
+# "NRIC / FIN / MRN" or "NRIC/Passport No.". Only "NRIC" is matched without a word boundary, so a label
+# merged with its value still anchors the field while words like "FINALISED" never do.
+_NRIC_WORD = r"(?:NRIC|FIN\b|(?:I/?C|ID)\s*(?:NO|NUMBER)\b)(?:\s*(?:NO|NUMBER)\b)?\.?"
+NRIC_LABEL = re.compile(
+    rf"\s*{_NRIC_WORD}(?:\s*/\s*(?:{_NRIC_WORD}|MRN\b|PASSPORT(?:\s*(?:NO|NUMBER)\b)?\.?))*\s*[:.]?\s*", re.I)
 
 
 def _identifier(text: str) -> bool:
@@ -43,54 +50,86 @@ def _identifier(text: str) -> bool:
     )
 
 
-def _identifier_regions(lines: list[OcrItem], image_width: int) -> list[tuple[float, float, float, float]]:
+Polygon = np.ndarray
+
+
+def _rect(left: float, top: float, right: float, bottom: float) -> Polygon:
+    return np.array([[left, top], [right, top], [right, bottom], [left, bottom]], dtype=np.float32)
+
+
+def _competing(item: OcrItem) -> bool:
+    key = re.sub(r"[^A-Z0-9]", "", item.text.upper())
+    return any(key.startswith(heading) for heading in COMPETING_HEADERS)
+
+
+def _identifier_regions(lines: list[OcrItem], image_width: int) -> list[Polygon]:
     regions = []
     for item in lines:
-        if "NRIC" not in item.text.upper():
+        label = NRIC_LABEL.match(item.text)
+        if label is None and "NRIC" not in item.text.upper():
             continue
-        label = re.match(r"\s*NRIC(?:\s*/\s*(?:FIN|MRN))*\s*[:.]?\s*", item.text, re.I)
         if label is None:
             raise ValueError("Identifier field layout could not be established for safe redaction.")
         height = item.height
-        boundaries = [other.left for other in lines if other.left > item.left + height
-                      and abs(other.center_y - item.center_y) <= height * 3.5
-                      and any(re.sub(r"[^A-Z0-9]", "", other.text.upper()).startswith(heading)
-                              for heading in COMPETING_HEADERS)]
-        right = min(boundaries, default=float(image_width))
+        box = item.box.astype(np.float32)
+        direction = box[1] - box[0]
+        direction /= max(float(np.linalg.norm(direction)), 1e-6)
+        normal = box[3] - box[0]
+        normal /= max(float(np.linalg.norm(normal)), 1e-6)
+
+        # Column positions are compared along the label's text direction, so a skewed scan does not
+        # shift a neighbouring column's value into this field.
+        def along(point) -> float:
+            return float(np.dot(point, direction))
+
+        headers = [other for other in lines if other.left > item.left + height
+                   and abs(other.center_y - item.center_y) <= height * 3.5 and _competing(other)]
+        right = min((other.left for other in headers), default=float(image_width))
+        limit = min((along(other.box[0]) for other in headers), default=float("inf"))
         if right <= item.right:
             raise ValueError("Identifier field boundary could not be established for safe redaction.")
-        regions.append((item.left - 3, item.bottom + 1, right - 1, item.bottom + height * 2.5))
+        # Stacked value: a band below the label that follows its skew up to the next column.
+        start = box[3] - direction * height * .5 + normal
+        span = (right - 1 - start[0]) / direction[0] if direction[0] > 0 else 0.0
+        end = start + direction * max(span, 0.0)
+        regions.append(np.array([start, end, end + normal * height * 2.5, start + normal * height * 2.5],
+                                dtype=np.float32))
         if item.text[label.end():].strip():
-            regions.append((item.left - 3, item.top - 3, item.right + 3, item.bottom + 3))
+            regions.append(_rect(item.left - 3, item.top - 3, item.right + 3, item.bottom + 3))
         row_ends = (item.row_y_at(item.right), item.row_y_at(right))
-        regions.append((item.right - height * .6, min(row_ends) - height * 1.3,
-                        right - 1, max(row_ends) + height * 1.3))
-        inline = [other for other in lines if other is not item
-                  and item.right - height * .6 <= other.left < right
-                  and not any(re.sub(r"[^A-Z0-9]", "", other.text.upper()).startswith(heading)
-                              for heading in COMPETING_HEADERS)
+        regions.append(_rect(item.right - height * .6, min(row_ends) - height * 1.3,
+                             right - 1, max(row_ends) + height * 1.3))
+        inline = [other for other in lines if other is not item and not _competing(other)
+                  and along(box[1]) - height * .6 <= along(other.box[0]) < limit - height * .5
                   and abs(other.center_y - item.row_y_at(other.left)) <= max(height, other.height) * .8]
-        if any(other.right > right for other in inline):
+        if any(along(other.box[1]) > limit for other in inline):
             raise ValueError("Identifier value crosses a field boundary; safe redaction could not be established.")
-        regions.extend((other.left - 3, other.top - 3, other.right + 3, other.bottom + 3) for other in inline)
+        regions.extend(_rect(other.left - 3, other.top - 3, other.right + 3, other.bottom + 3) for other in inline)
     return regions
+
+
+def _item_region(item: OcrItem) -> Polygon:
+    return _rect(item.left - 5, item.top - 4, item.right + 6, item.bottom + 5)
+
+
+def _fill(image: np.ndarray, regions: list[Polygon]) -> int:
+    height, width = image.shape[:2]
+    count = 0
+    for region in regions:
+        points = np.round(region).astype(np.int32)
+        points[:, 0] = points[:, 0].clip(0, width)
+        points[:, 1] = points[:, 1].clip(0, height)
+        if np.ptp(points[:, 0]) == 0 or np.ptp(points[:, 1]) == 0:
+            continue
+        cv2.fillPoly(image, [points], (0, 0, 0))
+        count += 1
+    return count
 
 
 def _redact_image(image: np.ndarray, lines: list[OcrItem]) -> int:
     regions = _identifier_regions(lines, image.shape[1])
-    for item in lines:
-        if not _identifier(item.text):
-            continue
-        regions.append((item.left - 5, item.top - 4, item.right + 6, item.bottom + 5))
-    count = 0
-    for left, top, right, bottom in regions:
-        x1, x2 = max(0, int(left)), min(image.shape[1], int(right))
-        y1, y2 = max(0, int(top)), min(image.shape[0], int(bottom))
-        if x2 <= x1 or y2 <= y1:
-            continue
-        cv2.rectangle(image, (x1, y1), (x2, y2), (0, 0, 0), -1)
-        count += 1
-    return count
+    regions.extend(_item_region(item) for item in lines if _identifier(item.text))
+    return _fill(image, regions)
 
 
 def _open_document(source: Path) -> fitz.Document:
@@ -122,10 +161,17 @@ def _process_page(page: fitz.Page, page_number: int, engine) -> tuple[np.ndarray
         count = _redact_image(image, original_lines)
     except ValueError as exc:
         raise ValueError(f"Page {page_number}: {exc}") from exc
-    clean_lines = retry_fields(image, engine, read_lines(image, engine))
-    if any(_identifier(reading.text) for item in clean_lines for reading in item.readings):
-        raise ValueError(f"Page {page_number}: an identifier remains after redaction.")
-    return image, count, extract_page(clean_lines, page_number, image)
+    # A value can be missed on the first read (e.g. a short token read upside down); every value the
+    # re-read recognises as an identifier is masked and the page read again, failing closed.
+    for attempt in range(REDACTION_PASSES):
+        clean_lines = retry_fields(image, engine, read_lines(image, engine))
+        leaked = [item for item in clean_lines if any(_identifier(r.text) for r in item.readings)]
+        if not leaked:
+            return image, count, extract_page(clean_lines, page_number, image)
+        if attempt == REDACTION_PASSES - 1:
+            break
+        count += _fill(image, [_item_region(item) for item in leaked])
+    raise ValueError(f"Page {page_number}: an identifier remains after redaction.")
 
 
 def process_pdf(

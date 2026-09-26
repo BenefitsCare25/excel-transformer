@@ -41,6 +41,12 @@ function combineResults(completed) {
   };
 }
 
+function failureMessage(failures, total) {
+  if (!failures.length) return '';
+  const count = `${failures.length} of ${total} document${total === 1 ? '' : 's'}`;
+  return `${count} could not be processed and ${failures.length === 1 ? 'is' : 'are'} not included in the results. Upload ${failures.length === 1 ? 'it' : 'them'} again to retry. ${failures.join(' ')}`;
+}
+
 async function trackRuns(runs, signal, onProgress, onCompleted) {
   const completed = [];
   const failures = [];
@@ -106,7 +112,7 @@ export default function useHospitalJobs() {
         }
         const runs = savedRunsRef.current.filter((run) => !run.archived);
         const outcome = await trackRuns(runs, controller.signal, setProgress, setResult);
-        if (outcome?.failures.length && !controller.signal.aborted) setError(outcome.failures.join(' '));
+        if (outcome?.failures.length && !controller.signal.aborted) setError(failureMessage(outcome.failures, runs.length));
       } catch (failure) {
         if (!controller.signal.aborted) setError(failure.message || 'Could not restore saved documents.');
       } finally {
@@ -169,7 +175,7 @@ export default function useHospitalJobs() {
       setFiles([]);
       setResult(null);
       const outcome = await trackRuns(batch.runs, controller.signal, setProgress, setResult);
-      if (outcome && !controller.signal.aborted) setError(outcome.failures.join(' '));
+      if (outcome && !controller.signal.aborted) setError(failureMessage(outcome.failures, batch.runs.length));
     } catch (failure) {
       if (!controller.signal.aborted) setError(failure.message || 'Could not upload the documents.');
     } finally {
