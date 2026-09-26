@@ -2,20 +2,37 @@ import { useEffect, useRef, useState } from 'react';
 import apiService from '../services/api';
 import { readRuns, saveRuns, readPendingBatch, savePendingBatch, clearPendingBatch } from './hospitalRunStorage';
 
+function rowWarnings(row) {
+  const name = row.bill_ref || `Pages ${row.pages.join(', ')}`;
+  const pages = `page${row.pages.length === 1 ? '' : 's'} ${row.pages.join(', ')}`;
+  return (row.review_notes || []).map((note) => `${name}: ${note}; review ${row.source_file} ${pages}.`);
+}
+
 function combineResults(completed) {
-  const allRows = completed.flatMap((item) => item.rows.map((row) => ({ ...row, source_file: item.filename })));
+  // Results saved before document_warnings existed already carry row notes in `warnings`.
+  const allRows = completed.flatMap((item) => item.rows.map((row) => ({
+    ...row, source_file: item.filename, legacy_notes: !item.document_warnings,
+  })));
   const byReference = new Map();
+  const superseded = [];
   allRows.forEach((row, index) => {
-    const key = row.bill_ref || `unreadable-${index}`;
+    // Rows with an unread bill date cannot be ordered against other versions, so they are kept.
+    const key = row.bill_ref && row.bill_date ? row.bill_ref : `unreadable-${index}`;
     const previous = byReference.get(key);
     if (!previous || (row.bill_date || '') > (previous.bill_date || '')) byReference.set(key, row);
+    if (previous) superseded.push(key);
   });
   const rows = [...byReference.values()].sort((a, b) =>
     (a.bill_date || '').localeCompare(b.bill_date || '') ||
     (a.bill_ref || '').localeCompare(b.bill_ref || ''));
-  const warnings = completed.flatMap((item) => item.warnings);
-  if (rows.length < allRows.length) {
-    warnings.push('Repeated bill references were consolidated; the latest bill date was kept.');
+  const warnings = [
+    ...completed.flatMap((item) => (item.document_warnings
+      ? item.document_warnings.map((warning) => `${item.filename}: ${warning}`)
+      : item.warnings || [])),
+    ...rows.filter((row) => !row.legacy_notes).flatMap(rowWarnings),
+  ];
+  if (superseded.length) {
+    warnings.push(`Bills found in more than one file were reported once, using the latest bill date: ${[...new Set(superseded)].join(', ')}.`);
   }
   return {
     rows, warnings,
@@ -108,10 +125,10 @@ export default function useHospitalJobs() {
   const selectFiles = (candidates) => {
     if (busy || deleting) return;
     const chosen = Array.from(candidates || []);
-    if (chosen.length > 5 || chosen.some((file) =>
-      !file.name.toLowerCase().endsWith('.pdf') || file.size > 25 * 1024 * 1024)) {
+    const invalid = chosen.filter((file) => !file.name.toLowerCase().endsWith('.pdf'));
+    if (invalid.length) {
       setFiles([]);
-      setError('Choose up to five PDFs, each smaller than 25 MB.');
+      setError(`Only PDF files can be processed: ${invalid.map((file) => file.name).join(', ')}.`);
       return;
     }
     setFiles(chosen);

@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 import threading
+from typing import BinaryIO
 from uuid import uuid4
 
 from . import queue_store
@@ -29,14 +30,14 @@ def start(output_dir: str, logger: logging.Logger) -> None:
         worker.start()
 
 
-def submit_batch(batch_id: str, files: list[tuple[str, bytes]], output_dir: str,
+def submit_batch(batch_id: str, files: list[tuple[str, BinaryIO]], output_dir: str,
                  logger: logging.Logger) -> dict:
     result = queue_store.enqueue(batch_id, files, output_dir)
     start(output_dir, logger)
     return result
 
 
-def submit(source: bytes, output_dir: str, logger: logging.Logger) -> str:
+def submit(source: BinaryIO, output_dir: str, logger: logging.Logger) -> str:
     result = submit_batch(uuid4().hex, [("hospital_bill.pdf", source)], output_dir, logger)
     return result["runs"][0]["run_id"]
 
@@ -84,14 +85,13 @@ def _process(run: dict, output_dir: str, logger: logging.Logger) -> None:
         from .processor import process_pdf
 
         on_page(0, 0)
-        pdf_bytes, rows, redactions, warnings = process_pdf(source.read_bytes(), on_page=on_page)
-        with pending.open("wb") as handle:
-            handle.write(pdf_bytes)
-            handle.flush()
+        rows, redactions, warnings = process_pdf(source, pending, on_page=on_page)
+        with pending.open("rb+") as handle:
             os.fsync(handle.fileno())
         os.replace(pending, target)
+        # Row issues travel with each row's review_notes so superseded rows never leave stale notes.
         result = {"state": "completed", **run, "rows": rows,
-                  "redactions": redactions, "warnings": warnings}
+                  "redactions": redactions, "document_warnings": warnings}
     except ValueError as exc:
         result = {"state": "failed", **run, "error": str(exc)}
     except Exception:

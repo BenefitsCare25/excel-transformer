@@ -28,7 +28,7 @@ export default function HospitalVision() {
         >
           <div className="hospital-file-icon" aria-hidden="true">PDF</div>
           <strong>{files.length ? `${files.length} PDF${files.length === 1 ? '' : 's'} selected` : 'Drop hospital bills here'}</strong>
-          <span>{files.length ? files.map((file) => file.name).join(' · ') : 'Up to 5 PDFs · 25 MB and 100 pages each'}</span>
+          <span>{files.length ? files.map((file) => file.name).join(' · ') : 'Scanned hospital bill PDFs · any number and size'}</span>
           <input
             ref={inputRef}
             type="file"

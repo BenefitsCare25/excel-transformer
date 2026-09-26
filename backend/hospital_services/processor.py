@@ -6,6 +6,7 @@ from datetime import datetime
 from io import BytesIO
 import gc
 import math
+from pathlib import Path
 import re
 from typing import Callable
 
@@ -26,10 +27,9 @@ HEADERS = (
     "Total Amount (After Govt Subsidy)", "Payable by Medishield Life",
     "Payable by Medisave", "Total Amount Payable\nCash",
 )
+RENDER_SCALE = 2.0
 ID_PATTERN = re.compile(r"(?<![A-Z0-9])[STFGM](?:[\s.\-]*[0-9XOIL*]){7}[\s.\-]*[A-Z0-9X*](?![A-Z0-9])", re.I)
 MASKED_ID_PATTERN = re.compile(r"(?<![A-Z0-9])[A-Z0-9]*[X*]{3,}[A-Z0-9]*(?![A-Z0-9])", re.I)
-MAX_PAGES = 100
-MAX_BYTES = 25 * 1024 * 1024
 
 
 def _identifier(text: str) -> bool:
@@ -92,13 +92,12 @@ def _redact_image(image: np.ndarray, lines: list[OcrItem]) -> int:
     return count
 
 
-def _open_document(source: bytes) -> fitz.Document:
-    if len(source) > MAX_BYTES:
-        raise ValueError("PDF is too large (25 MB limit).")
-    if not source.startswith(b"%PDF-"):
-        raise ValueError("Upload a valid PDF file.")
+def _open_document(source: Path) -> fitz.Document:
+    with source.open("rb") as handle:
+        if handle.read(5) != b"%PDF-":
+            raise ValueError("Upload a valid PDF file.")
     try:
-        document = fitz.open(stream=source, filetype="pdf")
+        document = fitz.open(str(source), filetype="pdf")
     except Exception as exc:
         raise ValueError("Could not open the PDF.") from exc
     try:
@@ -106,8 +105,6 @@ def _open_document(source: bytes) -> fitz.Document:
             raise ValueError("PDF is encrypted. Upload an unencrypted copy.")
         if not len(document):
             raise ValueError("PDF contains no pages.")
-        if len(document) > MAX_PAGES:
-            raise ValueError(f"PDF has {len(document)} pages; the limit is {MAX_PAGES} pages per file.")
     except Exception:
         document.close()
         raise
@@ -115,9 +112,8 @@ def _open_document(source: bytes) -> fitz.Document:
 
 
 def _process_page(page: fitz.Page, page_number: int, engine) -> tuple[np.ndarray, int, dict | None]:
-    if page.rect.width * 2 > MAX_IMAGE_SIDE or page.rect.height * 2 > MAX_IMAGE_SIDE:
-        raise ValueError(f"Page {page_number}: page dimensions are too large.")
-    pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+    scale = min(RENDER_SCALE, MAX_IMAGE_SIDE / max(page.rect.width, page.rect.height, 1))
+    pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
     image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
         pixmap.height, pixmap.width, 3).copy()
     original_lines = read_lines(image, engine)
@@ -128,12 +124,13 @@ def _process_page(page: fitz.Page, page_number: int, engine) -> tuple[np.ndarray
     clean_lines = retry_fields(image, engine, read_lines(image, engine))
     if any(_identifier(reading.text) for item in clean_lines for reading in item.readings):
         raise ValueError(f"Page {page_number}: an identifier remains after redaction.")
-    return image, count, extract_page(clean_lines, page_number)
+    return image, count, extract_page(clean_lines, page_number, image)
 
 
 def process_pdf(
-    source: bytes, on_page: Callable[[int, int], None] | None = None
-) -> tuple[bytes, list[dict], int, list[str]]:
+    source: Path, target: Path, on_page: Callable[[int, int], None] | None = None
+) -> tuple[list[dict], int, list[str]]:
+    """OCR ``source`` page by page, writing the redacted copy to ``target``."""
     extracted = []
     redaction_count = 0
     unreadable = []
@@ -156,18 +153,18 @@ def process_pdf(
             if on_page:
                 on_page(page_number, len(document))
             gc.collect()
-        pdf_bytes = redacted.tobytes(garbage=4, deflate=True)
+        redacted.save(str(target), garbage=4, deflate=True)
     rows, warnings = merge_pages(extracted)
     if unreadable:
         warnings.append(f"Pages without a readable bill reference: {', '.join(map(str, unreadable))}.")
     if not rows:
         raise ValueError("No bill rows could be extracted. Please use a clearer scan.")
-    return pdf_bytes, rows, redaction_count, warnings
+    return rows, redaction_count, warnings
 
 
 def make_workbook(rows: list[dict]) -> bytes:
-    if not isinstance(rows, list) or not 1 <= len(rows) <= 500:
-        raise ValueError("Provide 1 to 500 reviewed bill rows.")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("Provide at least one reviewed bill row.")
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Sheet1"

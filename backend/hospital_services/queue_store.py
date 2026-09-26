@@ -4,10 +4,15 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+import shutil
+import time
+from typing import BinaryIO
 from uuid import uuid4
 
 
-MAX_PENDING = 20
+COPY_CHUNK = 1024 * 1024
+UPLOAD_SUFFIX = ".upload"
+STALE_UPLOAD_SECONDS = 24 * 60 * 60
 
 
 def root(output_dir: str) -> Path:
@@ -86,34 +91,49 @@ def pending_runs(output_dir: str) -> list[dict]:
         return _pending_runs(output_dir)
 
 
-def enqueue(batch_id: str, files: list[tuple[str, bytes]], output_dir: str) -> dict:
+def _stage(directory: Path, source: BinaryIO) -> Path:
+    path = directory / f"{uuid4().hex}{UPLOAD_SUFFIX}"
+    with path.open("xb") as handle:
+        shutil.copyfileobj(source, handle, COPY_CHUNK)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return path
+
+
+def enqueue(batch_id: str, files: list[tuple[str, BinaryIO]], output_dir: str) -> dict:
     directory = root(output_dir)
-    with locked(directory / "submission.lock"):
-        existing = batch(batch_id, output_dir)
-        if existing is not None:
-            return existing
-        if len(_pending_runs(output_dir)) + len(files) > MAX_PENDING:
-            raise ValueError("The hospital queue is full. Please retry after some documents finish.")
-        runs = [{"run_id": uuid4().hex, "filename": filename} for filename, _ in files]
-        created = []
-        try:
-            for run, (_, source) in zip(runs, files):
-                source_path = directory / f"{run['run_id']}.source.pdf"
-                created.append(source_path)
-                with source_path.open("xb") as handle:
-                    handle.write(source)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                path = result_path(run["run_id"], output_dir)
-                created.append(path)
-                save(path, {"state": "queued", **run, "completed_pages": 0, "total_pages": 0})
-            manifest = {"batch_id": batch_id, "runs": runs}
-            save(directory / f"{batch_id}.batch.json", manifest)
-            return manifest
-        except Exception:
-            for path in created:
-                path.unlink(missing_ok=True)
-            raise
+    existing = batch(batch_id, output_dir)
+    if existing is not None:
+        return existing
+    staged = []
+    try:
+        # Copy uploads before taking the lock so a large file never stalls OCR or other submissions.
+        for _, source in files:
+            staged.append(_stage(directory, source))
+        with locked(directory / "submission.lock"):
+            existing = batch(batch_id, output_dir)
+            if existing is not None:
+                return existing
+            runs = [{"run_id": uuid4().hex, "filename": filename} for filename, _ in files]
+            created = []
+            try:
+                for run, upload in zip(runs, staged):
+                    source_path = directory / f"{run['run_id']}.source.pdf"
+                    os.replace(upload, source_path)
+                    created.append(source_path)
+                    path = result_path(run["run_id"], output_dir)
+                    created.append(path)
+                    save(path, {"state": "queued", **run, "completed_pages": 0, "total_pages": 0})
+                manifest = {"batch_id": batch_id, "runs": runs}
+                save(directory / f"{batch_id}.batch.json", manifest)
+                return manifest
+            except Exception:
+                for path in created:
+                    path.unlink(missing_ok=True)
+                raise
+    finally:
+        for path in staged:
+            path.unlink(missing_ok=True)
 
 
 def delete(run_id: str, output_dir: str) -> bool:
@@ -142,4 +162,9 @@ def clean_inputs(output_dir: str) -> None:
         pending = {run["run_id"] for run in _pending_runs(output_dir)}
         for path in directory.glob("*.source.pdf"):
             if path.name.removesuffix(".source.pdf") not in pending:
+                path.unlink(missing_ok=True)
+        # Staged uploads from a request that died mid-copy; live uploads are far younger than this.
+        cutoff = time.time() - STALE_UPLOAD_SECONDS
+        for path in directory.glob(f"*{UPLOAD_SUFFIX}"):
+            if path.stat().st_mtime < cutoff:
                 path.unlink(missing_ok=True)
