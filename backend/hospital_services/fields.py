@@ -79,9 +79,11 @@ PARSERS = {"bill_ref": _reference, "bill_date": _date, "hrn": _hrn, "visit_date"
 
 def _value_hint(item: OcrItem, field: str) -> bool:
     text = item.text.strip()
+    if PARSERS[field](text) is not None:
+        return True
     if field in ("bill_ref", "hrn"):
         return bool(re.match(r"[A-Z]?\d{6,}", text, re.I))
-    return bool(re.search(r"\d{1,2}\s*[A-Z]{3}\s*\d{4}", text, re.I))
+    return bool(DATE_PATTERN.search(text))
 
 
 def _header_items(items: list[OcrItem], field: str) -> list[OcrItem]:
@@ -95,13 +97,13 @@ def _header_items(items: list[OcrItem], field: str) -> list[OcrItem]:
         height = heading.height
         boundaries = [other.left for other in items if other.left > heading.right
                       and abs(other.center_y - heading.row_y_at(other.left)) <= height
-                      and any(label in _key(other.text) for label in COMPETING_HEADERS)]
+                      and any(_key(other.text).startswith(label) for label in COMPETING_HEADERS)]
         right_boundary = min(boundaries, default=float("inf"))
         candidates = []
         for item in items:
             if item is heading or not _value_hint(item, field):
                 continue
-            if any(label in _key(item.text) for label in COMPETING_HEADERS):
+            if any(_key(item.text).startswith(label) for label in COMPETING_HEADERS):
                 continue
             dx, dy = item.left - heading.left, item.top - heading.top
             stacked = (-height <= dx <= height * 2 and 0 <= dy <= height * 3.5

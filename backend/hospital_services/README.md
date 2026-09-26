@@ -6,10 +6,10 @@ The pipeline runs locally and retains evidence instead of repairing values from 
 
 - `ocr.py` explicitly selects RapidOCR's PP-OCRv6 small detector and recognizer. Pages are rendered at twice their PDF dimensions, bounded at 5,000 pixels per side; the OCR preprocessing limit matches that bound to avoid silently reducing scan detail.
 - `ocr_types.py` retains text, confidence, pixel coordinates, and crop retries. Confidence scores are model outputs, not calibrated correctness probabilities.
-- `fields.py` associates values with labels using relative text geometry and competing column headings. Dates tolerate omitted spaces. Payment-table entries under Other Schemes are summed from the amount column and kept as table evidence.
+- `fields.py` associates values with labels using relative text geometry and competing column headings. Candidate selection accepts every format supported by its parser, including separated dates and HRNs with internal letters. Payment-table entries under Other Schemes are summed from the amount column and kept as table evidence.
 - Field crops are deskewed and read again when recognition confidence is below 0.98, parsing fails, or payments do not reconcile. Identifiers are always retried because character substitutions can have high confidence.
 - A recognition-only call changes RapidOCR's instance settings, so every subsequent page read explicitly re-enables detection, classification, and recognition.
-- Identifier masking preserves token boundaries when matching formatted identifiers and masks the value region of NRIC-labelled fields even when recognition fails or the input was already redacted. Field extraction runs again on the masked image.
+- Identifier masking preserves token boundaries when matching formatted identifiers. NRIC-labelled fields mask both stacked and inline value regions independently of recognized digits, including merged label/value boxes, overlapping boxes, and skewed rows. Unsupported labels and values crossing a competing field boundary reject the page before a downloadable PDF is produced. Field extraction runs again on the masked image.
 
 ## Grouping and uncertainty
 
@@ -33,5 +33,6 @@ Completed jobs are persisted snapshots. Re-upload PDFs after a pipeline change t
 - The redaction, recognition, grouping, and export flow was exercised on six two-page invoices covering the original failures, a malformed amount token, overlapping date boxes, and the clipped page number.
 - The frontend build and lint checks passed. A local browser check at desktop and mobile widths found no editable result cells, working review disclosures, and no runtime errors. The browser used supplied OCR fixtures and the real Flask export endpoint in its local test client.
 - The complete 74-row export returned HTTP 200, with seven review-note rows and six provisional-cell comments. Unknown amounts were separately verified to export as flagged blanks.
+- Review regression checks verified garbled and undetected inline NRIC values in the downloadable PDF, fail-closed handling of unsupported layouts, five supported date styles, and separately boxed alphanumeric HRNs. The existing 29 backend tests passed.
 
 This verifies these supplied scans and the documented edge cases; it does not establish perfect recognition for every invoice format. Changes require deployment and fresh processing of existing saved runs.

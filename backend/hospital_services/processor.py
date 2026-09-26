@@ -42,27 +42,41 @@ def _identifier(text: str) -> bool:
     )
 
 
-def _identifier_regions(lines: list[OcrItem]) -> list[tuple[float, float, float, float]]:
+def _identifier_regions(lines: list[OcrItem], image_width: int) -> list[tuple[float, float, float, float]]:
     regions = []
     for item in lines:
-        if not re.fullmatch(r"\s*NRIC(?:\s*/\s*(?:FIN|MRN))*\s*[:.]?\s*", item.text, re.I):
+        if "NRIC" not in item.text.upper():
             continue
+        label = re.match(r"\s*NRIC(?:\s*/\s*(?:FIN|MRN))*\s*[:.]?\s*", item.text, re.I)
+        if label is None:
+            raise ValueError("Identifier field layout could not be established for safe redaction.")
         height = item.height
-        boundaries = [other.left for other in lines if other.left > item.right
-                      and abs(other.center_y - item.center_y) <= height
-                      and any(label in re.sub(r"[^A-Z0-9]", "", other.text.upper())
-                              for label in COMPETING_HEADERS)]
-        right = min(boundaries, default=item.left + max(item.right - item.left, height * 10))
-        regions.append((item.left - 3, item.bottom + 1, right - 3, item.bottom + height * 2.5))
-        inline = [other for other in lines if item.right < other.left < right
-                  and abs(other.center_y - item.center_y) <= height * .8
-                  and re.search(r"[0-9X*]{3}", other.text, re.I)]
+        boundaries = [other.left for other in lines if other.left > item.left + height
+                      and abs(other.center_y - item.center_y) <= height * 3.5
+                      and any(re.sub(r"[^A-Z0-9]", "", other.text.upper()).startswith(heading)
+                              for heading in COMPETING_HEADERS)]
+        right = min(boundaries, default=float(image_width))
+        if right <= item.right:
+            raise ValueError("Identifier field boundary could not be established for safe redaction.")
+        regions.append((item.left - 3, item.bottom + 1, right - 1, item.bottom + height * 2.5))
+        if item.text[label.end():].strip():
+            regions.append((item.left - 3, item.top - 3, item.right + 3, item.bottom + 3))
+        row_ends = (item.row_y_at(item.right), item.row_y_at(right))
+        regions.append((item.right - height * .6, min(row_ends) - height * 1.3,
+                        right - 1, max(row_ends) + height * 1.3))
+        inline = [other for other in lines if other is not item
+                  and item.right - height * .6 <= other.left < right
+                  and not any(re.sub(r"[^A-Z0-9]", "", other.text.upper()).startswith(heading)
+                              for heading in COMPETING_HEADERS)
+                  and abs(other.center_y - item.row_y_at(other.left)) <= max(height, other.height) * .8]
+        if any(other.right > right for other in inline):
+            raise ValueError("Identifier value crosses a field boundary; safe redaction could not be established.")
         regions.extend((other.left - 3, other.top - 3, other.right + 3, other.bottom + 3) for other in inline)
     return regions
 
 
 def _redact_image(image: np.ndarray, lines: list[OcrItem]) -> int:
-    regions = _identifier_regions(lines)
+    regions = _identifier_regions(lines, image.shape[1])
     for item in lines:
         if not _identifier(item.text):
             continue
@@ -107,9 +121,10 @@ def _process_page(page: fitz.Page, page_number: int, engine) -> tuple[np.ndarray
     image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
         pixmap.height, pixmap.width, 3).copy()
     original_lines = read_lines(image, engine)
-    count = _redact_image(image, original_lines)
-    if any("NRIC" in item.text.upper() for item in original_lines) and count == 0:
-        raise ValueError(f"Page {page_number}: identifier could not be located for safe redaction.")
+    try:
+        count = _redact_image(image, original_lines)
+    except ValueError as exc:
+        raise ValueError(f"Page {page_number}: {exc}") from exc
     clean_lines = retry_fields(image, engine, read_lines(image, engine))
     if any(_identifier(reading.text) for item in clean_lines for reading in item.readings):
         raise ValueError(f"Page {page_number}: an identifier remains after redaction.")
