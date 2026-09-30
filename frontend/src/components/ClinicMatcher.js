@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
+import ClinicMatcherGuide, { ClinicUploadHelp } from './ClinicMatcherGuide';
 
 // Top N Analysis Component - shows detailed table for top N most-visited clinics
 const TopNAnalysis = ({ topNData, filterType, reportFilename, onDownloadReport }) => {
@@ -448,6 +449,10 @@ const ClinicMatcher = () => {
         <p className="text-gray-600">
           Upload two Excel files to compare clinic lists. The system will identify matching clinics and those that appear in only one file.
         </p>
+        <p className="mt-2 text-sm text-gray-700">
+          Different layouts are welcome. Both files need a <strong>Clinic Name</strong> column; addresses are optional.
+        </p>
+        <ClinicMatcherGuide />
       </div>
 
       {/* Dual Upload Section */}
@@ -456,6 +461,7 @@ const ClinicMatcher = () => {
           {/* Base File Dropzone */}
           <div className="flex-1">
             <h3 className="text-lg font-semibold text-gray-800 mb-2">Base File (Master List)</h3>
+            <ClinicUploadHelp fileType="base" />
             <div className="mb-3">
               <label className="block text-xs text-gray-600 mb-1">TPA Name (optional)</label>
               <input
@@ -518,7 +524,7 @@ const ClinicMatcher = () => {
                     <p className="text-sm font-medium text-gray-700">
                       {isBaseDragActive ? 'Drop file here' : 'Drop file or click to browse'}
                     </p>
-                    <p className="text-xs text-gray-500 mt-1">Upload your master clinic list</p>
+                    <p className="text-xs text-gray-500 mt-1">Excel (.xlsx or .xls) with a Clinic Name column</p>
                   </div>
                 </div>
               )}
@@ -528,6 +534,7 @@ const ClinicMatcher = () => {
           {/* Comparison File Dropzone */}
           <div className="flex-1">
             <h3 className="text-lg font-semibold text-gray-800 mb-2">Comparison File</h3>
+            <ClinicUploadHelp fileType="comparison" />
             <div className="mb-3">
               <label className="block text-xs text-gray-600 mb-1">TPA Name (optional)</label>
               <input
@@ -590,7 +597,7 @@ const ClinicMatcher = () => {
                     <p className="text-sm font-medium text-gray-700">
                       {isComparisonDragActive ? 'Drop file here' : 'Drop file or click to browse'}
                     </p>
-                    <p className="text-xs text-gray-500 mt-1">Upload file to compare against base</p>
+                    <p className="text-xs text-gray-500 mt-1">Excel (.xlsx or .xls) with a Clinic Name column</p>
                   </div>
                 </div>
               )}
@@ -783,7 +790,7 @@ const ClinicMatcher = () => {
               />
               <div>
                 <span className="font-medium text-gray-800">Generate Full Utilisation Report (all clinics)</span>
-                <p className="text-xs text-gray-500">Create a summary report with all clinic names, visit counts, and total paid amounts</p>
+                <p className="text-xs text-gray-500">Summarise individual claim rows from the base file by clinic, with row counts and total paid amounts. Requires a paid amount column; pivot summaries give incorrect visit totals.</p>
                 {fileInfo.base && !fileInfo.base.supportsUtilisationReport && (
                   <p className="text-xs text-orange-600 mt-1">
                     ⚠️ Base file does not contain paid amount data required for utilisation report
@@ -803,7 +810,7 @@ const ClinicMatcher = () => {
         <div className="mt-6 pt-6 border-t border-gray-200">
           <h4 className="text-sm font-medium text-gray-700 mb-3">Top Clinic Matching</h4>
           <p className="text-xs text-gray-500 mb-3">
-            Select top N most visited clinics from base file for matching (filters applied first, then top N selected)
+            Highlight the most visited clinics from the base file after exclusions. All clinics are still compared. Use a Visit Count column in a summary, or individual claim rows with a PAID AMT. column.
           </p>
 
           {/* Warning if base file doesn't support Top N */}
@@ -817,7 +824,7 @@ const ClinicMatcher = () => {
                   <p className="text-sm font-medium text-orange-900">Top N filter not available</p>
                   <p className="text-xs text-orange-800 mt-1">
                     Base file has insufficient visit count data ({fileInfo.base.hasVisitCounts}% of clinics).
-                    Need at least 50% to enable Top N filtering.
+                    More than 50% of detected clinics need a positive visit count to enable Top N filtering.
                     {fileInfo.base.hasVisitCounts === 0 && " Upload a file with visit counts or transaction-level data (e.g., GP utilisation files)."}
                   </p>
                 </div>
@@ -836,7 +843,7 @@ const ClinicMatcher = () => {
               />
               <div>
                 <span className="font-medium text-gray-800">Top 10 Clinics</span>
-                <p className="text-xs text-gray-500">Match only the top 10 most visited clinics from base file</p>
+                <p className="text-xs text-gray-500">Highlight the top 10 most visited clinics from the base file</p>
               </div>
             </label>
             <label className={`flex items-start gap-3 ${(!fileInfo.base?.supportsTopN || isProcessing || topNFilter === 'top10') ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
@@ -849,7 +856,7 @@ const ClinicMatcher = () => {
               />
               <div>
                 <span className="font-medium text-gray-800">Top 20 Clinics</span>
-                <p className="text-xs text-gray-500">Match only the top 20 most visited clinics from base file</p>
+                <p className="text-xs text-gray-500">Highlight the top 20 most visited clinics from the base file</p>
               </div>
             </label>
 
