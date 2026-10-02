@@ -6609,6 +6609,36 @@ def flex_companies():
         return jsonify({'error': 'Could not load company catalog', 'details': str(e)}), 500
 
 
+@app.route('/api/flex/validate/<company_id>', methods=['POST'])
+def flex_validate_claims(company_id):
+    """Check a claims upload against the company's checklist without creating a run."""
+    module = flex_services.get(company_id)
+    validator = getattr(module, 'validate_claims', None)
+    if not callable(validator):
+        return jsonify({'error': 'Claim validation is not configured for this company'}), 404
+    uploaded = request.files.get('claims')
+    if not uploaded or not uploaded.filename:
+        return jsonify({'error': 'Upload the employee claims workbook'}), 400
+    ext = os.path.splitext(uploaded.filename)[1].lower()
+    if ext not in FLEX_ALLOWED_EXTENSIONS:
+        return jsonify({'error': 'Only .xlsx or .xlsm claims workbooks are accepted'}), 400
+    try:
+        with tempfile.TemporaryDirectory(prefix='flex-validation-') as folder:
+            path = os.path.join(folder, f'claims{ext}')
+            uploaded.save(path)
+            sig_error = flex_services.flex_signature_error(path, 'Employee claims')
+            if sig_error:
+                return jsonify({'error': 'Invalid claims workbook', 'details': sig_error}), 400
+            return jsonify(validator(path))
+    except flex_services.FlexInputError as exc:
+        return jsonify({'error': 'Claims validation failed', 'details': str(exc),
+                        'validation': exc.validation}), 400
+    except Exception:
+        logger.exception('Flex claims validation failed for %s', company_id)
+        return jsonify({'error': 'Could not check the claims workbook',
+                        'details': 'Re-save it as an Excel workbook and try again.'}), 500
+
+
 @app.route('/api/flex/run/<company_id>', methods=['POST'])
 def flex_run(company_id):
     """Run one company's monthly Flex Report generation.
@@ -6715,7 +6745,8 @@ def flex_run(company_id):
         if run_id:
             flex_services.discard_run(PROCESSED_FOLDER, run_id)
         logger.warning(f"Flex Report [{company_id}] input file rejected: {e}")
-        return jsonify({'error': 'Input file validation failed', 'details': str(e)}), 400
+        return jsonify({'error': 'Input file validation failed', 'details': str(e),
+                        'validation': e.validation}), 400
 
     except Exception as e:
         if run_id:

@@ -8,7 +8,7 @@ import pandas as pd
 
 from flex_services.errors import FlexInputError
 from .constants import (
-    BRUNEI_ENTITY, CLAIM_COLUMNS, CLAIM_RULES, CLAIM_TYPE_ALIASES, ENTITY,
+    BRUNEI_ENTITY, CLAIM_COLUMNS, CLAIM_ELIGIBILITY, CLAIM_RULES, CLAIM_TYPE_ALIASES, ENTITY,
     LISTING_COLUMNS, UTILIZATION_COLUMNS,
 )
 
@@ -17,13 +17,64 @@ def text(value):
     return "" if pd.isna(value) else re.sub(r"\s+", " ", str(value)).strip()
 
 
+def claim_type_key(value):
+    """Normalize export typography for lookup without changing report labels."""
+    label = text(value).replace("\u2019", "'")
+    return re.sub(r"\s*/\s*", "/", label).casefold()
+
+
+def canonical_claim_type(value):
+    label = claim_type_key(value)
+    aliases = {claim_type_key(key): target for key, target in CLAIM_TYPE_ALIASES.items()}
+    labels = {claim_type_key(key): key for key in CLAIM_RULES}
+    return labels.get(claim_type_key(aliases.get(label, label)))
+
+
 def claim_rule(value):
-    """Find a claim rule despite harmless case, spacing or documented label variants."""
-    label = text(value)
-    aliases = {text(key).casefold(): target for key, target in CLAIM_TYPE_ALIASES.items()}
-    rules = {text(key).casefold(): rule for key, rule in CLAIM_RULES.items()}
-    canonical = aliases.get(label.casefold(), label)
-    return rules.get(text(canonical).casefold())
+    """Find a claim rule despite harmless typography or documented label variants."""
+    return CLAIM_RULES.get(canonical_claim_type(value))
+
+
+def classification_issues(frame):
+    """Collect every checklist mismatch so operators can correct one upload once."""
+    issues = []
+    for excel_row, (_, row) in enumerate(frame.iterrows(), start=2):
+        label = text(row['Claim Type'])
+        canonical = canonical_claim_type(label)
+
+        def add(field, expected, message):
+            issues.append({
+                'row': excel_row, 'reference': text(row['Reference No.']),
+                'claim_type': label, 'field': field, 'actual': text(row[field]),
+                'expected': expected, 'message': message,
+            })
+
+        if canonical is None:
+            if claim_type_key(label) == 'other benefits':
+                message = ('Other Benefits covers items with different CPF and eligibility rules. '
+                           'Replace Claim Type with the specific benefit item from the LGI checklist. '
+                           'For an unlisted item, confirm its rules with LGI before reporting.')
+            else:
+                message = 'unsupported Claim Type. Select the matching benefit item from the LGI checklist.'
+            add('Claim Type', 'A specific LGI benefit item', message)
+            continue
+
+        for flag, expected in zip(['TAX', 'CPF'], CLAIM_RULES[canonical]):
+            if text(row[flag]).casefold() != expected.casefold():
+                add(flag, expected, f'{flag} conflicts with LGI classification. Correct {flag} to {expected} in the source export.')
+        allowed = CLAIM_ELIGIBILITY[canonical]
+        if text(row['Relation']).casefold() not in [relation.casefold() for relation in allowed]:
+            add('Relation', ', '.join(allowed),
+                'Claimant is not eligible for this benefit under the LGI checklist. '
+                'Review the claimant relation and benefit category in the source export.')
+    return issues
+
+
+def validate_claims(path):
+    """Preflight used by the upload UI; generation repeats the same checklist checks."""
+    frame = read_source(path, CLAIM_COLUMNS, 'LGI employee claims')
+    issues = classification_issues(frame)
+    return {'valid': not issues, 'claims': len(frame), 'validation': issues}
 
 
 def read_source(path, columns, label):
@@ -127,17 +178,15 @@ def load_claims(path, listing, pay_month):
     if frame["Payment Amt"].gt(frame["Converted Incurred Amt"] + 0.005).any():
         raise FlexInputError(f"{label}: Payment Amt exceeds Converted Incurred Amt")
     frame["Claim Type"] = frame["Claim Type"].map(text)
+    issues = classification_issues(frame)
+    if issues:
+        raise FlexInputError(
+            f"{label}: {len(issues)} checklist issue(s). {issues[0]['message']}",
+            validation=issues,
+        )
     frame["ClaimRule"] = frame["Claim Type"].map(claim_rule)
-    unknown = frame.loc[frame["ClaimRule"].isna(), "Claim Type"].unique()
-    if len(unknown):
-        raise FlexInputError(f"{label}: unsupported Claim Type: {'; '.join(unknown[:5])}")
     for index, flag in enumerate(["TAX", "CPF"]):
-        expected = frame["ClaimRule"].map(lambda rule: rule[index])
-        mismatch = frame[flag].map(text).str.casefold().ne(expected.str.casefold())
-        if mismatch.any():
-            refs = frame.loc[mismatch, "Reference No."].tolist()
-            raise FlexInputError(f"{label}: {flag} conflicts with LGI classification for: {', '.join(refs[:10])}")
-        frame[flag] = expected
+        frame[flag] = frame["ClaimRule"].map(lambda rule: rule[index])
     frame["Taxable"] = frame["Payment Amt"].where(frame["TAX"].eq("Yes"), 0)
     frame["Non Taxable"] = frame["Payment Amt"].where(frame["TAX"].eq("No"), 0)
     return match_listing(frame, listing, label)

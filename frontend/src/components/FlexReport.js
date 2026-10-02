@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import * as XLSX from 'xlsx';
 import apiService from '../services/api';
 import FlexRunResult from './FlexRunResult';
+import FlexClaimValidation from './FlexClaimValidation';
 
 const EXCEL_ACCEPT = {
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
@@ -89,7 +90,7 @@ const validateExcelSignature = async (file) => {
   }
 };
 
-const UploadSlot = ({ slot, file, errorMsg, onDrop, onReject, isProcessing }) => {
+const UploadSlot = ({ slot, file, errorMsg, onDrop, onReject, isProcessing, isChecking }) => {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     onDropRejected: onReject,
@@ -100,7 +101,7 @@ const UploadSlot = ({ slot, file, errorMsg, onDrop, onReject, isProcessing }) =>
 
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-2">
+      <label id={`upload-${slot.key}-label`} htmlFor={`upload-${slot.key}`} className="block text-sm font-medium text-gray-700 mb-2">
         {slot.label}
         {slot.required ? (
           <span className="ml-2 px-1.5 py-0.5 text-xs bg-blue-100 text-blue-800 rounded">Required</span>
@@ -109,7 +110,7 @@ const UploadSlot = ({ slot, file, errorMsg, onDrop, onReject, isProcessing }) =>
         )}
       </label>
       <div
-        {...getRootProps()}
+        {...getRootProps({ 'aria-labelledby': `upload-${slot.key}-label`, 'aria-describedby': errorMsg ? `upload-${slot.key}-error` : undefined })}
         className={`border-2 border-dashed rounded-lg p-5 text-center cursor-pointer transition-colors ${
           isDragActive
             ? 'border-blue-500 bg-blue-50'
@@ -120,15 +121,19 @@ const UploadSlot = ({ slot, file, errorMsg, onDrop, onReject, isProcessing }) =>
             : 'border-gray-300 hover:border-blue-400'
         } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
-        <input {...getInputProps()} />
+        <input {...getInputProps({ id: `upload-${slot.key}`, 'aria-invalid': Boolean(errorMsg) })} />
         {file ? (
           <div className="flex items-center justify-center space-x-2">
-            <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+            <svg aria-hidden="true" className={`w-5 h-5 flex-shrink-0 ${errorMsg ? 'text-red-600' : isChecking ? 'text-blue-600' : 'text-green-600'}`} fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d={errorMsg
+                ? 'M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 001.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z'
+                : isChecking
+                ? 'M10 18a8 8 0 100-16 8 8 0 000 16zM11 6a1 1 0 10-2 0v4a1 1 0 00.293.707l2 2a1 1 0 001.414-1.414L11 9.586V6z'
+                : 'M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z'} clipRule="evenodd" />
             </svg>
             <div className="min-w-0">
-              <p className="text-sm text-green-700 truncate">{file.name}</p>
-              <p className="text-xs text-green-600">{formatSize(file.size)}</p>
+              <p className={`text-sm truncate ${errorMsg ? 'text-red-800' : isChecking ? 'text-blue-800' : 'text-green-700'}`}>{file.name}</p>
+              <p className={`text-xs ${errorMsg ? 'text-red-700' : isChecking ? 'text-blue-700' : 'text-green-700'}`}>{formatSize(file.size)}</p>
             </div>
           </div>
         ) : (
@@ -141,8 +146,9 @@ const UploadSlot = ({ slot, file, errorMsg, onDrop, onReject, isProcessing }) =>
           </div>
         )}
       </div>
+      {isChecking && <p role="status" className="mt-1.5 text-sm text-blue-800">Checking workbook…</p>}
       {errorMsg && (
-        <p className="mt-1.5 text-xs text-red-600">{errorMsg}</p>
+        <p id={`upload-${slot.key}-error`} className="mt-1.5 text-sm text-red-700">{errorMsg}</p>
       )}
     </div>
   );
@@ -159,6 +165,12 @@ const FlexReport = () => {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [showPending, setShowPending] = useState(false);
+  const [claimValidation, setClaimValidation] = useState(null);
+  const [checkingSlots, setCheckingSlots] = useState({});
+  const [uploadReset, setUploadReset] = useState(0);
+  const uploadVersions = useRef({});
+
+  useEffect(() => () => { uploadVersions.current = {}; }, []);
 
   useEffect(() => {
     const loadCompanies = async () => {
@@ -185,6 +197,9 @@ const FlexReport = () => {
   const selected = companies.find((company) => company.id === selectedId) || null;
 
   const handleSelect = (companyId) => {
+    uploadVersions.current = {};
+    setCheckingSlots({});
+    setClaimValidation(null);
     const company = companies.find((item) => item.id === companyId);
     setSelectedId(companyId);
     setPayMonth(defaultMonthForCompany(company));
@@ -205,33 +220,62 @@ const FlexReport = () => {
   const handleDrop = useCallback((key) => async (acceptedFiles) => {
     if (acceptedFiles.length === 0) return;
     const file = acceptedFiles[0];
-    const sigError = await validateExcelSignature(file);
-    if (sigError) {
-      clearSlot(key, setFiles);
-      setFileErrors((prev) => ({ ...prev, [key]: sigError }));
-      return;
-    }
+    const version = Symbol(key);
+    uploadVersions.current[key] = version;
+    const isCurrent = () => uploadVersions.current[key] === version;
     const detection = selected?.month_detection;
-    if (detection?.file_key === key) {
-      try {
-        setPayMonth(await detectWorkbookMonth(file, detection.column));
-      } catch (monthError) {
-        clearSlot(key, setFiles);
-        setPayMonth('');
-        setFileErrors((prev) => ({ ...prev, [key]: monthError.message }));
-        return;
-      }
-    }
-    setFiles((prev) => ({ ...prev, [key]: file }));
+    const checksClaims = selected?.claim_validation?.file_key === key;
+    clearSlot(key, setFiles);
     clearSlot(key, setFileErrors);
+    setCheckingSlots((prev) => ({ ...prev, [key]: true }));
+    if (detection?.file_key === key) setPayMonth('');
+    if (checksClaims) setClaimValidation({ status: 'checking' });
     setError(null);
     setResult(null);
+    try {
+      const sigError = await validateExcelSignature(file);
+      if (!isCurrent()) return;
+      if (sigError) throw new Error(sigError);
+      if (detection?.file_key === key) {
+        const detectedMonth = await detectWorkbookMonth(file, detection.column);
+        if (!isCurrent()) return;
+        setPayMonth(detectedMonth);
+      }
+      setFiles((prev) => ({ ...prev, [key]: file }));
+      if (checksClaims) {
+        const response = await apiService.validateFlexClaims(selected.id, file);
+        if (!isCurrent()) return;
+        if (!response.success) {
+          setClaimValidation({ status: 'error', message: response.details ? `${response.error}: ${response.details}` : response.error });
+          setFileErrors((prev) => ({ ...prev, [key]: 'Claims could not be checked. Retry below or upload a corrected workbook.' }));
+          return;
+        }
+        setClaimValidation({ ...response.data, status: response.data.valid ? 'valid' : 'invalid' });
+        if (!response.data.valid) {
+          setFileErrors((prev) => ({ ...prev, [key]: `${response.data.validation.length} checklist issues. Review the claim checks below and upload a corrected workbook.` }));
+        }
+      }
+    } catch (uploadError) {
+      if (!isCurrent()) return;
+      clearSlot(key, setFiles);
+      if (detection?.file_key === key) setPayMonth('');
+      if (checksClaims) setClaimValidation(null);
+      setFileErrors((prev) => ({ ...prev, [key]: uploadError.message }));
+    } finally {
+      if (isCurrent()) clearSlot(key, setCheckingSlots);
+    }
   }, [selected]);
 
   const handleReject = useCallback((key) => () => {
+    uploadVersions.current[key] = Symbol(key);
+    clearSlot(key, setCheckingSlots);
     clearSlot(key, setFiles);
+    if (selected?.claim_validation?.file_key === key) setClaimValidation(null);
+    if (selected?.month_detection?.file_key === key) setPayMonth('');
+    setResult(null);
+    setError(null);
     setFileErrors((prev) => ({ ...prev, [key]: 'Only .xlsx or .xlsm files are accepted.' }));
-  }, []);
+  }, [selected]);
 
   const missingRequired = selected
     ? selected.files.filter((slot) => slot.required && !files[slot.key])
@@ -242,9 +286,17 @@ const FlexReport = () => {
   const isAwaitingMonthDetection = Boolean(
     selected?.month_detection && !files[selected.month_detection.file_key]
   );
-  const canGenerate = Boolean(selected) && missingRequired.length === 0 && payMonthValid;
+  const isCheckingFiles = Object.keys(checkingSlots).length > 0;
+  const claimsReady = !selected?.claim_validation || claimValidation?.status === 'valid';
+  const canGenerate = Boolean(selected) && missingRequired.length === 0 && payMonthValid
+    && !isCheckingFiles && claimsReady && Object.keys(fileErrors).length === 0;
 
   const handleGenerate = async () => {
+    if (isProcessing || isCheckingFiles) return;
+    if (!claimsReady || Object.keys(fileErrors).length > 0) {
+      setError('Resolve the upload and claim validation issues before generating reports.');
+      return;
+    }
     if (missingRequired.length > 0) {
       setError(`Missing required file(s): ${missingRequired.map((slot) => slot.label).join('; ')}`);
       return;
@@ -263,6 +315,9 @@ const FlexReport = () => {
       setResult(response.data);
     } else {
       setError(response.details ? `${response.error}: ${response.details}` : response.error);
+      if (selected.claim_validation && response.validation?.length) {
+        setClaimValidation({ status: 'invalid', validation: response.validation });
+      }
     }
     setIsProcessing(false);
   };
@@ -278,6 +333,10 @@ const FlexReport = () => {
   };
 
   const handleReset = () => {
+    uploadVersions.current = {};
+    setUploadReset((version) => version + 1);
+    setCheckingSlots({});
+    setClaimValidation(null);
     setFiles({});
     setFileErrors({});
     setResult(null);
@@ -379,13 +438,14 @@ const FlexReport = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {selected.files.map((slot) => (
                 <UploadSlot
-                  key={slot.key}
+                  key={`${selected.id}-${uploadReset}-${slot.key}`}
                   slot={slot}
                   file={files[slot.key]}
                   errorMsg={fileErrors[slot.key]}
                   onDrop={handleDrop(slot.key)}
                   onReject={handleReject(slot.key)}
                   isProcessing={isProcessing}
+                  isChecking={checkingSlots[slot.key]}
                 />
               ))}
             </div>
@@ -396,6 +456,7 @@ const FlexReport = () => {
             <div className="flex items-center space-x-3">
               <input
                 type="month"
+                aria-label="Payment month"
                 pattern="\d{4}-\d{2}"
                 placeholder="YYYY-MM"
                 value={payMonth}
@@ -419,8 +480,16 @@ const FlexReport = () => {
             </div>
           </div>
 
+          {selected.claim_validation && (
+            <FlexClaimValidation
+              validation={claimValidation}
+              rules={selected.claim_validation.rules}
+              onRetry={() => handleDrop(selected.claim_validation.file_key)([files[selected.claim_validation.file_key]])}
+            />
+          )}
+
           {error && (
-            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div role="alert" className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
               <div className="flex items-start">
                 <svg className="w-5 h-5 text-red-500 mr-2 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
@@ -445,9 +514,13 @@ const FlexReport = () => {
             </div>
           )}
 
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs text-gray-500">
-              {missingRequired.length > 0
+              {isCheckingFiles
+                ? 'Checking uploaded files…'
+                : !claimsReady && files[selected?.claim_validation?.file_key]
+                ? 'Resolve claim checks before generating reports'
+                : missingRequired.length > 0
                 ? `Waiting for: ${missingRequired.map((slot) => slot.label).join(', ')}`
                 : 'All required files selected'}
             </p>

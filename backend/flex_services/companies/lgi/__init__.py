@@ -3,10 +3,10 @@
 from datetime import datetime
 from pathlib import Path
 
-from .constants import RESULT_UI
+from .constants import CLAIM_VALIDATION, RESULT_UI
 from .processing import (
     balance_validations, employment_validations, leaver_validations,
-    load_claims, load_listing, load_utilization,
+    load_claims, load_listing, load_utilization, validate_claims,
 )
 from .workbooks import write_details, write_summary, write_utilization
 
@@ -26,6 +26,7 @@ COMPANY = {
         "come from that export. Claims Summary keeps one row per claim."
     ),
     "result_ui": RESULT_UI,
+    "claim_validation": CLAIM_VALIDATION,
 }
 
 

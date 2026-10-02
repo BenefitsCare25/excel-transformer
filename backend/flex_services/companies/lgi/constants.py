@@ -17,7 +17,6 @@ CLAIM_RULES = {
     "Medical Expenses (incurred for general well-being)": ("No", "Yes"),
     "Medical Expenses beyond Hospital & Surgical or Outpatient Plan (Cash payment)": ("No", "No"),
     "Medical Expenses not covered by Hospital & Surgical or Outpatient Plan (Cash payment)": ("No", "No"),
-    "Other Benefits": ("Yes", "Yes"),
     "Outpatient GP": ("No", "No"),
     "Outpatient Specialist (without referral letter)": ("No", "No"),
     "Self-Improvement Course Fees (Non CPF Payable)": ("Yes", "No"),
@@ -39,9 +38,51 @@ CLAIM_RULES = {
 # Source exports and reference material sometimes use shortened labels. Resolve
 # those labels to one rule without changing the original claim text in the output.
 CLAIM_TYPE_ALIASES = {
+    "Children's Education/ Tuition Fees": "Children's Education Tuition Fees",
     "Fertility Treatment": "Fertility Treatment (CPF Payable)",
     "Lasik Surgery": "Lasik Surgery (CPF Payable)",
     "Self-Improvement Course Fees": "Self-Improvement Course Fees (Non CPF Payable)",
+}
+
+# Eligibility from the supplied LGI checklist (EE = Self, SP = Spouse, CH = Child).
+# Other Benefits is a section heading, not a category with one CPF/eligibility rule.
+CLAIM_ELIGIBILITY = {
+    "Alternative Treatment (part of medical treatment)": ("Self", "Spouse", "Child"),
+    "Dental": ("Self", "Spouse", "Child"),
+    "Family Holidays (hotel, chalets, holiday bungalows, tour package, air tickets)": ("Self", "Spouse", "Child"),
+    "Fertility Treatment (CPF Payable)": ("Self", "Spouse"),
+    "Health Screening (part of medical treatment)": ("Self", "Spouse", "Child"),
+    "Infant and Childcare Expenses at ECDA Registered Childcare Centres": ("Child",),
+    "Lasik Surgery (CPF Payable)": ("Self", "Spouse", "Child"),
+    "Maternity": ("Self", "Spouse"),
+    "Medical Expenses (incurred for general well-being)": ("Self", "Spouse", "Child"),
+    "Medical Expenses beyond Hospital & Surgical or Outpatient Plan (Cash payment)": ("Self", "Spouse", "Child"),
+    "Medical Expenses not covered by Hospital & Surgical or Outpatient Plan (Cash payment)": ("Self", "Spouse", "Child"),
+    "Outpatient GP": ("Self", "Spouse", "Child"),
+    "Outpatient Specialist (without referral letter)": ("Self", "Spouse", "Child"),
+    "Self-Improvement Course Fees (Non CPF Payable)": ("Self",),
+    "Vaccinations and Immunizations": ("Self", "Spouse", "Child"),
+    "Medical and Dental Expenses for Parents": ("Parent",),
+    "Purchase of Fitness Equipment": ("Self", "Spouse", "Child"),
+    "Utility/Broadband/Telephone Bills": ("Self", "Spouse"),
+    "Entertainment & Concert Tickets": ("Self", "Spouse", "Child"),
+    "Personal Insurance Premium": ("Self", "Spouse", "Child"),
+    "Children's Education Tuition Fees": ("Child",),
+    "Spa/Wellness Services": ("Self", "Spouse"),
+    "Medical Appliances": ("Self", "Spouse", "Child"),
+    "Optical Expenses": ("Self", "Spouse", "Child"),
+    "Fitness Club Memberships and entrance fees": ("Self", "Spouse"),
+    "Purchase of Handphone/PDAs/Laptop and computer accessories": ("Self", "Spouse", "Child"),
+    TRAVEL_INSURANCE: ("Self", "Spouse", "Child"),
+}
+
+CLAIM_VALIDATION = {
+    "file_key": "claims",
+    "rules": [
+        {"claim_type": label, "taxable": tax, "cpf": cpf,
+         "relations": CLAIM_ELIGIBILITY[label]}
+        for label, (tax, cpf) in CLAIM_RULES.items()
+    ],
 }
 
 CLAIM_COLUMNS = (

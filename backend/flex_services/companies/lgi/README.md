@@ -24,7 +24,31 @@ The latest LGI checklist supplies the category rules in `constants.py`.
 **Holiday travel insurance, admission fees to local attraction etc is taxable and
 CPF-payable.** The profile also recognizes the shortened checklist labels for
 Fertility Treatment, Lasik Surgery and Self-Improvement Course Fees while preserving
-the uploaded wording in the reports. Tax/CPF conflicts stop generation.
+the uploaded wording in the reports. **Children's Education/ Tuition Fees is taxable
+and CPF-payable**, including the export label with a curly apostrophe. Matching
+accepts straight/curly apostrophes and spacing around slashes, and retains support
+for the older Children's Education Tuition Fees label.
+
+The supplied LGI checklist is authoritative for tax, CPF and claimant eligibility.
+EE maps to Self, SP to Spouse, CH to Child and Parents to Parent. Claim types with
+restricted eligibility include childcare and children's education (Child only),
+parents' medical/dental expenses (Parent only), self-improvement courses (Self only),
+and fertility, maternity, fitness memberships, spa and utility bills (Self/Spouse).
+Original claimant and category values are preserved; mismatches stop generation.
+
+**Other Benefits is a section heading, not one classification rule.** A claim using
+that generic label must be assigned its specific benefit item in the source export.
+For an item outside the supplied examples, confirm its rules with LGI before adding
+it to the setup; no tax, CPF or eligibility treatment is inferred.
+
+Uploading LGI claims triggers `POST /api/flex/validate/lgi` with the `claims` file.
+The page lists every checklist issue with its Excel row, claim reference, uploaded
+value, expected value and correction guidance. Generation stays disabled while
+checks are pending, unavailable or failing. Re-uploading, resetting or switching
+companies invalidates stale responses. The rules table comes from the company
+catalog; both upload checks and generation use the same backend validator.
+Passing these checks covers classification and eligibility only; generation also
+validates approval status, dates, amounts, employee matching and reconciliation.
 
 | Output field | Input or calculation |
 | --- | --- |

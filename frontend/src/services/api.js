@@ -423,6 +423,21 @@ class ApiService {
     }
   }
 
+  async validateFlexClaims(companyId, file) {
+    const formData = new FormData();
+    formData.append('claims', file);
+    try {
+      const response = await this.api.post(`/api/flex/validate/${companyId}`, formData);
+      return { success: true, data: response.data };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Could not check the claims workbook',
+        details: error.response?.data?.details || error.message,
+      };
+    }
+  }
+
   async runFlexReport(companyId, files, payMonth) {
     const formData = new FormData();
     Object.entries(files).forEach(([key, file]) => {
@@ -447,6 +462,7 @@ class ApiService {
         success: false,
         error: error.response?.data?.error || 'Generation failed',
         details: error.response?.data?.details || error.message,
+        validation: error.response?.data?.validation || [],
       };
     }
   }

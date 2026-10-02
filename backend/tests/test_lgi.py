@@ -12,7 +12,8 @@ from flex_services.errors import FlexInputError
 from flex_services.companies.lgi.constants import ENTITY, DETAIL_HEADERS, SUMMARY_HEADERS
 from flex_services.companies.lgi.processing import (
     balance_validations, claim_rule, employment_validations,
-    load_claims, load_listing, leaver_validations, load_utilization, policy_period,
+    classification_issues, load_claims, load_listing, leaver_validations,
+    load_utilization, policy_period, validate_claims,
 )
 from flex_services.companies.lgi.workbooks import write_details, write_summary, write_utilization
 from flex_services.companies.lgi import run
@@ -97,10 +98,31 @@ class LGIClaimsTests(unittest.TestCase):
 
     def test_latest_checklist_categories_and_short_labels(self):
         expected = {
+            "Outpatient GP": ("No", "No"),
+            "Outpatient Specialist (without referral letter)": ("No", "No"),
+            "Dental": ("No", "No"),
+            "Alternative Treatment (part of medical treatment)": ("No", "No"),
+            "Medical Expenses beyond Hospital & Surgical or Outpatient Plan (Cash payment)": ("No", "No"),
+            "Medical Expenses not covered by Hospital & Surgical or Outpatient Plan (Cash payment)": ("No", "No"),
+            "Health Screening (part of medical treatment)": ("No", "No"),
+            "Maternity": ("No", "Yes"),
+            "Infant and Childcare Expenses at ECDA Registered Childcare Centres": ("No", "Yes"),
+            "Medical Expenses (incurred for general well-being)": ("No", "Yes"),
+            "Vaccinations and Immunizations": ("No", "Yes"),
+            "Family Holidays (hotel, chalets, holiday bungalows, tour package, air tickets)": ("Yes", "No"),
+            "Medical and Dental Expenses for Parents": ("Yes", "Yes"),
+            "Personal Insurance Premium": ("Yes", "Yes"),
             "Holiday travel insurance, admission fees to local attraction etc": ("Yes", "Yes"),
             "Children's Education Tuition Fees": ("Yes", "Yes"),
+            "Children\u2019s Education/ Tuition Fees": ("Yes", "Yes"),
+            "Entertainment & Concert Tickets": ("Yes", "Yes"),
+            "Fitness Club Memberships and entrance fees": ("Yes", "Yes"),
             "Spa/Wellness Services": ("Yes", "Yes"),
+            "Purchase of Fitness Equipment": ("Yes", "Yes"),
+            "Purchase of Handphone/PDAs/Laptop and computer accessories": ("Yes", "Yes"),
             "Medical Appliances": ("Yes", "Yes"),
+            "Optical Expenses": ("Yes", "Yes"),
+            "Utility/Broadband/Telephone Bills": ("Yes", "Yes"),
             "Fertility Treatment": ("No", "Yes"),
             "Lasik Surgery": ("No", "Yes"),
             "Self-Improvement Course Fees": ("Yes", "No"),
@@ -112,9 +134,114 @@ class LGIClaimsTests(unittest.TestCase):
 
         self.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = [
             'Fertility Treatment', 'No', 'Yes']
+        self.claims.loc[0, 'Relation'] = 'Self'
         prepared = self.prepare()
         self.assertEqual(prepared.loc[0, 'Claim Type'], 'Fertility Treatment')
         self.assertEqual(prepared.loc[0, 'ClaimRule'], ('No', 'Yes'))
+
+    def test_checklist_collects_all_issues_with_excel_rows_and_expected_values(self):
+        self.claims.loc[0, ['Claim Type', 'TAX', 'CPF', 'Relation']] = [
+            "Children\u2019s Education/ Tuition Fees", 'No', 'No', 'Self']
+        self.claims.loc[1, ['Claim Type', 'TAX', 'CPF']] = ['Maternity', 'No', 'No']
+        path = self.root / 'claims.xlsx'
+        self.claims.to_excel(path, index=False)
+        preflight = validate_claims(path)
+        self.assertFalse(preflight['valid'])
+        self.assertEqual(preflight['claims'], 2)
+        self.assertEqual([(i['row'], i['reference'], i['field'], i['expected'])
+                          for i in preflight['validation']], [
+            (2, 'LGI-000001', 'TAX', 'Yes'),
+            (2, 'LGI-000001', 'CPF', 'Yes'),
+            (2, 'LGI-000001', 'Relation', 'Child'),
+            (3, 'LGI-000002', 'CPF', 'Yes'),
+        ])
+        with self.assertRaises(FlexInputError) as caught:
+            self.prepare()
+        self.assertEqual(caught.exception.validation, preflight['validation'])
+
+    def test_generic_other_benefits_requires_specific_category_for_either_cpf_flag(self):
+        for cpf in ['Yes', 'No']:
+            with self.subTest(cpf=cpf):
+                self.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = ['Other Benefits', 'Yes', cpf]
+                issues = classification_issues(self.claims)
+                self.assertEqual(len(issues), 1)
+                self.assertEqual(issues[0]['field'], 'Claim Type')
+                self.assertIn('specific benefit item', issues[0]['message'])
+                self.assertIsNone(claim_rule('Other Benefits'))
+
+    def test_eligibility_restrictions_from_supplied_checklist(self):
+        expectations = {
+            'Dental': {'Self', 'Spouse', 'Child'},
+            'Fertility Treatment': {'Self', 'Spouse'},
+            'Maternity': {'Self', 'Spouse'},
+            'Lasik Surgery': {'Self', 'Spouse', 'Child'},
+            'Infant and Childcare Expenses at ECDA Registered Childcare Centres': {'Child'},
+            "Children\u2019s Education/ Tuition Fees": {'Child'},
+            'Medical and Dental Expenses for Parents': {'Parent'},
+            'Self-Improvement Course Fees': {'Self'},
+            'Fitness Club Memberships and entrance fees': {'Self', 'Spouse'},
+            'Spa/Wellness Services': {'Self', 'Spouse'},
+            'Utility/Broadband/Telephone Bills': {'Self', 'Spouse'},
+        }
+        for label, allowed in expectations.items():
+            tax, cpf = claim_rule(label)
+            for relation in ['Self', 'Spouse', 'Child', 'Parent', 'Unknown', '']:
+                with self.subTest(label=label, relation=relation):
+                    self.claims.loc[0, ['Claim Type', 'TAX', 'CPF', 'Relation']] = [
+                        label, tax, cpf, relation]
+                    issues = classification_issues(self.claims)
+                    self.assertEqual(len(issues), 0 if relation in allowed else 1)
+                    if issues:
+                        self.assertEqual(issues[0]['field'], 'Relation')
+
+    def test_checklist_failure_creates_no_partial_reports(self):
+        self.prepare_utilization()
+        self.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = ['Other Benefits', 'Yes', 'Yes']
+        self.claims.to_excel(self.root / 'claims.xlsx', index=False)
+        files = {key: self.root / f'{key}.xlsx' for key in ['claims', 'listing', 'utilization']}
+        with self.assertRaises(FlexInputError) as caught:
+            run(files, '2026-07-01', self.root / 'out')
+        self.assertEqual(len(caught.exception.validation), 1)
+        self.assertFalse((self.root / 'out').exists())
+
+    def test_education_label_variants_generate_reports_with_tax_and_cpf(self):
+        for apostrophe in ["'", "\u2019"]:
+            for separator in [' ', '/', '/ ', ' / ']:
+                label = f"Children{apostrophe}s Education{separator}Tuition Fees"
+                with self.subTest(label=label):
+                    self.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = [label, 'Yes', 'Yes']
+                    self.prepare_utilization()
+                    files = {key: self.root / f'{key}.xlsx'
+                             for key in ['claims', 'listing', 'utilization']}
+                    result = run(files, '2026-07-01', self.root / 'out')
+                    self.assertEqual(result['errors'], 0)
+                    self.assertEqual(result['grand_total'], 160.3)
+                    self.assertEqual(len(result['outputs']), 3)
+                    with_details = openpyxl.load_workbook(result['outputs'][0])
+                    try:
+                        row = with_details.active
+                        self.assertEqual(row['G2'].value, label)
+                        self.assertEqual(row['H2'].value, 120.1)
+                        self.assertEqual(row['I2'].value, 0)
+                        self.assertEqual(row['J2'].value, 'Yes')
+                    finally:
+                        with_details.close()
+                    summary = openpyxl.load_workbook(result['outputs'][1])
+                    try:
+                        self.assertEqual(summary.active['F2'].value, 120.1)
+                        self.assertEqual(summary.active['G2'].value, 0)
+                        self.assertEqual(summary.active['H2'].value, 'Yes')
+                    finally:
+                        summary.close()
+
+    def test_education_alias_still_rejects_conflicting_tax_and_cpf(self):
+        for flag in ['TAX', 'CPF']:
+            with self.subTest(flag=flag):
+                self.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = [
+                    "Children\u2019s Education/ Tuition Fees", 'Yes', 'Yes']
+                self.claims.loc[0, flag] = 'No'
+                with self.assertRaisesRegex(FlexInputError, f'{flag} conflicts'):
+                    self.prepare()
 
     def test_tax_and_cpf_combinations_remain_independent(self):
         self.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = [

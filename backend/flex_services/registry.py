@@ -67,6 +67,7 @@ def catalog():
             'notes': spec.get('notes', ''),
             'default_month_offset': spec.get('default_month_offset', 1),
             'month_detection': spec.get('month_detection'),
+            'claim_validation': spec.get('claim_validation'),
         })
 
     for number in range(len(items) + 1, COMPANY_SLOT_COUNT + 1):

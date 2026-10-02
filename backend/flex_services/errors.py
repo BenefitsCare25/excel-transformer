@@ -8,3 +8,7 @@ class FlexInputError(ValueError):
     API can return a 400 with the message shown verbatim. Every other exception is a
     genuine failure and is logged with a traceback as a 500.
     """
+
+    def __init__(self, message, validation=None):
+        super().__init__(message)
+        self.validation = validation or []
