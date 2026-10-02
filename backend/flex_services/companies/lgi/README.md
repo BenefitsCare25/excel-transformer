@@ -36,10 +36,10 @@ parents' medical/dental expenses (Parent only), self-improvement courses (Self o
 and fertility, maternity, fitness memberships, spa and utility bills (Self/Spouse).
 Original claimant and category values are preserved; mismatches stop generation.
 
-**Other Benefits is a section heading, not one classification rule.** A claim using
-that generic label must be assigned its specific benefit item in the source export.
-For an item outside the supplied examples, confirm its rules with LGI before adding
-it to the setup; no tax, CPF or eligibility treatment is inferred.
+**Other Benefit is taxable and CPF-payable**, as confirmed in the setup update.
+Both Other Benefit and Other Benefits are accepted, preserving the uploaded label.
+No claimant eligibility rule was supplied for this category, so its eligibility
+is shown as Not specified and no category-specific relation check is applied.
 
 Uploading LGI claims triggers `POST /api/flex/validate/lgi` with the `claims` file.
 The page lists every checklist issue with its Excel row, claim reference, uploaded

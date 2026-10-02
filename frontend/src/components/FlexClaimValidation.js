@@ -61,7 +61,7 @@ export default function FlexClaimValidation({ validation, rules, onRetry }) {
       )}
       <details className="text-sm text-gray-700">
         <summary className="cursor-pointer w-fit py-2 font-medium text-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600">View LGI tax, CPF and eligibility rules</summary>
-        <p className="my-2">Self means employee; Spouse, Child and Parent match the eligibility columns in the checklist. “Other Benefits” requires a specific benefit item because its categories have different rules.</p>
+        <p className="my-2">Self means employee; Spouse, Child and Parent match the eligibility columns in the checklist. Other Benefit is taxable and CPF-payable; its claimant eligibility rule has not been specified.</p>
         <div className="overflow-auto max-h-80 border border-gray-200 rounded-lg" tabIndex={0} role="region" aria-label="LGI checklist rules">
           <table className="w-full text-sm text-left">
             <caption className="sr-only">LGI benefit classification and eligible claimant relations</caption>
@@ -76,7 +76,7 @@ export default function FlexClaimValidation({ validation, rules, onRetry }) {
                   <th scope="row" className="p-3 font-normal">{rule.claim_type}</th>
                   <td className="p-3">{rule.taxable}</td>
                   <td className="p-3">{rule.cpf}</td>
-                  <td className="p-3">{rule.relations.join(', ')}</td>
+                  <td className="p-3">{rule.relations?.join(', ') ?? 'Not specified'}</td>
                 </tr>
               ))}
             </tbody>

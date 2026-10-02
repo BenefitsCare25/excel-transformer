@@ -50,12 +50,7 @@ def classification_issues(frame):
             })
 
         if canonical is None:
-            if claim_type_key(label) == 'other benefits':
-                message = ('Other Benefits covers items with different CPF and eligibility rules. '
-                           'Replace Claim Type with the specific benefit item from the LGI checklist. '
-                           'For an unlisted item, confirm its rules with LGI before reporting.')
-            else:
-                message = 'unsupported Claim Type. Select the matching benefit item from the LGI checklist.'
+            message = 'unsupported Claim Type. Select the matching benefit item from the LGI checklist.'
             add('Claim Type', 'A specific LGI benefit item', message)
             continue
 
@@ -63,7 +58,7 @@ def classification_issues(frame):
             if text(row[flag]).casefold() != expected.casefold():
                 add(flag, expected, f'{flag} conflicts with LGI classification. Correct {flag} to {expected} in the source export.')
         allowed = CLAIM_ELIGIBILITY[canonical]
-        if text(row['Relation']).casefold() not in [relation.casefold() for relation in allowed]:
+        if allowed is not None and text(row['Relation']).casefold() not in [relation.casefold() for relation in allowed]:
             add('Relation', ', '.join(allowed),
                 'Claimant is not eligible for this benefit under the LGI checklist. '
                 'Review the claimant relation and benefit category in the source export.')

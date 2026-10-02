@@ -3,7 +3,7 @@
 ENTITY = "Lion Global Investors Limited"
 BRUNEI_ENTITY = "Lion Global Investors Ltd, Brunei Branch"
 
-# (Taxable, CPF payable), transcribed from LGI's latest classification checklist.
+# (Taxable, CPF payable), from LGI's checklist and confirmed setup updates.
 TRAVEL_INSURANCE = "Holiday travel insurance, admission fees to local attraction etc"
 CLAIM_RULES = {
     "Alternative Treatment (part of medical treatment)": ("No", "No"),
@@ -33,11 +33,13 @@ CLAIM_RULES = {
     "Fitness Club Memberships and entrance fees": ("Yes", "Yes"),
     "Purchase of Handphone/PDAs/Laptop and computer accessories": ("Yes", "Yes"),
     TRAVEL_INSURANCE: ("Yes", "Yes"),
+    "Other Benefit": ("Yes", "Yes"),
 }
 
 # Source exports and reference material sometimes use shortened labels. Resolve
 # those labels to one rule without changing the original claim text in the output.
 CLAIM_TYPE_ALIASES = {
+    "Other Benefits": "Other Benefit",
     "Children's Education/ Tuition Fees": "Children's Education Tuition Fees",
     "Fertility Treatment": "Fertility Treatment (CPF Payable)",
     "Lasik Surgery": "Lasik Surgery (CPF Payable)",
@@ -45,7 +47,7 @@ CLAIM_TYPE_ALIASES = {
 }
 
 # Eligibility from the supplied LGI checklist (EE = Self, SP = Spouse, CH = Child).
-# Other Benefits is a section heading, not a category with one CPF/eligibility rule.
+# None means no claimant eligibility rule was supplied for the claim type.
 CLAIM_ELIGIBILITY = {
     "Alternative Treatment (part of medical treatment)": ("Self", "Spouse", "Child"),
     "Dental": ("Self", "Spouse", "Child"),
@@ -74,6 +76,7 @@ CLAIM_ELIGIBILITY = {
     "Fitness Club Memberships and entrance fees": ("Self", "Spouse"),
     "Purchase of Handphone/PDAs/Laptop and computer accessories": ("Self", "Spouse", "Child"),
     TRAVEL_INSURANCE: ("Self", "Spouse", "Child"),
+    "Other Benefit": None,
 }
 
 CLAIM_VALIDATION = {

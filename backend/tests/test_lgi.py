@@ -159,15 +159,43 @@ class LGIClaimsTests(unittest.TestCase):
             self.prepare()
         self.assertEqual(caught.exception.validation, preflight['validation'])
 
-    def test_generic_other_benefits_requires_specific_category_for_either_cpf_flag(self):
-        for cpf in ['Yes', 'No']:
-            with self.subTest(cpf=cpf):
-                self.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = ['Other Benefits', 'Yes', cpf]
+    def test_other_benefit_labels_generate_taxable_cpf_payable_reports(self):
+        for label in ['Other Benefit', 'Other Benefits', '  other benefit  ']:
+            with self.subTest(label=label):
+                self.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = [label, 'Yes', 'Yes']
+                self.assertEqual(claim_rule(label), ('Yes', 'Yes'))
+                self.prepare_utilization()
+                files = {key: self.root / f'{key}.xlsx'
+                         for key in ['claims', 'listing', 'utilization']}
+                result = run(files, '2026-07-01', self.root / 'out')
+                self.assertEqual(result['errors'], 0)
+                self.assertEqual(result['grand_total'], 160.3)
+                self.assertEqual(len(result['outputs']), 3)
+                details = openpyxl.load_workbook(result['outputs'][0])
+                try:
+                    self.assertEqual(details.active['G2'].value, label.strip())
+                    self.assertEqual(details.active['H2'].value, 120.1)
+                    self.assertEqual(details.active['I2'].value, 0)
+                    self.assertEqual(details.active['J2'].value, 'Yes')
+                finally:
+                    details.close()
+                summary = openpyxl.load_workbook(result['outputs'][1])
+                try:
+                    self.assertEqual(summary.active['F2'].value, 120.1)
+                    self.assertEqual(summary.active['G2'].value, 0)
+                    self.assertEqual(summary.active['H2'].value, 'Yes')
+                finally:
+                    summary.close()
+
+    def test_other_benefit_rejects_conflicting_tax_and_cpf(self):
+        for flag in ['TAX', 'CPF']:
+            with self.subTest(flag=flag):
+                self.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = ['Other Benefits', 'Yes', 'Yes']
+                self.claims.loc[0, flag] = 'No'
                 issues = classification_issues(self.claims)
-                self.assertEqual(len(issues), 1)
-                self.assertEqual(issues[0]['field'], 'Claim Type')
-                self.assertIn('specific benefit item', issues[0]['message'])
-                self.assertIsNone(claim_rule('Other Benefits'))
+                self.assertEqual([(i['field'], i['expected']) for i in issues], [(flag, 'Yes')])
+                with self.assertRaisesRegex(FlexInputError, f'{flag} conflicts'):
+                    self.prepare()
 
     def test_eligibility_restrictions_from_supplied_checklist(self):
         expectations = {
@@ -196,7 +224,7 @@ class LGIClaimsTests(unittest.TestCase):
 
     def test_checklist_failure_creates_no_partial_reports(self):
         self.prepare_utilization()
-        self.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = ['Other Benefits', 'Yes', 'Yes']
+        self.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = ['Other Benefits', 'Yes', 'No']
         self.claims.to_excel(self.root / 'claims.xlsx', index=False)
         files = {key: self.root / f'{key}.xlsx' for key in ['claims', 'listing', 'utilization']}
         with self.assertRaises(FlexInputError) as caught:

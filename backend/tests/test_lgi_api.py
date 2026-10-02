@@ -27,15 +27,30 @@ class LGIValidationAPITests(unittest.TestCase):
         catalog = self.client.get('/api/flex/companies').get_json()
         lgi = next(c for c in catalog['companies'] if c['id'] == 'lgi')
         self.assertEqual(lgi['claim_validation']['file_key'], 'claims')
-        self.assertEqual(len(lgi['claim_validation']['rules']), 27)
+        self.assertEqual(len(lgi['claim_validation']['rules']), 28)
+        other = next(rule for rule in lgi['claim_validation']['rules']
+                     if rule['claim_type'] == 'Other Benefit')
+        self.assertEqual((other['taxable'], other['cpf'], other['relations']), ('Yes', 'Yes', None))
         response = self.upload()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {'valid': True, 'claims': 2, 'validation': []})
 
+    def test_other_benefit_upload_accepts_both_labels_and_checks_flags(self):
+        for label in ['Other Benefit', 'Other Benefits']:
+            with self.subTest(label=label):
+                self.fixture.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = [label, 'Yes', 'Yes']
+                response = self.upload()
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(response.get_json()['valid'])
+                self.fixture.claims.loc[0, ['TAX', 'CPF']] = ['No', 'No']
+                result = self.upload().get_json()
+                self.assertFalse(result['valid'])
+                self.assertEqual([issue['field'] for issue in result['validation']], ['TAX', 'CPF'])
+
     def test_all_claim_issues_are_returned_without_truncation(self):
         self.fixture.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = [
             "Children\u2019s Education/ Tuition Fees", 'No', 'No']
-        self.fixture.claims.loc[1, 'Claim Type'] = 'Other Benefits'
+        self.fixture.claims.loc[1, 'Claim Type'] = 'Unknown category'
         frame = pd.concat([self.fixture.claims] * 8, ignore_index=True)
         response = self.upload(frame)
         self.assertEqual(response.status_code, 200)
