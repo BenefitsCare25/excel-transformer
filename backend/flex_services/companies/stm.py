@@ -142,7 +142,10 @@ def _ensure_payroll_wage_type_lookup(workbook):
     if PAYROLL_WAGE_TYPE_LOOKUP_SHEET not in workbook.sheetnames:
         raise FlexInputError(
             f"IT15 template: sheet '{PAYROLL_WAGE_TYPE_LOOKUP_SHEET}' not found. "
-            f"Sheets present: {', '.join(workbook.sheetnames)}"
+            f"Sheets present: {', '.join(workbook.sheetnames)}",
+            title='Check the IT15 payroll template',
+            summary=f"The template is missing the '{PAYROLL_WAGE_TYPE_LOOKUP_SHEET}' sheet.",
+            guidance='Upload the complete IT15 template with its reference sheets and formulas intact.'
         )
 
     worksheet = workbook[PAYROLL_WAGE_TYPE_LOOKUP_SHEET]
@@ -153,7 +156,10 @@ def _ensure_payroll_wage_type_lookup(workbook):
     if lookup_table is None:
         raise FlexInputError(
             "IT15 template: wage-type lookup table starting at H4 was not found on "
-            f"'{PAYROLL_WAGE_TYPE_LOOKUP_SHEET}'."
+            f"'{PAYROLL_WAGE_TYPE_LOOKUP_SHEET}'.",
+            title='Check the IT15 payroll template',
+            summary='The table used to look up payroll wage types is missing.',
+            guidance=f"Upload a complete IT15 template with the wage-type table at H4 on '{PAYROLL_WAGE_TYPE_LOOKUP_SHEET}'."
         )
 
     table_end_row = int(lookup_table.ref.rsplit('P', 1)[-1])
@@ -191,7 +197,9 @@ def _require_columns(df, columns, label):
     if missing:
         raise FlexInputError(
             f"{label}: missing required column(s): {', '.join(missing)}. "
-            f"Found: {', '.join(str(c) for c in df.columns[:20])}"
+            f"Found: {', '.join(str(c) for c in df.columns[:20])}",
+            title=f'Check the {label}', summary=f"This file is missing these columns: {', '.join(missing)}.",
+            guidance='Upload the complete export with its original column headings.'
         )
 
 
@@ -224,7 +232,9 @@ def run(files, pay_month, outdir):
         raise FlexInputError(
             "No IT15 payroll template available. Upload the IT15 file with this run, or save a blank "
             f"template (header block, formulas and row-{20} formatting, no employee data) on the server at "
-            f"{DEFAULT_IT15_TEMPLATE} so future runs only need the three data files."
+            f"{DEFAULT_IT15_TEMPLATE} so future runs only need the three data files.",
+            title='Upload an IT15 payroll template', summary='No payroll template is available for this report.',
+            guidance='Upload the IT15 template in the payroll template field, then generate the reports again.'
         )
     USING_SAVED_TEMPLATE = not files.get('template')
     PAY_MONTH = datetime.fromisoformat(pay_month)
@@ -262,7 +272,9 @@ def run(files, pay_month, outdir):
     if len(lv.columns) < len(LEAVERS_COLUMNS):
         raise FlexInputError(
             f"STM Leavers file: expected at least {len(LEAVERS_COLUMNS)} columns "
-            f"({', '.join(LEAVERS_COLUMNS)}) with the header on row 2, found {len(lv.columns)}"
+            f"({', '.join(LEAVERS_COLUMNS)}) with the header on row 2, found {len(lv.columns)}",
+            title='Check the STM leavers file', summary='The leavers file does not have the expected columns.',
+            guidance=f"Upload the complete leavers export with its headings on row 2 and these columns: {', '.join(LEAVERS_COLUMNS)}."
         )
     lv.columns = LEAVERS_COLUMNS + list(lv.columns[len(LEAVERS_COLUMNS):])
     lv['EEID6'] = _normalise_eeid(lv['EmpID'])
@@ -634,7 +646,9 @@ def run(files, pay_month, outdir):
     if PAYROLL_TEMPLATE_SHEET not in wb.sheetnames:
         raise FlexInputError(
             f"Prior month IT15 payroll file: sheet '{PAYROLL_TEMPLATE_SHEET}' not found. "
-            f"Sheets present: {', '.join(wb.sheetnames)}"
+            f"Sheets present: {', '.join(wb.sheetnames)}",
+            title='Check the IT15 payroll template', summary=f"The '{PAYROLL_TEMPLATE_SHEET}' sheet is missing.",
+            guidance='Upload the complete IT15 workbook without removing or renaming its sheets.'
         )
     ws = wb[PAYROLL_TEMPLATE_SHEET]
     wage_type_lookup_end_row = _ensure_payroll_wage_type_lookup(wb)
@@ -669,7 +683,10 @@ def run(files, pay_month, outdir):
         raise FlexInputError(
             f"IT15 template has room for {footer_row - START} payroll rows before the "
             f"'{ws.cell(footer_row, 2).value}' row at row {footer_row}, but this run produced "
-            f"{len(agg)}. Extend the template's data area (and its total formula) and re-run."
+            f"{len(agg)}. Extend the template's data area (and its total formula) and re-run.",
+            title='The payroll template needs more rows',
+            summary=f'This report needs {len(agg)} payroll rows, but the template only has room for {footer_row - START}.',
+            guidance='Add rows above the total row in the template and extend the total formula. Upload the updated template and generate the reports again.'
         )
 
     # clear old data (cols A-L only; leave payroll-user cols M/P formulas intact)

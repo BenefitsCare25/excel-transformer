@@ -47,8 +47,25 @@ value, expected value and correction guidance. Generation stays disabled while
 checks are pending, unavailable or failing. Re-uploading, resetting or switching
 companies invalidates stale responses. The rules table comes from the company
 catalog; both upload checks and generation use the same backend validator.
-Passing these checks covers classification and eligibility only; generation also
-validates approval status, dates, amounts, employee matching and reconciliation.
+Once all files are uploaded, `POST /api/flex/validate-inputs/lgi` checks approval
+status, dates, amounts, employee matching and totals without creating output files.
+Generation stays disabled until this check passes and repeats the same checks.
+Errors identify the file, explain the problem and give the next step. Employees
+absent from the listing are distinguished from those present in the utilisation
+summary but excluded by the policy date filter; the latter show the source dates
+and the cutoff. Changing files or company, or resetting, invalidates old results.
+
+For a claimant whose only utilisation record starts before the policy year, the
+page requires an explicit **Include in reports** or **Exclude from reports**
+choice. Include uses that record with its original balances; all other matching
+and amount checks still apply. Exclude removes that employee's claims and
+utilisation record from all three reports and their totals. No choice is selected
+automatically. Choices reset when uploads, company or payment month change.
+Both preflight and generation receive `policy_decisions` as a JSON object keyed
+by employee ID. The server rejects stale IDs and unsupported values. Missing,
+ambiguous or future utilisation records still require correction. The result,
+run log and retained run manifest record the choices and affected claim amounts.
+Excluding all claimants produces reports with no claim rows and a zero claim total.
 
 | Output field | Input or calculation |
 | --- | --- |

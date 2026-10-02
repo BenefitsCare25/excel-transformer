@@ -6632,11 +6632,65 @@ def flex_validate_claims(company_id):
             return jsonify(validator(path))
     except flex_services.FlexInputError as exc:
         return jsonify({'error': 'Claims validation failed', 'details': str(exc),
-                        'validation': exc.validation}), 400
+                        'validation': exc.validation, 'feedback': exc.feedback}), 400
     except Exception:
         logger.exception('Flex claims validation failed for %s', company_id)
         return jsonify({'error': 'Could not check the claims workbook',
                         'details': 'Re-save it as an Excel workbook and try again.'}), 500
+
+
+@app.route('/api/flex/validate-inputs/<company_id>', methods=['POST'])
+def flex_validate_inputs(company_id):
+    """Check related uploads before enabling generation; never create output files."""
+    module = flex_services.get(company_id)
+    validator = getattr(module, 'validate_inputs', None)
+    if not callable(validator):
+        return jsonify({'error': 'File checks are not available for this company.'}), 404
+    pay_month = request.form.get('pay_month', '').strip()
+    try:
+        datetime.fromisoformat(pay_month)
+    except ValueError:
+        return jsonify({'error': 'Choose a valid payment month before checking the files.'}), 400
+    try:
+        with tempfile.TemporaryDirectory(prefix='flex-input-check-') as folder:
+            files = {}
+            for slot in module.COMPANY['files']:
+                uploaded = request.files.get(slot['key'])
+                if not uploaded or not uploaded.filename:
+                    if slot.get('required'):
+                        return jsonify({'error': f"Upload the {slot['label']} to check the files together."}), 400
+                    continue
+                ext = os.path.splitext(uploaded.filename)[1].lower()
+                if ext not in FLEX_ALLOWED_EXTENSIONS:
+                    return jsonify({'error': f"Save the {slot['label']} as .xlsx or .xlsm and upload it again."}), 400
+                path = os.path.join(folder, f"{slot['key']}{ext}")
+                uploaded.save(path)
+                sig_error = flex_services.flex_signature_error(path, slot['label'])
+                if sig_error:
+                    return jsonify({'error': sig_error}), 400
+                files[slot['key']] = path
+            options = flex_policy_options(company_id)
+            return jsonify(validator(files, pay_month, **options))
+    except flex_services.FlexInputError as exc:
+        return jsonify({'error': 'Some uploaded files need attention', 'details': str(exc),
+                        'validation': exc.validation, 'feedback': exc.feedback}), 400
+    except Exception:
+        logger.exception('Flex file checks failed for %s', company_id)
+        return jsonify({'error': 'We could not finish checking your files. Please try again.'}), 500
+
+
+def flex_policy_options(company_id):
+    """Pass employee choices only to adapters that support this option."""
+    import json
+    if company_id != 'lgi':
+        return {}
+    try:
+        decisions = json.loads(request.form.get('policy_decisions', '{}'))
+    except (ValueError, TypeError):
+        raise flex_services.FlexInputError('The employee choices could not be read. Select Include or Exclude again.')
+    if not isinstance(decisions, dict):
+        raise flex_services.FlexInputError('Choose Include or Exclude for the employees shown on the page.')
+    return {'policy_decisions': decisions}
 
 
 @app.route('/api/flex/run/<company_id>', methods=['POST'])
@@ -6706,12 +6760,13 @@ def flex_run(company_id):
 
         logger.info(f"Flex Report [{company_id}] run {run_id}: pay_month={pay_month}, files={list(files)}")
         start_time = time.time()
-        result = module.run(files, pay_month, outdir)
+        result = module.run(files, pay_month, outdir, **flex_policy_options(company_id))
         elapsed = time.time() - start_time
 
         outputs = flex_services.finalize_run(
             PROCESSED_FOLDER, run_id, result.get('outputs', []),
-            meta={'company_id': company_id, 'pay_month': pay_month}
+            meta={'company_id': company_id, 'pay_month': pay_month,
+                  'policy_review': result.get('policy_review', [])}
         )
         logger.info(
             f"Flex Report [{company_id}] run {run_id} completed in {elapsed:.1f}s: "
@@ -6735,6 +6790,7 @@ def flex_run(company_id):
             'validation': result.get('validation', []),
             'log': result.get('log', []),
             'stats': stats,
+            'policy_review': result.get('policy_review', []),
             'outputs': outputs,
             'elapsed_seconds': round(elapsed, 1),
             'retention_minutes': flex_services.RETENTION_MINUTES,
@@ -6746,7 +6802,7 @@ def flex_run(company_id):
             flex_services.discard_run(PROCESSED_FOLDER, run_id)
         logger.warning(f"Flex Report [{company_id}] input file rejected: {e}")
         return jsonify({'error': 'Input file validation failed', 'details': str(e),
-                        'validation': e.validation}), 400
+                        'validation': e.validation, 'feedback': e.feedback}), 400
 
     except Exception as e:
         if run_id:

@@ -1,6 +1,7 @@
 import React from 'react';
+import FlexValidationMessage from './FlexValidationMessage';
 
-export default function FlexClaimValidation({ validation, rules, onRetry }) {
+export default function FlexClaimValidation({ validation, rules, onRetry, inputStatus }) {
   const issues = validation?.validation || [];
   const affectedClaims = new Set(issues.map((issue) => issue.row)).size;
 
@@ -11,18 +12,25 @@ export default function FlexClaimValidation({ validation, rules, onRetry }) {
         {!validation && <p className="text-gray-600">Upload the claims workbook to check tax, CPF and claimant eligibility against the LGI checklist.</p>}
         {validation?.status === 'checking' && <p className="text-blue-800">Checking the claims workbook…</p>}
         {validation?.status === 'valid' && (
-          <p className="text-green-800">Tax, CPF and eligibility checks passed for {validation.claims} claims. File and reconciliation checks also run when generating reports.</p>
+          <div>
+            <p className="text-gray-700">Tax, CPF and claimant relationship checks passed for {validation.claims} claims.</p>
+            <p className={`mt-1 ${inputStatus === 'valid' ? 'text-green-800' : 'text-gray-700'}`}>
+              {inputStatus === 'valid' ? 'Employee details, policy dates and amounts also passed. Your files are ready.'
+                : inputStatus === 'checking' ? 'Checking employee details, policy dates and amounts across your files…'
+                : inputStatus === 'invalid' ? 'Some file checks still need attention. Review the message below before generating reports.'
+                : 'Upload all required files to check employee details, policy dates and amounts before generating reports.'}
+            </p>
+          </div>
         )}
         {validation?.status === 'invalid' && (
           <div className="p-3 border border-red-200 rounded-lg bg-red-50 text-red-800">
-            <p className="font-semibold">{issues.length} issue{issues.length === 1 ? '' : 's'} across {affectedClaims} claim{affectedClaims === 1 ? '' : 's'} — generation blocked</p>
+            <p className="font-semibold">{affectedClaims} claim{affectedClaims === 1 ? '' : 's'} need{affectedClaims === 1 ? 's' : ''} attention before you can generate reports ({issues.length} correction{issues.length === 1 ? '' : 's'})</p>
             <p className="mt-1">Correct the rows below in the claims export, then upload the corrected workbook. All uploaded files stay selected while you review.</p>
           </div>
         )}
         {validation?.status === 'error' && (
-          <div className="p-3 border border-red-200 rounded-lg bg-red-50 text-red-800">
-            <p className="font-semibold">Claims have not been checked — generation blocked</p>
-            <p className="mt-1 break-words">{validation.message}</p>
+          <div className="text-red-800">
+            <FlexValidationMessage feedback={validation.feedback || { title: 'We could not check your claims', message: validation.message }} />
             <button type="button" onClick={onRetry} className="mt-2 underline underline-offset-2 font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
               Check claims again
             </button>
@@ -49,8 +57,8 @@ export default function FlexClaimValidation({ validation, rules, onRetry }) {
                   </th>
                   <td className="p-3 align-top break-words">{issue.claim_type || 'Blank claim type'}</td>
                   <td className="p-3 align-top break-words">
-                    <p className="font-medium">{issue.field}: {issue.actual || 'Blank'}</p>
-                    <p className="mt-1">Expected: {issue.expected}</p>
+                    <p className="font-medium">{({ TAX: 'Taxable (TAX)', CPF: 'CPF payable (CPF)', Relation: 'Relationship to employee (Relation)' })[issue.field] || issue.field}: {issue.actual || 'Not filled in'}</p>
+                    <p className="mt-1">LGI rule: {issue.expected}</p>
                     <p className="mt-1 text-gray-600">{issue.message}</p>
                   </td>
                 </tr>

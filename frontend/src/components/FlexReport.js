@@ -4,6 +4,8 @@ import * as XLSX from 'xlsx';
 import apiService from '../services/api';
 import FlexRunResult from './FlexRunResult';
 import FlexClaimValidation from './FlexClaimValidation';
+import FlexValidationMessage from './FlexValidationMessage';
+import FlexPolicyChoices from './FlexPolicyChoices';
 
 const EXCEL_ACCEPT = {
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
@@ -44,24 +46,24 @@ const detectWorkbookMonth = async (file, column) => {
   const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true });
-  if (rows.length === 0) throw new Error('The claims workbook contains no rows.');
+  if (rows.length === 0) throw new Error('This file has no claim records. Export the claims for the reporting month and upload the file again.');
 
   const header = Object.keys(rows[0]).find((key) => key.trim() === column);
-  if (!header) throw new Error(`The claims workbook is missing the ${column} column.`);
+  if (!header) throw new Error(`This file is missing the ${column} column. Upload the complete claims export with its original column headings.`);
 
   const months = new Set();
   rows.forEach((row) => {
     if (row[header] == null || row[header] === '') return;
     const date = parseExcelDate(row[header]);
     if (!date || Number.isNaN(date.getTime())) {
-      throw new Error(`The claims workbook contains an invalid ${column} value.`);
+      throw new Error(`Some ${column} cells are not valid dates. Correct these dates in Excel and upload the claims file again.`);
     }
     months.add(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
   });
 
-  if (months.size === 0) throw new Error(`The claims workbook has no ${column} values.`);
+  if (months.size === 0) throw new Error(`The ${column} column is empty, so we cannot identify the payment month. Fill in the payment dates and upload the file again.`);
   if (months.size > 1) {
-    throw new Error(`The claims workbook contains multiple paid months: ${[...months].sort().join(', ')}.`);
+    throw new Error(`These claims were paid in more than one month: ${[...months].sort().join(', ')}. Export one payment month at a time and upload that file.`);
   }
   return [...months][0];
 };
@@ -121,7 +123,7 @@ const UploadSlot = ({ slot, file, errorMsg, onDrop, onReject, isProcessing, isCh
             : 'border-gray-300 hover:border-blue-400'
         } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
-        <input {...getInputProps({ id: `upload-${slot.key}`, 'aria-invalid': Boolean(errorMsg) })} />
+        <input {...getInputProps({ id: `upload-${slot.key}`, 'aria-invalid': Boolean(errorMsg), 'aria-describedby': errorMsg ? `upload-${slot.key}-error` : undefined })} />
         {file ? (
           <div className="flex items-center justify-center space-x-2">
             <svg aria-hidden="true" className={`w-5 h-5 flex-shrink-0 ${errorMsg ? 'text-red-600' : isChecking ? 'text-blue-600' : 'text-green-600'}`} fill="currentColor" viewBox="0 0 20 20">
@@ -166,6 +168,10 @@ const FlexReport = () => {
   const [error, setError] = useState(null);
   const [showPending, setShowPending] = useState(false);
   const [claimValidation, setClaimValidation] = useState(null);
+  const [inputValidation, setInputValidation] = useState(null);
+  const [inputCheckAttempt, setInputCheckAttempt] = useState(0);
+  const [policyDecisions, setPolicyDecisions] = useState({});
+  const [policyReview, setPolicyReview] = useState([]);
   const [checkingSlots, setCheckingSlots] = useState({});
   const [uploadReset, setUploadReset] = useState(0);
   const uploadVersions = useRef({});
@@ -197,6 +203,8 @@ const FlexReport = () => {
   const selected = companies.find((company) => company.id === selectedId) || null;
 
   const handleSelect = (companyId) => {
+    setPolicyDecisions({});
+    setPolicyReview([]);
     uploadVersions.current = {};
     setCheckingSlots({});
     setClaimValidation(null);
@@ -219,6 +227,8 @@ const FlexReport = () => {
 
   const handleDrop = useCallback((key) => async (acceptedFiles) => {
     if (acceptedFiles.length === 0) return;
+    setPolicyDecisions({});
+    setPolicyReview([]);
     const file = acceptedFiles[0];
     const version = Symbol(key);
     uploadVersions.current[key] = version;
@@ -246,13 +256,13 @@ const FlexReport = () => {
         const response = await apiService.validateFlexClaims(selected.id, file);
         if (!isCurrent()) return;
         if (!response.success) {
-          setClaimValidation({ status: 'error', message: response.details ? `${response.error}: ${response.details}` : response.error });
+          setClaimValidation({ status: 'error', feedback: response.feedback, message: response.details || response.error });
           setFileErrors((prev) => ({ ...prev, [key]: 'Claims could not be checked. Retry below or upload a corrected workbook.' }));
           return;
         }
         setClaimValidation({ ...response.data, status: response.data.valid ? 'valid' : 'invalid' });
         if (!response.data.valid) {
-          setFileErrors((prev) => ({ ...prev, [key]: `${response.data.validation.length} checklist issues. Review the claim checks below and upload a corrected workbook.` }));
+          setFileErrors((prev) => ({ ...prev, [key]: 'Some claims need correcting. Review the claim checks below, then upload the corrected file.' }));
         }
       }
     } catch (uploadError) {
@@ -267,6 +277,8 @@ const FlexReport = () => {
   }, [selected]);
 
   const handleReject = useCallback((key) => () => {
+    setPolicyDecisions({});
+    setPolicyReview([]);
     uploadVersions.current[key] = Symbol(key);
     clearSlot(key, setCheckingSlots);
     clearSlot(key, setFiles);
@@ -274,7 +286,7 @@ const FlexReport = () => {
     if (selected?.month_detection?.file_key === key) setPayMonth('');
     setResult(null);
     setError(null);
-    setFileErrors((prev) => ({ ...prev, [key]: 'Only .xlsx or .xlsm files are accepted.' }));
+    setFileErrors((prev) => ({ ...prev, [key]: 'Choose one Excel file (.xlsx or .xlsm). If it is in another format, open it in Excel and save it as .xlsx first.' }));
   }, [selected]);
 
   const missingRequired = selected
@@ -288,17 +300,51 @@ const FlexReport = () => {
   );
   const isCheckingFiles = Object.keys(checkingSlots).length > 0;
   const claimsReady = !selected?.claim_validation || claimValidation?.status === 'valid';
-  const canGenerate = Boolean(selected) && missingRequired.length === 0 && payMonthValid
+  const uploadsReady = Boolean(selected) && missingRequired.length === 0 && payMonthValid
     && !isCheckingFiles && claimsReady && Object.keys(fileErrors).length === 0;
+  // A check only applies to the exact files, company and month it received.
+  const currentInputCheck = inputValidation?.files === files
+    && inputValidation?.companyId === selectedId && inputValidation?.month === payMonth
+    && inputValidation?.policyDecisions === policyDecisions
+    ? inputValidation : null;
+  const inputsReady = !selected?.input_validation || currentInputCheck?.status === 'valid';
+  const canGenerate = uploadsReady && inputsReady;
+  const inputFeedback = uploadsReady ? currentInputCheck?.feedback : null;
+
+  useEffect(() => {
+    if (!selected?.input_validation || !uploadsReady) {
+      setInputValidation(null);
+      return undefined;
+    }
+    let active = true;
+    const snapshot = { files, companyId: selectedId, month: payMonth, policyDecisions };
+    setInputValidation({ ...snapshot, status: 'checking' });
+    const check = async () => {
+      const response = await apiService.validateFlexInputs(selectedId, files, `${payMonth}-01`, policyDecisions);
+      if (!active) return;
+      const review = response.success ? response.data.policy_review : response.feedback?.policy_review;
+      if (review) setPolicyReview(review);
+      setInputValidation({
+        ...snapshot,
+        status: response.success && response.data.valid ? 'valid' : 'invalid',
+        feedback: response.success ? null : response.feedback || {
+          title: 'Your files have not been checked', message: response.error,
+          guidance: 'Try checking again. Reports can be generated once the file checks pass.',
+        },
+      });
+    };
+    check();
+    return () => { active = false; };
+  }, [selected, selectedId, files, payMonth, uploadsReady, inputCheckAttempt, policyDecisions]);
 
   const handleGenerate = async () => {
     if (isProcessing || isCheckingFiles) return;
-    if (!claimsReady || Object.keys(fileErrors).length > 0) {
-      setError('Resolve the upload and claim validation issues before generating reports.');
+    if (!claimsReady || Object.keys(fileErrors).length > 0 || !inputsReady) {
+      setError('Check the messages beside your uploads and below. Correct the affected files before generating reports.');
       return;
     }
     if (missingRequired.length > 0) {
-      setError(`Missing required file(s): ${missingRequired.map((slot) => slot.label).join('; ')}`);
+      setError(`Upload these files before generating reports: ${missingRequired.map((slot) => slot.label).join('; ')}.`);
       return;
     }
     if (!payMonthValid) {
@@ -310,11 +356,15 @@ const FlexReport = () => {
     setError(null);
     setResult(null);
 
-    const response = await apiService.runFlexReport(selected.id, files, `${payMonth}-01`);
+    const response = await apiService.runFlexReport(selected.id, files, `${payMonth}-01`, policyDecisions);
     if (response.success) {
       setResult(response.data);
     } else {
-      setError(response.details ? `${response.error}: ${response.details}` : response.error);
+      setError(response.feedback || response.details || response.error);
+      if (selected.input_validation && response.feedback) {
+        setInputValidation({ files, companyId: selectedId, month: payMonth, policyDecisions, status: 'invalid', feedback: response.feedback });
+        setError(null);
+      }
       if (selected.claim_validation && response.validation?.length) {
         setClaimValidation({ status: 'invalid', validation: response.validation });
       }
@@ -333,6 +383,8 @@ const FlexReport = () => {
   };
 
   const handleReset = () => {
+    setPolicyDecisions({});
+    setPolicyReview([]);
     uploadVersions.current = {};
     setUploadReset((version) => version + 1);
     setCheckingSlots({});
@@ -441,7 +493,7 @@ const FlexReport = () => {
                   key={`${selected.id}-${uploadReset}-${slot.key}`}
                   slot={slot}
                   file={files[slot.key]}
-                  errorMsg={fileErrors[slot.key]}
+                  errorMsg={fileErrors[slot.key] || (inputFeedback?.files?.includes(slot.key) ? 'This file needs review. See the file checks below for details and the next step.' : undefined)}
                   onDrop={handleDrop(slot.key)}
                   onReject={handleReject(slot.key)}
                   isProcessing={isProcessing}
@@ -460,7 +512,12 @@ const FlexReport = () => {
                 pattern="\d{4}-\d{2}"
                 placeholder="YYYY-MM"
                 value={payMonth}
-                onChange={(event) => setPayMonth(event.target.value)}
+                onChange={(event) => {
+                  setPayMonth(event.target.value);
+                  setPolicyDecisions({});
+                  setPolicyReview([]);
+                  setResult(null);
+                }}
                 disabled={isProcessing || Boolean(selected?.month_detection)}
                 className={`px-3 py-2 border rounded-md text-sm focus:ring-blue-500 focus:border-blue-500 ${
                   payMonthValid || isAwaitingMonthDetection
@@ -483,20 +540,30 @@ const FlexReport = () => {
           {selected.claim_validation && (
             <FlexClaimValidation
               validation={claimValidation}
+              inputStatus={selected.input_validation ? (uploadsReady ? currentInputCheck?.status || 'checking' : 'waiting') : undefined}
               rules={selected.claim_validation.rules}
               onRetry={() => handleDrop(selected.claim_validation.file_key)([files[selected.claim_validation.file_key]])}
             />
           )}
 
-          {error && (
+          <FlexPolicyChoices employees={policyReview} decisions={policyDecisions} disabled={isProcessing}
+            onChange={(employeeId, decision) => {
+              setPolicyDecisions((previous) => ({ ...previous, [employeeId]: decision }));
+              setResult(null);
+              setError(null);
+            }} />
+          {inputFeedback && !inputFeedback.policy_choice_required && <FlexValidationMessage feedback={inputFeedback} onRetry={() => setInputCheckAttempt((attempt) => attempt + 1)} />}
+
+          {error && typeof error === 'object' && <FlexValidationMessage feedback={error} />}
+          {error && typeof error !== 'object' && (
             <div role="alert" className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
               <div className="flex items-start">
                 <svg className="w-5 h-5 text-red-500 mr-2 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
                 </svg>
                 <div>
-                  <p className="text-sm font-medium text-red-800">Error</p>
-                  <p className="text-sm text-red-700">{typeof error === 'object' ? JSON.stringify(error) : error}</p>
+                  <p className="text-sm font-medium text-red-800">We could not complete this step</p>
+                  <p className="text-sm text-red-700 break-words">{error}</p>
                 </div>
               </div>
             </div>
@@ -516,13 +583,17 @@ const FlexReport = () => {
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs text-gray-500">
-              {isCheckingFiles
+              {isCheckingFiles || (selected.input_validation && uploadsReady && !currentInputCheck)
                 ? 'Checking uploaded files…'
+                : currentInputCheck?.status === 'checking'
+                ? 'Checking employee details, policy dates and amounts…'
+                : inputFeedback || Object.keys(fileErrors).length > 0
+                ? 'Review the file checks above before generating reports'
                 : !claimsReady && files[selected?.claim_validation?.file_key]
                 ? 'Resolve claim checks before generating reports'
                 : missingRequired.length > 0
                 ? `Waiting for: ${missingRequired.map((slot) => slot.label).join(', ')}`
-                : 'All required files selected'}
+                : canGenerate ? 'Ready to generate reports' : 'Check the payment month before continuing'}
             </p>
             <div className="flex space-x-3">
               <button

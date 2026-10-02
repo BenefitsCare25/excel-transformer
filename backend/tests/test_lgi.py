@@ -194,7 +194,7 @@ class LGIClaimsTests(unittest.TestCase):
                 self.claims.loc[0, flag] = 'No'
                 issues = classification_issues(self.claims)
                 self.assertEqual([(i['field'], i['expected']) for i in issues], [(flag, 'Yes')])
-                with self.assertRaisesRegex(FlexInputError, f'{flag} conflicts'):
+                with self.assertRaisesRegex(FlexInputError, f'Set {flag} to Yes'):
                     self.prepare()
 
     def test_eligibility_restrictions_from_supplied_checklist(self):
@@ -268,7 +268,7 @@ class LGIClaimsTests(unittest.TestCase):
                 self.claims.loc[0, ['Claim Type', 'TAX', 'CPF']] = [
                     "Children\u2019s Education/ Tuition Fees", 'Yes', 'Yes']
                 self.claims.loc[0, flag] = 'No'
-                with self.assertRaisesRegex(FlexInputError, f'{flag} conflicts'):
+                with self.assertRaisesRegex(FlexInputError, f'Set {flag} to Yes'):
                     self.prepare()
 
     def test_tax_and_cpf_combinations_remain_independent(self):
@@ -281,8 +281,8 @@ class LGIClaimsTests(unittest.TestCase):
         self.assertEqual(result['CPF'].tolist(), ['No', 'Yes'])
 
     def test_unknown_claim_and_conflicting_flags_block(self):
-        for col, value, expected in [('Claim Type', 'Unknown category', 'unsupported Claim Type'),
-                                     ('TAX', 'Yes', 'TAX conflicts'), ('CPF', 'Yes', 'CPF conflicts')]:
+        for col, value, expected in [('Claim Type', 'Unknown category', 'not in the LGI benefit list'),
+                                     ('TAX', 'Yes', 'Set TAX to No'), ('CPF', 'Yes', 'Set CPF to No')]:
             with self.subTest(column=col):
                 original = self.claims.loc[0, col]
                 self.claims.loc[0, col] = value

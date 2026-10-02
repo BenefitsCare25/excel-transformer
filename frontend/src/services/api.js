@@ -433,17 +433,39 @@ class ApiService {
       return {
         success: false,
         error: error.response?.data?.error || 'Could not check the claims workbook',
-        details: error.response?.data?.details || error.message,
+        details: error.response?.data?.details || 'Check your connection and try checking the claims again.',
+        feedback: error.response?.data?.feedback,
       };
     }
   }
 
-  async runFlexReport(companyId, files, payMonth) {
+  async validateFlexInputs(companyId, files, payMonth, policyDecisions = {}) {
     const formData = new FormData();
     Object.entries(files).forEach(([key, file]) => {
       if (file) formData.append(key, file);
     });
     formData.append('pay_month', payMonth);
+    formData.append('policy_decisions', JSON.stringify(policyDecisions));
+    try {
+      const response = await this.api.post(`/api/flex/validate-inputs/${companyId}`, formData);
+      return { success: true, data: response.data };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'We could not finish checking your files. Please try again.',
+        feedback: error.response?.data?.feedback,
+        validation: error.response?.data?.validation || [],
+      };
+    }
+  }
+
+  async runFlexReport(companyId, files, payMonth, policyDecisions = {}) {
+    const formData = new FormData();
+    Object.entries(files).forEach(([key, file]) => {
+      if (file) formData.append(key, file);
+    });
+    formData.append('pay_month', payMonth);
+    formData.append('policy_decisions', JSON.stringify(policyDecisions));
 
     try {
       const response = await this.api.post(`/api/flex/run/${companyId}`, formData, {
@@ -460,9 +482,12 @@ class ApiService {
     } catch (error) {
       return {
         success: false,
-        error: error.response?.data?.error || 'Generation failed',
-        details: error.response?.data?.details || error.message,
+        error: error.response?.data?.error || 'We could not generate your reports. Please try again.',
+        details: error.response?.status >= 500
+          ? 'We could not generate your reports. Try again. If the problem continues, contact your administrator.'
+          : error.response?.data?.details || error.response?.data?.error || 'Check your connection, then try generating the reports again.',
         validation: error.response?.data?.validation || [],
+        feedback: error.response?.data?.feedback,
       };
     }
   }

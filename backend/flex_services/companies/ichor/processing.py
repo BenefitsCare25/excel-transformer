@@ -29,7 +29,9 @@ def _require_columns(frame, required, label):
     if missing:
         found = ", ".join(str(column) for column in frame.columns[:20])
         raise FlexInputError(
-            f"{label}: missing required column(s): {', '.join(missing)}. Found: {found}"
+            f"{label}: missing required column(s): {', '.join(missing)}. Found: {found}",
+            title=f'Check the {label}', summary=f"This file is missing these columns: {', '.join(missing)}.",
+            guidance='Upload the complete export with its original column headings.'
         )
 
 
@@ -65,7 +67,8 @@ def _load_claims(path, pay_month):
     claims.columns = [str(column).strip() for column in claims.columns]
     _require_columns(claims, CLAIMS_REQUIRED_COLUMNS, "Ichor employee claims export")
     if claims.empty:
-        raise FlexInputError("Ichor employee claims export contains no claim rows")
+        raise FlexInputError("Ichor employee claims export contains no claim rows",
+                             guidance='Export the approved claims for the reporting month and upload the file again.')
 
     claims = claims.copy()
     claims["StaffID6"] = claims["Staff ID"].map(_normalize_id)
@@ -86,7 +89,9 @@ def _load_claims(path, pay_month):
     if unknown:
         raise FlexInputError(
             "Ichor employee claims export contains unsupported Claim Type values for reference(s): "
-            + ", ".join(unknown[:10])
+            + ", ".join(unknown[:10]),
+            summary=f"The claim types for these claim references are not recognised: {', '.join(unknown)}.",
+            guidance='Check Claim Type in the Ichor export. It must identify both the benefit and the claimant relationship, separated by ::.'
         )
     return claims
 
@@ -98,32 +103,47 @@ def _validate_claims(claims, pay_month):
         | (claims["ReferenceNo"] == "")
     ]
     if not blank_keys.empty:
-        raise FlexInputError("Ichor employee claims export has blank Staff ID, employee or reference values")
+        raise FlexInputError("Ichor employee claims export has blank Staff ID, employee or reference values",
+                             summary='Some claims are missing an employee ID, employee name or claim reference.',
+                             guidance='Fill in Staff ID, Employee Name and Reference No. for each claim, then upload the corrected claims export.')
     duplicates = claims[claims["ReferenceNo"].duplicated(keep=False)]["ReferenceNo"].unique()
     if len(duplicates):
-        raise FlexInputError("Duplicate Ichor claim reference(s): " + ", ".join(duplicates[:10]))
+        raise FlexInputError("Duplicate Ichor claim reference(s): " + ", ".join(duplicates[:10]),
+                             summary=f"These claim references appear more than once: {', '.join(duplicates)}.",
+                             guidance='Review the repeated claims and keep one correct row per Reference No., then upload the file again.')
     if claims[["IncurredDate", "PaidDate", "IncurredAmount", "PaymentAmount"]].isna().any().any():
-        raise FlexInputError("Ichor employee claims export has invalid dates or claim amounts")
+        raise FlexInputError("Ichor employee claims export has invalid dates or claim amounts",
+                             guidance='Check Incurred Date and Paid Date for valid Excel dates, and Converted Incurred Amt and Payment Amt for numeric amounts. Fill in any missing values.')
     if (claims[["IncurredAmount", "PaymentAmount"]] < 0).any().any():
-        raise FlexInputError("Ichor employee claims export contains negative claim amounts")
+        raise FlexInputError("Ichor employee claims export contains negative claim amounts",
+                             summary='Some claim amounts are below zero.',
+                             guidance='Check Converted Incurred Amt and Payment Amt against the source records. This report requires amounts of zero or more.')
 
     invalid_status = claims[claims["Status"].map(_normalize_space).str.casefold() != "approved"]
     if not invalid_status.empty:
-        raise FlexInputError("Ichor employee claims export must contain Approved claims only")
+        raise FlexInputError("Ichor employee claims export must contain Approved claims only",
+                             summary='Some claims do not have Approved status.',
+                             guidance='Export only approved claims. Confirm approval in the source system before changing a claim status.')
     invalid_entity = claims[claims["Entity"].map(_normalize_space) != ICHOR_ENTITY]
     if not invalid_entity.empty:
-        raise FlexInputError(f"Ichor employee claims export contains an entity other than {ICHOR_ENTITY}")
+        raise FlexInputError(f"Ichor employee claims export contains an entity other than {ICHOR_ENTITY}",
+                             summary='Some claims are listed under a company other than Ichor.',
+                             guidance=f'Check the Entity column and upload only claims for {ICHOR_ENTITY}.')
     invalid_currency = claims[
         claims["Converted Currency"].map(_normalize_space).str.upper() != "SGD"
     ]
     if not invalid_currency.empty:
-        raise FlexInputError("Ichor converted claim amounts must be in SGD")
+        raise FlexInputError("Ichor converted claim amounts must be in SGD",
+                             summary='Some claim amounts are not marked as Singapore dollars (SGD).',
+                             guidance='Export the amounts converted to SGD and check Converted Currency before uploading again.')
 
     selected_period = pd.Period(datetime.fromisoformat(pay_month), freq="M")
     off_period = claims[claims["PaidDate"].dt.to_period("M") != selected_period]
     if not off_period.empty:
         refs = ", ".join(off_period["ReferenceNo"].tolist()[:10])
-        raise FlexInputError(f"Ichor claims paid outside {selected_period}: {refs}")
+        raise FlexInputError(f"Ichor claims paid outside {selected_period}: {refs}",
+                             summary=f'Some claims were paid outside {selected_period}. Claim references: {refs}.',
+                             guidance='Check Paid Date and select the matching payment month, or upload the claims for the selected month.')
 
 
 def _load_listing(path):
@@ -138,11 +158,14 @@ def _load_listing(path):
         listing["Last Day of Service"].astype(str).str.strip() != ""
     )
     if (supplied_last_day & listing["LastDay"].isna()).any():
-        raise FlexInputError("Ichor employee listing contains an invalid Last Day of Service")
+        raise FlexInputError("Ichor employee listing contains an invalid Last Day of Service",
+                             guidance='Check Last Day of Service in the employee listing. Use Excel dates, or leave the cell empty for employees with no last day of service.')
     listing = listing[listing["StaffID6"] != ""]
     duplicates = listing[listing["StaffID6"].duplicated(keep=False)]["StaffID6"].unique()
     if len(duplicates):
-        raise FlexInputError("Duplicate employee ID(s) in Ichor listing: " + ", ".join(duplicates[:10]))
+        raise FlexInputError("Duplicate employee ID(s) in Ichor listing: " + ", ".join(duplicates[:10]),
+                             summary='These employee IDs appear more than once in the employee listing.', employee_ids=duplicates,
+                             guidance='Review the repeated User ID records and keep one correct record per employee, then upload the listing again.')
     return listing[["StaffID6", "ListingName", "LastDay"]]
 
 
@@ -150,7 +173,9 @@ def _match_listing(claims, listing):
     matched = claims.merge(listing, on="StaffID6", how="left", validate="many_to_one")
     missing = matched[matched["ListingName"].isna()]["StaffID6"].unique()
     if len(missing):
-        raise FlexInputError("Claim employee(s) missing from Ichor listing: " + ", ".join(missing[:10]))
+        raise FlexInputError("Claim employee(s) missing from Ichor listing: " + ", ".join(missing[:10]),
+                             summary='These employees have claims, but their IDs could not be found in the employee listing.', employee_ids=missing,
+                             guidance='Compare Staff ID in the claims export with User ID in the employee listing. Check for missing employees or different IDs and upload the corrected file.')
     name_mismatch = matched[
         matched["EmployeeName"].str.casefold() != matched["ListingName"].str.casefold()
     ]
@@ -158,7 +183,9 @@ def _match_listing(claims, listing):
         row = name_mismatch.iloc[0]
         raise FlexInputError(
             f"Employee name mismatch for {row['StaffID6']}: claims '{row['EmployeeName']}', "
-            f"listing '{row['ListingName']}'"
+            f"listing '{row['ListingName']}'",
+            summary=f"Employee {row['StaffID6']} has different names in the two files: {row['EmployeeName']} in claims and {row['ListingName']} in the listing.",
+            guidance='Confirm the correct employee name and ID, then upload the corrected file.'
         )
     return matched
 

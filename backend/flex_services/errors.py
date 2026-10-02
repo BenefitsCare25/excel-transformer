@@ -9,6 +9,14 @@ class FlexInputError(ValueError):
     genuine failure and is logged with a traceback as a 500.
     """
 
-    def __init__(self, message, validation=None):
+    def __init__(self, message, validation=None, *, title=None, summary=None, guidance=None,
+                 files=None, employee_ids=None):
         super().__init__(message)
         self.validation = validation or []
+        self.feedback = {
+            'title': title or 'Check the uploaded files',
+            'message': summary or message,
+            'guidance': guidance or 'Review the file details above, then upload the corrected workbook and try again.',
+            'files': files or [],
+            'employee_ids': list(employee_ids) if employee_ids is not None else [],
+        }

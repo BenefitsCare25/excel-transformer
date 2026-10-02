@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import FlexPolicyChoices from './FlexPolicyChoices';
 
 // Neutral headline counts. The include/exclude money split lives in SubmissionBreakdown.
 const STAT_TILES = [
@@ -240,6 +241,7 @@ const FlexRunResult = ({ result, onDownload, onDownloadAll }) => {
         )}
 
         {/* Downloads */}
+        <FlexPolicyChoices employees={result.policy_review} readOnly />
         <div>
           <h4 className="text-sm font-medium text-gray-700 mb-2">
             Output Files
