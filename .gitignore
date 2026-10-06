@@ -38,6 +38,15 @@ venv.bak/
 # Uploads and processed files
 backend/uploads/
 backend/processed/
+/uploads/
+/processed/
+/output/
+/outputs/
+
+# Local QA artifacts; only maintained Python smoke checks belong in Git.
+/tmp/*
+!/tmp/*.py
+.pytest_cache/
 
 # Test files
 test_*.xlsx

@@ -1183,10 +1183,15 @@ class ExcelTransformer:
     
     @staticmethod
     def write_excel_with_text_postal_codes(df, file_path, sheet_name='Sheet1'):
-        """Write DataFrame to Excel with PostalCode column formatted as text"""
+        """Write a listing with sequential codes and PostalCode formatted as text."""
         from openpyxl import load_workbook
         from openpyxl.styles import numbers
-        
+
+        # Country splits retain source indices; number the final rows in each file.
+        if 'Code' in df.columns:
+            df = df.copy()
+            df['Code'] = range(1, len(df) + 1)
+
         # Write the DataFrame to Excel
         df.to_excel(
             file_path,
@@ -1934,15 +1939,7 @@ class ExcelTransformer:
     @staticmethod
     def smart_column_fallback(df_source, col_map, field_type):
         """Intelligent fallback for missing critical fields"""
-        if field_type == 'clinic_id':
-            # Try to generate ID from clinic name or use row index
-            if 'clinic_name' in col_map:
-                return [f"AUTO_{i+1:04d}_{str(name).replace(' ', '_').upper()[:10]}"
-                       for i, name in enumerate(df_source[col_map['clinic_name']])]
-            else:
-                return [f"AUTO_{i+1:04d}" for i in range(len(df_source))]
-
-        elif field_type == 'region':
+        if field_type == 'region':
             # For TCM sheets without region, use 'TCM' as default
             if 'area' in col_map:
                 return df_source[col_map['area']].fillna('TCM')
@@ -2009,9 +2006,6 @@ class ExcelTransformer:
                 # Read the source sheet
                 df_source = ExcelTransformer.safe_read_excel(input_path, sheet_name=sheet_name, header=header_row)
                 df_source.columns = df_source.columns.str.strip()
-            
-            # Create transformed dataframe
-            df_transformed = pd.DataFrame()
             
             # Map columns flexibly
             col_map = ExcelTransformer.map_columns(df_source.columns)
@@ -2107,39 +2101,8 @@ class ExcelTransformer:
                     terminated_count += _n_term
                     logger.info(f"Removed {_n_term} in-sheet terminated clinic(s) from sheet '{sheet_name}'")
 
-            # Robust field mapping with fallbacks
-            # Clinic ID with smart fallback
-            if 'clinic_id' in col_map:
-                df_transformed['Code'] = df_source[col_map['clinic_id']]
-                # If Code column contains zone names instead of real IDs, replace with sequential S/N
-                _zone_kw = {'NORTH', 'SOUTH', 'EAST', 'WEST', 'CENTRAL', 'NORTHEAST', 'NORTHWEST', 'SOUTHEAST', 'SOUTHWEST'}
-                _code_vals = df_transformed['Code'].dropna().astype(str).str.upper().str.strip()
-                if len(_code_vals) > 0 and _code_vals.apply(lambda v: v in _zone_kw).mean() > 0.5:
-                    df_transformed['Code'] = range(1, len(df_transformed) + 1)
-                    logger.info(f"Code column detected as zone values — replaced with sequential S/N 1-{len(df_transformed)}")
-            else:
-                df_transformed['Code'] = ExcelTransformer.smart_column_fallback(df_source, col_map, 'clinic_id')
-                logger.info(f"Generated auto clinic IDs for {len(df_source)} records")
-
-            # Deduplicate clinic codes: append -1, -2, -3 for all instances of duplicates
-            _code_series = df_transformed['Code'].apply(
-                lambda v: str(v).strip() if pd.notna(v) and v is not None else None
-            )
-            _code_value_counts = _code_series.value_counts()
-            _dup_codes = set(_code_value_counts[_code_value_counts > 1].index)
-            if _dup_codes:
-                _dup_tracker = {}
-                _new_codes = []
-                for val in _code_series:
-                    if val is None:
-                        _new_codes.append(val)
-                    elif val in _dup_codes:
-                        _dup_tracker[val] = _dup_tracker.get(val, 0) + 1
-                        _new_codes.append(f"{val}-{_dup_tracker[val]}")
-                    else:
-                        _new_codes.append(val)
-                df_transformed['Code'] = _new_codes
-                logger.info(f"Deduplicated {len(_dup_codes)} clinic codes with suffixes")
+            # Preserve row alignment after removing empty and terminated source rows.
+            df_transformed = pd.DataFrame(index=df_source.index)
 
             # Clinic Name (required field)
             df_transformed['Name'] = df_source[col_map['clinic_name']]
@@ -2289,6 +2252,11 @@ class ExcelTransformer:
                     logger.info(f"Filtered provider codes: {', '.join(filtered_provider_codes[:10])}" +
                                (f" ... and {len(filtered_provider_codes)-10} more" if len(filtered_provider_codes) > 10 else ""))
                 logger.info("=" * 60)
+
+            # Number retained clinics only. Original provider IDs remain in df_source
+            # for termination matching; generated codes are unique within the listing.
+            df_transformed.insert(0, 'Code', range(1, len(df_transformed) + 1))
+            logger.info(f"Generated sequential clinic codes for {len(df_transformed)} records")
 
             # Detect country from address information
             def detect_country(address):

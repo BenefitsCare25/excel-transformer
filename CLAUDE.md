@@ -83,17 +83,12 @@ cd frontend && npm start                 # Run React (port 3000)
 - Government hospitals/polyclinics filtered from clinic matching
 - Phone numbers combined with remarks in format: `{phone} - {remarks}`
 
-### Code Column Auto S/N
-- If the mapped `Code` column contains zone names (NORTH, SOUTH, EAST, WEST, CENTRAL, etc.) instead of real clinic IDs, the transformer auto-replaces with sequential integers 1, 2, 3...
-- Triggered when >50% of non-null values match known zone keywords
-- Logic in `ExcelTransformer.transform_sheet()` around the `clinic_id` mapping block
-
-### Duplicate Clinic Code Suffixing
-- After the Code column is populated, duplicate codes are detected and suffixed with `-1`, `-2`, `-3` etc.
-- All instances of a duplicate code get suffixed (e.g. `FHG123` appearing 3 times → `FHG123-1`, `FHG123-2`, `FHG123-3`)
-- Unique codes remain unchanged
-- Runs after zone-keyword detection, so sequential S/N values are unaffected
-- Logic in `ExcelTransformer.transform_sheet()` immediately after the clinic_id mapping block (~line 1719)
+### Sequential Code Column
+- Every Excel Transformer listing uses numeric `Code` values 1, 2, 3... by default, regardless of source codes or listing type (GP, Dental, TCM, Specialist, etc.).
+- Generate codes after empty-row and termination filtering; preserve the filtered source index when building the transformed DataFrame to keep all fields aligned.
+- Original provider codes remain in the source DataFrame for termination matching.
+- `write_excel_with_text_postal_codes()` numbers the final rows again on a copy, so each exported workbook starts at 1 with no blanks, duplicates or gaps after country splitting.
+- Codes are unique within each exported listing; they are row numbers, not persistent identifiers across exports.
 
 ### File Handling
 - Auto-cleanup after 15 minutes (cleanup_service.py)

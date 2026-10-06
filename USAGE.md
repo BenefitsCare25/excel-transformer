@@ -74,6 +74,12 @@ mappings and validation rules are documented in
 - Files with header rows similar to the IHP clinic data structure
 - Files containing clinic information with address details
 
+### Generated Listing Codes
+- All listing types (GP, Dental, TCM, Specialist and other panels) receive numeric `Code` values 1, 2, 3... automatically.
+- Every retained row has a code, with no blanks, duplicates or gaps within the exported workbook.
+- Numbering follows the final row order after filtering and starts at 1 in each exported file, including separate Singapore and Malaysia files.
+- Original provider codes are used to match termination lists. The exported codes are row numbers and can change between exports when rows change.
+
 ### Automatic Regional Sheet Consolidation
 - Workbooks with two or more compatible geographic tabs are combined automatically.
 - Supported tab labels include North, North-East, Central, East, West, Singapore, and Malaysia, with common GP/panel/list suffixes.

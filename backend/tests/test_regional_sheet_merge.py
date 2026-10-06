@@ -342,6 +342,10 @@ class RegionalSheetMergeTests(unittest.TestCase):
             try:
                 self.assertEqual(output_workbook.sheetnames, ["List"])
                 self.assertEqual(output_workbook["List"].max_row - 1, row_count)
+                self.assertEqual(
+                    [row[0] for row in list(output_workbook["List"].values)[1:]],
+                    list(range(1, row_count + 1)),
+                )
             finally:
                 output_workbook.close()
 
