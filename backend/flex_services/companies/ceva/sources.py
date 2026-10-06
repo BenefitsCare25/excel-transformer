@@ -28,17 +28,41 @@ def input_error(key, summary, guidance, employee_ids=None, validation=None):
     )
 
 
-def _read(path, key, columns, keys, date_columns, money_columns, blank_zero=(), allow_negative=()):
+def _read_frame(path, key, columns):
     try:
-        frame = pd.read_excel(path, dtype=object, usecols=lambda column: str(column).strip() in columns)
+        with pd.ExcelFile(path, engine="openpyxl") as workbook:
+            raw_headers = workbook.parse(sheet_name=0, header=None, nrows=1, dtype=object)
+            if not raw_headers.empty:
+                headers = raw_headers.iloc[0].dropna().map(lambda value: str(value).strip())
+                headers = headers.loc[headers.ne("")]
+                duplicates = headers.loc[headers.duplicated(keep=False)].unique()
+                if len(duplicates):
+                    raise input_error(key, f"Repeated column headings: {', '.join(duplicates)}.",
+                                      "Keep one correct column per heading and upload the corrected export.")
+            return workbook.parse(sheet_name=0, dtype=object,
+                                  usecols=lambda column: str(column).strip() in columns)
+    except FlexInputError:
+        raise
     except (ValueError, OSError, BadZipFile, InvalidFileException) as exc:
         raise input_error(key, "We could not read this Excel workbook.",
                           "Open it in Excel, remove any password, save as .xlsx and upload again.") from exc
+
+
+def _parse_date(value):
+    if isinstance(value, str):
+        value = value.strip()
+        if re.fullmatch(r"\d{1,2}[/-]\d{1,2}[/-]\d{4}", value):
+            return pd.to_datetime(value.replace("-", "/"), format="%d/%m/%Y", errors="coerce")
+    return pd.to_datetime(value, errors="coerce")
+
+
+def _read(path, key, columns, keys, date_columns, money_columns, blank_zero=(), allow_negative=()):
+    frame = _read_frame(path, key, columns)
     frame.columns = [str(column).strip() for column in frame.columns]
     missing = [column for column in columns if column not in frame.columns]
-    if missing or frame.empty or frame.columns.duplicated().any():
+    if missing or frame.empty:
         detail = (f"Missing columns: {', '.join(missing)}." if missing else
-                  "The export has no records or has repeated column headings.")
+                  "The export has no records.")
         raise input_error(key, detail, "Upload the complete Ceva export with its original headings.")
     frame = frame.loc[:, list(columns)].copy()
     frame["ExcelRow"] = np.arange(2, len(frame) + 2)
@@ -56,7 +80,7 @@ def _read(path, key, columns, keys, date_columns, money_columns, blank_zero=(), 
                           "Upload Ceva entities and Pyramid Lines Singapore only. Check Entity spellings.")
     for column, required in date_columns.items():
         supplied = frame[column].fillna("").astype(str).str.strip().ne("")
-        parsed = pd.to_datetime(frame[column], errors="coerce")
+        parsed = pd.to_datetime(frame[column].map(_parse_date), errors="coerce")
         if (supplied & parsed.isna()).any() or (required and parsed.isna().any()):
             raise input_error(key, f"Some {column} values are missing or are not valid dates.",
                               f"Use Excel dates in {column} and upload the corrected export.")

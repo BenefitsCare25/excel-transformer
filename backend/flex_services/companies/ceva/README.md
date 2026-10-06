@@ -3,6 +3,10 @@
 Required inputs: employee claims export, built-in employee listing report, and
 FSA utilisation summary report. Payment month is detected from `Paid Date`;
 claims must be approved, converted to SGD, and paid in that month.
+Text dates in `DD/MM/YYYY` or `DD-MM-YYYY` use day-first parsing, matching the
+upload screen. Native Excel dates and ISO dates retain their original meaning.
+Repeated nonblank column headings, including headings differing only in outer
+whitespace, are rejected before pandas selects or renames any columns.
 
 The adapter produces the two supplied layouts:
 
