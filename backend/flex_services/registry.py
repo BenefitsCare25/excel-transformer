@@ -21,7 +21,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-ACTIVE_MODULES = ['stm', 'ichor', 'lgi']
+ACTIVE_MODULES = ['stm', 'ichor', 'lgi', 'ceva']
 
 # Total company slots shown in the Flex Report catalog.
 COMPANY_SLOT_COUNT = 18

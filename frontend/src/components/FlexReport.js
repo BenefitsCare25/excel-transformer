@@ -542,6 +542,7 @@ const FlexReport = () => {
               validation={claimValidation}
               inputStatus={selected.input_validation ? (uploadsReady ? currentInputCheck?.status || 'checking' : 'waiting') : undefined}
               rules={selected.claim_validation.rules}
+              config={selected.claim_validation}
               onRetry={() => handleDrop(selected.claim_validation.file_key)([files[selected.claim_validation.file_key]])}
             />
           )}

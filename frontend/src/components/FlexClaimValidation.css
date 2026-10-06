@@ -1,0 +1,29 @@
+.flex-claim-checks { color: var(--foreground); }
+.flex-claim-muted { color: var(--muted-foreground); }
+.flex-claim-success { color: var(--success); }
+.flex-claim-link { color: var(--accent); }
+
+.flex-claim-error {
+  background: var(--error-soft);
+  border: 1px solid var(--error);
+  color: var(--error);
+}
+
+.flex-claim-table {
+  border: 1px solid var(--border);
+  border-radius: .5rem;
+  margin-bottom: .75rem;
+  max-height: 24rem;
+  overflow: auto;
+}
+
+.flex-claim-table.rules { max-height: 20rem; }
+.flex-claim-table.review { background: var(--accent-soft); }
+.flex-claim-table thead { background: var(--muted); }
+.flex-claim-table td, .flex-claim-table th { border: 1px solid var(--border); }
+.flex-claim-table table { border-collapse: collapse; }
+
+.flex-claim-link:focus-visible, .flex-claim-table:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
