@@ -17,5 +17,6 @@ The adapter generates three `.xlsx` reports and two headerless PE payroll CSVs. 
 - Details retain one row per claim with employee subtotals and a grand total. The incurred amount uses Converted Incurred Amt in SGD.
 - Utilisation excludes categories containing `wo flex`. It retains separate wallet rows, historic leavers, blank entitlements and the uploaded dates and cumulative amounts. It does not add monthly claims again or infer an as-of date from the workbook filename.
 - Employee IDs, names and entities must match the listing. Last Day of Service from the listing flags claiming leavers without removing payments. Conflicting termination dates and stale cumulative totals produce warnings.
+- After a successful match, reports use the employee listing's name. Accepted case or whitespace variations cannot split an employee's summary or detail subtotal; claimant names are preserved.
 
 The July reference summary contains its original 96 claims on Sheet3, allowing summary and payroll outputs to be reconciled to the supplied July files. The separate input claims workbook is for September 2026.

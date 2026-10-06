@@ -51,6 +51,8 @@ def _match_listing(frame, listing, key):
                             employee_ids=matched.loc[mismatch, "Staff ID"].unique())
         error.feedback["files"] = [key, "listing"]
         raise error
+    # Accepted case and whitespace variants must not split employee totals.
+    matched["Employee Name"] = matched["ListingEmployee Name"]
     return matched
 
 
