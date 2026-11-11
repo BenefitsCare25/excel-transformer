@@ -6038,6 +6038,8 @@ def mc_process_files():
                         f"check_category={el_stats['warnings']['check_category']}, "
                         f"has_inactive_date={el_stats['warnings']['has_inactive_date']}, "
                         f"lds_removed={el_stats['warnings']['lds_removed']}, "
+                        f"inactive_added={el_stats['warnings']['inactive_added']}, "
+                        f"inactive_removed={el_stats['warnings']['inactive_removed']}, "
                         f"check_hr={el_stats['warnings']['check_with_hr']}")
             logger.info(f"  Step 3 completed in {step3_elapsed:.2f}s")
 
@@ -6050,10 +6052,14 @@ def mc_process_files():
                 'ID changed', 'Overseas Assignment changed', 'Employment Type changed',
                 'Category changed', 'Bank Account changed'
             )
+            EL_INACTIVE_MARKERS = (
+                'Inactive Date added', 'Inactive Date removed', 'Inactive Date changed',
+                'Has Inactive Date'
+            )
 
             def extract_el_details(df):
                 details = {'additions': [], 'deletions': [], 'changes': [],
-                           'lds_changed': [], 'lds_removed': []}
+                           'lds_changed': [], 'lds_removed': [], 'inactive_date': []}
                 for _, row in df.iterrows():
                     remark = str(row.get('ADC Remarks', '')).strip()
                     if not remark:
@@ -6071,6 +6077,8 @@ def mc_process_files():
                         details['lds_changed'].append(rec)
                     if 'LDS removed' in remark:
                         details['lds_removed'].append(rec)
+                    if any(marker in remark for marker in EL_INACTIVE_MARKERS):
+                        details['inactive_date'].append(rec)
                     if any(marker in remark for marker in EL_FIELD_CHANGE_MARKERS):
                         details['changes'].append(rec)
                 return details
@@ -6174,6 +6182,8 @@ def mc_process_files():
                 el_stats['warnings']['check_category'] +
                 el_stats['warnings']['has_inactive_date'] +
                 el_stats['warnings']['lds_removed'] +
+                el_stats['warnings']['inactive_added'] +
+                el_stats['warnings']['inactive_removed'] +
                 dl_stats['warnings']['check_with_hr']
             )
 
@@ -6219,6 +6229,8 @@ def mc_process_files():
                         'check_category': el_stats['warnings']['check_category'],
                         'has_inactive_date': el_stats['warnings']['has_inactive_date'],
                         'lds_removed': el_stats['warnings']['lds_removed'],
+                        'inactive_added': el_stats['warnings']['inactive_added'],
+                        'inactive_removed': el_stats['warnings']['inactive_removed'],
                         'dep_is_employee': dl_stats['warnings']['dep_is_employee'],
                         'terminated_ee_coverage': dl_stats['warnings']['terminated_ee_coverage'],
                         'check_with_hr': el_stats['warnings']['check_with_hr'] + dl_stats['warnings']['check_with_hr']

@@ -144,6 +144,27 @@ cd frontend && npm start                 # Run React (port 3000)
   - Fallback: today's date if no date found in filename
   - Previously used DOB (incorrect) — fixed to use file date since it represents when the ADC was generated
 
+### Inactive Date (EL col 13)
+In Mediacorp listings an inactive employee has Inactive Date set **and Category blank** (LDS also blank), so
+going inactive / coming back flips Category too. Without an explicit check the only remark would be
+"Category changed", which hid reinstatements.
+
+| Transition (employee in both ELs) | ADC Remark |
+|---|---|
+| blank → date (went inactive) | `Inactive Date added wef DDMMYY - Check with HR` |
+| date → blank (back / reinstated) | `Inactive Date removed (was DDMMYY) - Check with HR` |
+| date → different date | `Inactive Date changed DDMMYY -> DDMMYY` |
+| New employee (Addition) with a date | `Addition wef DDMMYY; Has Inactive Date - Check with HR` |
+
+- "Category changed" is **replaced** only by the matching flip: added ⇒ Category value → blank, removed ⇒
+  blank → value. Any other Category change is still reported alongside the Inactive Date remark
+- Skipped when the new row has an LDS — the Deletion / LDS remarks already cover terminated employees
+- Same rule for LDS: a new termination (Category → blank) shows only `Deletion wef`, and a removed LDS with
+  Category refilled shows only `LDS removed (was …)`. Category stats are decremented whenever the remark is dropped
+- Logic: `_apply_lds_change()` / `_apply_inactive_date_change()` / `_date_transition()` in `el_processor.py`
+- `parse_lds()` reads ISO strings (`2026-03-05`) year-first; with `dayfirst=True` they became 3 May and
+  mixed CSV/XLSX runs reported unchanged dates as changed
+
 ### Backend Logging
 - Comprehensive step-by-step logging with timing for Azure Log Stream monitoring
 - Logs file types, row/column counts, category distributions, sample data, warnings, and full traceback on errors

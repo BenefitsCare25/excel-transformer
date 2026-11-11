@@ -3,7 +3,7 @@
 import pandas as pd
 from typing import List, Dict
 from .category_mapper import apply_category_mapping
-from .date_utils import format_date_ddmmyy, is_blank, is_not_blank, parse_lds, lds_date_changed
+from .date_utils import format_date_ddmmyy, is_blank, is_not_blank, lds_date_changed
 
 
 class ELProcessor:
@@ -80,7 +80,8 @@ class ELProcessor:
                 'employment_type': 0,
                 'category': 0,
                 'bank_account': 0,
-                'lds_changed': 0
+                'lds_changed': 0,
+                'inactive_changed': 0
             },
             'warnings': {
                 'terminated_no_lds': 0,
@@ -88,7 +89,9 @@ class ELProcessor:
                 'check_category': 0,
                 'check_with_hr': 0,
                 'has_inactive_date': 0,
-                'lds_removed': 0
+                'lds_removed': 0,
+                'inactive_added': 0,
+                'inactive_removed': 0
             }
         }
 
@@ -110,52 +113,7 @@ class ELProcessor:
                     stats['warnings']['has_inactive_date'] += 1
                     stats['warnings']['check_with_hr'] += 1
             else:
-                old_row = old_el_lookup[staff_id_str]
-                change_remarks, change_stats = self._detect_changes_with_stats(row, old_row)
-
-                # Check if this is a termination scenario (Flex Category would be "Terminated")
-                new_lds = self._get_safe_value(row, self.COL_LDS)
-                new_category = self._get_safe_value(row, self.COL_CATEGORY)
-                old_lds = old_row.get('lds')
-                is_termination = is_not_blank(new_lds) and is_blank(new_category)
-                has_category_change = "Category changed" in change_remarks
-
-                # If termination AND category changed, replace "Category changed" with "Deletion wef xxx"
-                if is_termination and has_category_change:
-                    date_str = format_date_ddmmyy(new_lds)
-                    deletion_remark = f"Deletion wef {date_str}" if date_str else "Deletion"
-
-                    # Replace Category changed with Deletion
-                    filtered_remarks = [r for r in change_remarks if r != "Category changed"]
-                    filtered_remarks.append(deletion_remark)
-                    remarks.extend(filtered_remarks)
-                    stats['deletions'] += 1
-                else:
-                    remarks.extend(change_remarks)
-                    # LDS transitions:
-                    #   blank -> value : new termination (Deletion)
-                    #   value -> value : termination date corrected (LDS changed)
-                    #   value -> blank : termination removed / reinstated (flag for HR)
-                    if is_not_blank(new_lds) and is_blank(old_lds):
-                        date_str = format_date_ddmmyy(new_lds)
-                        remarks.append(f"Deletion wef {date_str}" if date_str else "Deletion")
-                        stats['deletions'] += 1
-                    elif self._lds_date_changed(new_lds, old_lds):
-                        old_str = format_date_ddmmyy(old_lds) or str(old_lds).strip()
-                        new_str = format_date_ddmmyy(new_lds) or str(new_lds).strip()
-                        remarks.append(f"LDS changed {old_str} -> {new_str}")
-                        stats['changes']['lds_changed'] += 1
-                    elif is_blank(new_lds) and is_not_blank(old_lds):
-                        old_str = format_date_ddmmyy(old_lds) or str(old_lds).strip()
-                        remarks.append(f"LDS removed (was {old_str}) - Check with HR")
-                        stats['warnings']['lds_removed'] += 1
-                        stats['warnings']['check_with_hr'] += 1
-
-                # Aggregate change stats
-                for key, count in change_stats['changes'].items():
-                    stats['changes'][key] += count
-                for key, count in change_stats['warnings'].items():
-                    stats['warnings'][key] += count
+                remarks.extend(self._existing_employee_remarks(row, old_el_lookup[staff_id_str], stats))
 
             # Validate: Terminated category should have LDS date
             category = self._get_safe_value(row, self.COL_CATEGORY)
@@ -261,11 +219,110 @@ class ELProcessor:
 
         return changes, stats
 
-    def _parse_lds(self, value):
-        return parse_lds(value)
+    def _existing_employee_remarks(self, row: pd.Series, old_row: Dict, stats: Dict) -> List[str]:
+        """Remarks for an employee in both listings: field, LDS and Inactive Date changes."""
+        remarks, change_stats = self._detect_changes_with_stats(row, old_row)
+        self._apply_lds_change(row, old_row, remarks, change_stats, stats)
+        self._apply_inactive_date_change(row, old_row, remarks, change_stats, stats)
 
-    def _lds_date_changed(self, new_lds, old_lds) -> bool:
-        return lds_date_changed(new_lds, old_lds)
+        for key, count in change_stats['changes'].items():
+            stats['changes'][key] += count
+        for key, count in change_stats['warnings'].items():
+            stats['warnings'][key] += count
+        return remarks
+
+    def _apply_lds_change(
+        self, row: pd.Series, old_row: Dict, remarks: List[str], change_stats: Dict, stats: Dict
+    ) -> None:
+        """Deletion / LDS remarks for an employee present in both listings.
+
+        A termination blanks Category and a reinstatement refills it, so in those
+        cases the LDS remark replaces "Category changed".
+        """
+        new_lds = self._get_safe_value(row, self.COL_LDS)
+        new_category = self._get_safe_value(row, self.COL_CATEGORY)
+        old_lds = old_row.get('lds')
+
+        if is_not_blank(new_lds) and is_blank(new_category) and "Category changed" in remarks:
+            self._drop_category_remark(remarks, change_stats)
+            remarks.append(f"Deletion wef {format_date_ddmmyy(new_lds)}")
+            stats['deletions'] += 1
+            return
+
+        # added = new termination, changed = date corrected, removed = reinstated
+        lds_move = self._date_transition(new_lds, old_lds)
+        if lds_move == 'added':
+            remarks.append(f"Deletion wef {format_date_ddmmyy(new_lds)}")
+            stats['deletions'] += 1
+        elif lds_move == 'changed':
+            remarks.append(f"LDS changed {format_date_ddmmyy(old_lds)} -> {format_date_ddmmyy(new_lds)}")
+            stats['changes']['lds_changed'] += 1
+        elif lds_move == 'removed':
+            if is_blank(old_row.get('category')) and is_not_blank(new_category):
+                self._drop_category_remark(remarks, change_stats)
+            remarks.append(f"LDS removed (was {format_date_ddmmyy(old_lds)}) - Check with HR")
+            stats['warnings']['lds_removed'] += 1
+            stats['warnings']['check_with_hr'] += 1
+
+    def _apply_inactive_date_change(
+        self, row: pd.Series, old_row: Dict, remarks: List[str], change_stats: Dict, stats: Dict
+    ) -> None:
+        """Flag Inactive Date transitions for an employee present in both listings.
+
+        Mediacorp blanks Category while an employee is inactive, so going inactive
+        (Category value -> blank) or coming back (blank -> value) also flips Category.
+        Only that matching flip is replaced by the Inactive Date remark; any other
+        Category change is still reported. Employees with an LDS are skipped: their
+        Deletion / LDS remarks already cover them.
+        """
+        if is_not_blank(self._get_safe_value(row, self.COL_LDS)):
+            return
+
+        new_val = self._get_safe_value(row, self.COL_INACTIVE)
+        old_val = old_row.get('inactive')
+        move = self._date_transition(new_val, old_val)
+        if move is None:
+            return
+        if move == 'changed':
+            remarks.append(
+                f"Inactive Date changed {format_date_ddmmyy(old_val)} -> {format_date_ddmmyy(new_val)}"
+            )
+            stats['changes']['inactive_changed'] += 1
+            return
+
+        new_cat_blank = is_blank(self._get_safe_value(row, self.COL_CATEGORY))
+        old_cat_blank = is_blank(old_row.get('category'))
+        if move == 'added':
+            remark = f"Inactive Date added wef {format_date_ddmmyy(new_val)} - Check with HR"
+            explains_category = new_cat_blank and not old_cat_blank
+            stats['warnings']['inactive_added'] += 1
+        else:
+            remark = f"Inactive Date removed (was {format_date_ddmmyy(old_val)}) - Check with HR"
+            explains_category = old_cat_blank and not new_cat_blank
+            stats['warnings']['inactive_removed'] += 1
+        stats['warnings']['check_with_hr'] += 1
+
+        if explains_category:
+            self._drop_category_remark(remarks, change_stats)
+        remarks.append(remark)
+
+    @staticmethod
+    def _date_transition(new_val, old_val):
+        """Classify a date column between listings: 'added', 'removed', 'changed' or None."""
+        if is_not_blank(new_val) and is_blank(old_val):
+            return 'added'
+        if is_blank(new_val) and is_not_blank(old_val):
+            return 'removed'
+        if lds_date_changed(new_val, old_val):
+            return 'changed'
+        return None
+
+    @staticmethod
+    def _drop_category_remark(remarks: List[str], change_stats: Dict) -> None:
+        """Remove "Category changed" when another remark explains it, keeping the count in step."""
+        if "Category changed" in remarks:
+            remarks.remove("Category changed")
+            change_stats['changes']['category'] -= 1
 
     def _values_differ(self, new_val, old_val) -> bool:
         """Compare two values, handling NaN/None cases."""

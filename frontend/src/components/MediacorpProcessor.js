@@ -517,33 +517,42 @@ const MediacorpProcessor = () => {
                 items={result.statistics?.el_details?.lds_removed}
                 colorClass="text-orange-700"
               />
+              <CollapsibleDetail
+                label="Inactive Date"
+                count={result.statistics?.el_details?.inactive_date?.length || 0}
+                items={result.statistics?.el_details?.inactive_date}
+                colorClass="text-orange-700"
+              />
             </div>
             {result.statistics?.el_total_changes > 0 && (
               <div className="mt-2 bg-white rounded p-2">
-                <div className="text-xs text-gray-600 flex flex-wrap gap-2">
+                <div className="text-xs text-[var(--muted-foreground)] flex flex-wrap gap-2">
                   {result.statistics?.el_changes?.entity > 0 && (
-                    <span className="bg-gray-100 px-2 py-1 rounded">Entity: {result.statistics.el_changes.entity}</span>
+                    <span className="bg-[var(--muted)] px-2 py-1 rounded">Entity: {result.statistics.el_changes.entity}</span>
                   )}
                   {result.statistics?.el_changes?.name > 0 && (
-                    <span className="bg-gray-100 px-2 py-1 rounded">Name: {result.statistics.el_changes.name}</span>
+                    <span className="bg-[var(--muted)] px-2 py-1 rounded">Name: {result.statistics.el_changes.name}</span>
                   )}
                   {result.statistics?.el_changes?.id_no > 0 && (
-                    <span className="bg-gray-100 px-2 py-1 rounded">ID No: {result.statistics.el_changes.id_no}</span>
+                    <span className="bg-[var(--muted)] px-2 py-1 rounded">ID No: {result.statistics.el_changes.id_no}</span>
                   )}
                   {result.statistics?.el_changes?.employment_type > 0 && (
-                    <span className="bg-gray-100 px-2 py-1 rounded">Emp Type: {result.statistics.el_changes.employment_type}</span>
+                    <span className="bg-[var(--muted)] px-2 py-1 rounded">Emp Type: {result.statistics.el_changes.employment_type}</span>
                   )}
                   {result.statistics?.el_changes?.bank_account > 0 && (
-                    <span className="bg-gray-100 px-2 py-1 rounded">Bank Acct: {result.statistics.el_changes.bank_account}</span>
+                    <span className="bg-[var(--muted)] px-2 py-1 rounded">Bank Acct: {result.statistics.el_changes.bank_account}</span>
                   )}
                   {result.statistics?.el_changes?.overseas > 0 && (
-                    <span className="bg-gray-100 px-2 py-1 rounded">Overseas: {result.statistics.el_changes.overseas}</span>
+                    <span className="bg-[var(--muted)] px-2 py-1 rounded">Overseas: {result.statistics.el_changes.overseas}</span>
                   )}
                   {result.statistics?.el_changes?.category > 0 && (
-                    <span className="bg-gray-100 px-2 py-1 rounded">Category: {result.statistics.el_changes.category}</span>
+                    <span className="bg-[var(--muted)] px-2 py-1 rounded">Category: {result.statistics.el_changes.category}</span>
                   )}
                   {result.statistics?.el_changes?.lds_changed > 0 && (
-                    <span className="bg-gray-100 px-2 py-1 rounded">LDS Date: {result.statistics.el_changes.lds_changed}</span>
+                    <span className="bg-[var(--muted)] px-2 py-1 rounded">LDS Date: {result.statistics.el_changes.lds_changed}</span>
+                  )}
+                  {result.statistics?.el_changes?.inactive_changed > 0 && (
+                    <span className="bg-[var(--muted)] px-2 py-1 rounded">Inactive Date: {result.statistics.el_changes.inactive_changed}</span>
                   )}
                 </div>
               </div>
@@ -653,6 +662,20 @@ const MediacorpProcessor = () => {
                     <span className="w-2 h-2 bg-yellow-500 rounded-full mr-2"></span>
                     <span className="font-medium">{result.statistics.warnings.lds_removed}</span>
                     <span className="ml-2">LDS removed (reinstated?) - Check with HR</span>
+                  </div>
+                )}
+                {result.statistics?.warnings?.inactive_added > 0 && (
+                  <div className="flex items-center text-sm bg-yellow-100 text-yellow-800 px-3 py-2 rounded">
+                    <span className="w-2 h-2 bg-yellow-500 rounded-full mr-2"></span>
+                    <span className="font-medium">{result.statistics.warnings.inactive_added}</span>
+                    <span className="ml-2">Inactive Date added (employee went inactive) - Check with HR</span>
+                  </div>
+                )}
+                {result.statistics?.warnings?.inactive_removed > 0 && (
+                  <div className="flex items-center text-sm bg-yellow-100 text-yellow-800 px-3 py-2 rounded">
+                    <span className="w-2 h-2 bg-yellow-500 rounded-full mr-2"></span>
+                    <span className="font-medium">{result.statistics.warnings.inactive_removed}</span>
+                    <span className="ml-2">Inactive Date removed (reinstated?) - Check with HR</span>
                   </div>
                 )}
                 {result.statistics?.warnings?.dep_is_employee > 0 && (

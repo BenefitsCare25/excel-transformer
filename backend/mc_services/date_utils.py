@@ -1,9 +1,12 @@
 """Date formatting utilities for Mediacorp ADC Processor."""
 
+import re
 import warnings
 import pandas as pd
 from datetime import datetime
 from typing import Optional, Union
+
+ISO_DATE_PREFIX = re.compile(r'\s*\d{4}-\d{1,2}-\d{1,2}')
 
 def format_date_ddmmyy(date_val: Union[str, datetime, pd.Timestamp, None]) -> str:
     """
@@ -101,10 +104,12 @@ def parse_lds(value):
         return None
     if isinstance(value, bool) or isinstance(value, (int, float)):
         return None
+    # dayfirst=True would read ISO '2026-03-05' as 3 May, so year-first strings opt out
+    year_first = isinstance(value, str) and ISO_DATE_PREFIX.match(value) is not None
     try:
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            ts = pd.to_datetime(value, dayfirst=True, errors='coerce')
+            ts = pd.to_datetime(value, dayfirst=not year_first, errors='coerce')
     except Exception:
         return None
     if pd.isna(ts):
