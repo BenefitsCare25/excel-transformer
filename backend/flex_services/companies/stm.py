@@ -14,10 +14,11 @@ from itertools import combinations
 
 import openpyxl
 import pandas as pd
-from openpyxl.formula.translate import Translator
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
+from flex_services.dates import is_blank_cell, parse_date_cell
 from flex_services.errors import FlexInputError
+from flex_services.sheet_rows import copy_row_cell, insert_rows_below, range_rows
 
 # openpyxl warns about unsupported extensions in client-authored workbooks; those
 # are expected here. Scoped to openpyxl so other modules keep their warnings.
@@ -87,13 +88,21 @@ WARN_GUIDANCE = {
     'NOT APPROVED': 'Not approved — excluded from outputs automatically. No action needed.',
     'COST CENTRE / ENTITY MISMATCH': 'Cost Centre prefix and claim entity disagree. Verify the entity with HR. Row is on the payroll.',
     'LEAVER MISSING LAST DAY': 'Leaver has claims but no last employment day. Fill it in the leavers file. Row is on the payroll.',
+    'INVALID DATE': 'A date in the uploaded file is not a real date (often a typo in the year). It does not change '
+                    'which claims go on the payroll; the detail says what the report shows instead. Correct it and re-run.',
     'LEAVER CATEGORY MISMATCH': 'Amount matched across categories and EXCLUDED from payroll. Ask HR to fix the category in the leavers file.',
     'LEAVER AMOUNT MISMATCH': 'No current claim matches the final-pay amount. Current claims remain on the payroll; verify the leavers report with HR.',
 }
 
-# Payroll-user helper columns in the IT15 sheet (P = EE ID, Q = Cost Center, R = WT
-# lookup). Owned by payroll; only extended when new data runs past the template's rows.
-HELPER_COLUMNS = (16, 17, 18)
+# Per-row formula columns in the IT15 sheet after the generator's A-L: M (remark array
+# formula), P/Q/R payroll helpers (EE ID, Cost Center, WT lookup) and S-AF validation
+# helpers. Owned by payroll; only copied down to rows the template does not pre-fill.
+# P (=$B<row>) marks how far the template pre-fills them. R is rebuilt on every row
+# because the wage-type lookup table can grow.
+FIRST_HELPER_COLUMN = 13
+EEID_HELPER_COLUMN = 16
+WT_LOOKUP_COLUMN = 18
+AMOUNT_COLUMN = 10   # J: the payroll amount the Grand Total sums
 
 # Claim types approved for the STM payroll output. Do not add a claim type until
 # payroll has confirmed both its Payment Item Long Text and numeric WT code.
@@ -222,6 +231,94 @@ def _lec_label(value):
     if pd.isna(value):
         return ''
     return f'{int(value):04d}'
+
+
+def _parse_date_column(df, column, row_column, file_label, field, consequence, warn_mask=None):
+    """Parsed dates of `column`, plus one INVALID DATE warning per employee whose cell is
+    filled in but not a real date (only rows in `warn_mask` are reported when given).
+
+    Leaver dates are typed by hand, so a typo such as '14/11/20256' must surface as a
+    warning naming the cell - parsing the raw column in one go aborted the whole run.
+    """
+    parsed = df[column].map(parse_date_cell)
+    bad = df[column].map(lambda v: not is_blank_cell(v)).astype(bool) & parsed.isna()
+    if warn_mask is not None:
+        bad &= warn_mask
+    warns = []
+    for _, r in df[bad].drop_duplicates('EEID6').iterrows():
+        where = f', row {int(r[row_column])}' if pd.notna(r[row_column]) else ''
+        warns.append({'Check': 'INVALID DATE', 'Claim Reference': None, 'EEID': r['EEID6'],
+                      'Name': r.get('Employee Name'),
+                      'Detail': f"{file_label}{where}: {field} '{r[column]}' is not a valid date - {consequence}"})
+    return parsed, warns
+
+
+def _total_span(ws, footer_row):
+    """(first, last) row of the J range the Grand Total sums, or None without such a formula."""
+    cell = ws.cell(footer_row, AMOUNT_COLUMN) if footer_row else None
+    if cell is None or cell.data_type != 'f' or not isinstance(cell.value, str):
+        return None
+    spans = [span for span in range_rows(cell.value, ws.title, 'J') if span[0] != span[1]]
+    return max(spans, key=lambda span: span[1]) if spans else None
+
+
+def _has_sum_formula(ws, row):
+    return any(c.data_type == 'f' and isinstance(c.value, str) and 'SUM(' in c.value.upper() for c in ws[row])
+
+
+def _prepare_payroll_area(ws, start, row_count):
+    """Clear last month's rows and make room for `row_count` payroll rows from row `start`.
+
+    The whole sheet is scanned rather than stopping at the first blank cell (a gap would
+    leave last month's rows in the file sent to payroll), but only rows whose EEID cell is
+    numeric count as data - the first other column-B value is the 'Grand Total' footer.
+    The saved template pre-fills its per-row formulas to row 1173, then its totals; a bigger
+    month gets rows inserted above the totals, as payroll's own note in P17 asks.
+
+    Returns (rows cleared, rows inserted, last row with pre-filled per-row formulas).
+    """
+    old_end, footer_row = start - 1, None
+    for r in range(start, ws.max_row + 1):
+        value = ws.cell(r, 2).value
+        if value is None:
+            continue
+        if str(value).strip().isdigit():
+            old_end = r
+        elif footer_row is None:
+            footer_row = r
+    for r in range(start, old_end + 1):     # cols A-L only; payroll's formula columns stay
+        for c in range(1, 13):
+            ws.cell(r, c).value = None
+
+    stop = footer_row or ws.max_row + 1
+    helper_end = max((r for r in range(start, stop) if ws.cell(r, EEID_HELPER_COLUMN).value is not None),
+                     default=start - 1)
+    # Free rows are the ones the Grand Total already sums, minus check-sum rows at its end
+    # (the saved template's S1174), so a blank template with formulas on row 20 alone
+    # still fills its empty rows before anything is inserted.
+    span = _total_span(ws, footer_row)
+    room_end = min(span[1], stop - 1) if span else start
+    while room_end > start and _has_sum_formula(ws, room_end):
+        room_end -= 1
+    boundary = max(start, old_end, helper_end, room_end)
+    data_end = start + row_count - 1
+    inserted = max(data_end - boundary, 0)
+    if inserted:
+        insert_rows_below(ws, boundary, inserted, first_data_row=start)
+
+    if span:
+        footer_row += inserted if footer_row > boundary else 0
+        covered = _total_span(ws, footer_row)
+        if not covered or covered[0] > start or covered[1] < data_end or footer_row <= data_end:
+            raise FlexInputError(
+                f"IT15 template: the '{ws.cell(footer_row, 2).value}' formula at row {footer_row} "
+                f"({ws.cell(footer_row, AMOUNT_COLUMN).value}) would not include payroll rows {start}-{data_end}.",
+                title='Check the IT15 payroll template',
+                summary='The Grand Total in the IT15 template would not include every payroll row.',
+                guidance="Use the saved blank IT15 template rather than an earlier month's file, or extend "
+                         "the Grand Total formula to cover every payroll row, then generate the reports again."
+            )
+    return max(old_end - start + 1, 0), inserted, helper_end
 
 
 def run(files, pay_month, outdir):
@@ -363,7 +460,7 @@ def run(files, pay_month, outdir):
 
         # 8. Leaver data quality: leaver with claims but no last-day date
         lv_claims = lv[lv['EEID6'].isin(set(claims['EEID6']))]
-        for _, r in lv_claims[lv_claims['LastDay'].isna()].iterrows():
+        for _, r in lv_claims[lv_claims['LastDay'].map(is_blank_cell).astype(bool)].iterrows():
             add(W, 'LEAVER MISSING LAST DAY', None, r['EEID6'], r.get('Name'),
                 'In leavers file but Last employment day blank')
 
@@ -387,16 +484,27 @@ def run(files, pay_month, outdir):
     claims = claims[~held_mask]
 
     # ---------------- ENRICH ----------------
-    df = claims.merge(listing[['EEID6', 'Cost Centre', 'Location Description', 'Last Day of Service']],
-                      on='EEID6', how='left')
+    # Excel row numbers travel with the data so a bad cell can be named in the warnings.
+    df = claims.merge(listing[['EEID6', 'Cost Centre', 'Location Description', 'Last Day of Service']]
+                      .assign(_listing_row=listing.index + 2), on='EEID6', how='left')
     df['Cost Centre'] = df['Cost Centre'].fillna(df['EEID6'].map(FALLBACK_CC))
-    df = df.merge(lv[['EEID6', 'LastDay', 'LastClaimMonth', 'EmailDate']], on='EEID6', how='left')
+    df = df.merge(lv[['EEID6', 'LastDay', 'LastClaimMonth', 'EmailDate']].assign(_lv_row=lv.index + 3),
+                  on='EEID6', how='left')
 
     df['Legal Entity Code'] = df['Entity'].map(ENTITY_LEC)
     df['Code'] = df['Claim Type'].map(claim_type_wage_code)
     df['Amount'] = df['Payment Amt'].round(2)
-    df['Termination Date'] = df['LastDay'].fillna(df['Last Day of Service'])
-    df['Active/Inactive'] = df['Termination Date'].notna().map({True: 'Inactive', False: 'Active'})
+    # Inactive follows whether a last day is filled in at all, so a typo'd date still flags the leaver.
+    no_last_day = (df['LastDay'].map(is_blank_cell) & df['Last Day of Service'].map(is_blank_cell)).astype(bool)
+    df['Active/Inactive'] = no_last_day.map({True: 'Active', False: 'Inactive'})
+    leaver_last_day, date_warns = _parse_date_column(
+        df, 'LastDay', '_lv_row', 'STM Leavers file', 'last day',
+        "the employee stays Inactive; the report uses the employee listing's Last Day of Service if it has one")
+    listing_last_day, listing_warns = _parse_date_column(
+        df, 'Last Day of Service', '_listing_row', 'Employee listing report', 'Last Day of Service',
+        'the employee stays Inactive; the report leaves the Termination Date blank', warn_mask=leaver_last_day.isna())
+    date_warns += listing_warns
+    df['Termination Date'] = leaver_last_day.fillna(listing_last_day)
 
     # Rule (claim-level, prevents double pay): the leavers file records per-category amounts
     # already emailed to STM HR for final-pay processing. Identify WHICH claims those amounts
@@ -483,7 +591,16 @@ def run(files, pay_month, outdir):
             else:
                 df.loc[match, 'CoveredByLeaverEmail'] = True
     # email date only shown on rows actually covered by the leavers email
-    df.loc[~df['CoveredByLeaverEmail'], 'EmailDate'] = pd.NaT
+    covered = df['CoveredByLeaverEmail'].astype(bool)
+    email_date, email_warns = _parse_date_column(
+        df, 'EmailDate', '_lv_row', 'STM Leavers file', 'email date',
+        'the claims still count as paid via final pay and stay out of the IT15; the report shows the date as typed',
+        warn_mask=covered)
+    date_warns += email_warns
+    # An unreadable email date is kept as typed: a blank in that column reads as "not yet paid".
+    readable = email_date.notna() | df['EmailDate'].map(is_blank_cell).astype(bool)
+    df['EmailDate'] = email_date.astype(object).where(readable, df['EmailDate'])
+    df.loc[~covered, 'EmailDate'] = pd.NaT
     df['FinalPayThisCycle'] = df['CoveredByLeaverEmail']
 
     # SEA split
@@ -506,7 +623,7 @@ def run(files, pay_month, outdir):
             'Currency': 'SGD',
             'Termination Date': pd.to_datetime(d['Termination Date']),
             'Active/Inactive': d['Active/Inactive'],
-            'Date Email sent to STM': pd.to_datetime(d['EmailDate']),
+            'Date Email sent to STM': d['EmailDate'],   # parsed above; unreadable dates kept as typed
             '_final_pay': d['FinalPayThisCycle'],
             '_covered': d['CoveredByLeaverEmail'],
             '_unrec': d['LeaverUnreconciled'],
@@ -522,6 +639,8 @@ def run(files, pay_month, outdir):
 
     bd = build_breakdown(sg_df)
 
+    if date_warns:
+        warnings_df = pd.concat([warnings_df, pd.DataFrame(date_warns)], ignore_index=True)
     # register leaver mismatches as validation errors (rows remain in breakdown, blocked from payroll)
     if leaver_warns:
         lw_rows = [{'Check': 'LEAVER CATEGORY MISMATCH', 'Claim Reference': None, 'EEID': e6, 'Name': nm, 'Detail': det}
@@ -664,35 +783,12 @@ def run(files, pay_month, outdir):
     def clone_style(src, dst):
         dst._style = copy(src._style)
 
-    # Map the data area. The whole sheet is scanned rather than stopping at the first
-    # blank cell (a gap would leave last month's rows in the file sent to payroll), but
-    # only rows whose EEID cell is numeric count as data - the template ends with a
-    # 'Grand Total' row carrying a SUM that must survive untouched.
-    old_end = START - 1
-    footer_row = None
-    for r in range(START, ws.max_row + 1):
-        value = ws.cell(r, 2).value
-        if value is None:
-            continue
-        if str(value).strip().isdigit():
-            old_end = r
-        elif footer_row is None:
-            footer_row = r
-
-    if footer_row is not None and START + len(agg) - 1 >= footer_row:
-        raise FlexInputError(
-            f"IT15 template has room for {footer_row - START} payroll rows before the "
-            f"'{ws.cell(footer_row, 2).value}' row at row {footer_row}, but this run produced "
-            f"{len(agg)}. Extend the template's data area (and its total formula) and re-run.",
-            title='The payroll template needs more rows',
-            summary=f'This report needs {len(agg)} payroll rows, but the template only has room for {footer_row - START}.',
-            guidance='Add rows above the total row in the template and extend the total formula. Upload the updated template and generate the reports again.'
-        )
-
-    # clear old data (cols A-L only; leave payroll-user cols M/P formulas intact)
-    for r in range(START, old_end + 1):
-        for c in range(1, 13):
-            ws.cell(r, c).value = None
+    rows_cleared, rows_inserted, helper_end = _prepare_payroll_area(ws, START, len(agg))
+    # New rows copy the last pre-filled row - "Insert and Copy the cell" from the row above
+    # (column M's remark formula is only pre-filled from row 1034, so row 20 lacks it).
+    helper_src = max(helper_end, START)
+    helper_cols = [c for c in range(FIRST_HELPER_COLUMN, ws.max_column + 1)
+                   if ws.cell(helper_src, c).value is not None]
 
     # write new rows
     for i, row in agg.iterrows():
@@ -704,29 +800,21 @@ def run(files, pay_month, outdir):
             cell = ws.cell(r, c)
             cell.value = v
             clone_style(styles[c], cell)
-        # Extend the payroll-user helper formulas (P/Q/R) when the new data runs past the
-        # rows the template pre-fills. Existing cells are left alone - these columns belong
-        # to payroll, not to this generator.
-        for helper_col in HELPER_COLUMNS:
-            src = ws.cell(START, helper_col)
+        # Copy the per-row formulas (M, P-R, S-AF) down to rows the template does not
+        # pre-fill. Existing cells are left alone - these columns belong to payroll.
+        for helper_col in helper_cols:
+            src = ws.cell(helper_src, helper_col)
             dst = ws.cell(r, helper_col)
-            if src.value is None:
-                continue
-            if helper_col == 18:
+            if helper_col == WT_LOOKUP_COLUMN:
                 dst.value = (
                     f"=VLOOKUP(H{r},'{PAYROLL_WAGE_TYPE_LOOKUP_SHEET}'!"
                     f'$I$4:$J${wage_type_lookup_end_row},2,0)'
                 )
                 clone_style(src, dst)
                 continue
-            if dst.value is not None:
+            if r <= helper_end or dst.value is not None:
                 continue
-            dst.value = (
-                Translator(src.value, origin=src.coordinate).translate_formula(dst.coordinate)
-                if isinstance(src.value, str) and src.value.startswith('=')
-                else src.value
-            )
-            clone_style(src, dst)
+            copy_row_cell(src, dst)
 
     wb.save(pay_path)
 
@@ -743,7 +831,8 @@ def run(files, pay_month, outdir):
     echo("=== GENERATION LOG ===")
     echo(f"Pay month: {PAY_MONTH:%b %Y} | claims rows: {len(claims)} | employees: {claims['EEID6'].nunique()}")
     echo(f"IT15 template: {'saved server template' if USING_SAVED_TEMPLATE else 'uploaded file'} "
-         f"({os.path.basename(TEMPLATE_F)}) | prior data rows cleared: {max(old_end - START + 1, 0)}")
+         f"({os.path.basename(TEMPLATE_F)}) | prior data rows cleared: {rows_cleared}"
+         f" | rows inserted above the totals: {rows_inserted}")
     echo(f"Breakdown rows: {len(bd)} | total: {bd['Amount'].sum():,.2f}")
     echo(bd.groupby(['Legal Entity Code', 'Active/Inactive'])['Amount'].sum().to_string())
     echo(f"Payroll rows: {len(agg)} | total: {agg['Amount'].sum():,.2f}")

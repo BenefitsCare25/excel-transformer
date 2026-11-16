@@ -38,6 +38,8 @@ EL/
 │   └── flex_services/         # Flex Report (per-company adapters)
 │       ├── registry.py        # Company catalog: active adapters + pending slots
 │       ├── run_store.py       # Ephemeral run folders, manifest, zip, 30-min reaper
+│       ├── dates.py           # parse_date_cell / is_blank_cell for hand-typed date cells
+│       ├── sheet_rows.py      # Insert rows like Excel (totals, validations, formats, refs follow)
 │       └── companies/
 │           └── stm.py         # STMicroelectronics adapter
 ├── frontend/
@@ -340,13 +342,21 @@ payroll-user formula columns (M/P) intact.
   data would otherwise leave last month's payments in the file submitted to payroll
 - **Only rows whose EEID cell is numeric count as data.** The real template ends with a `Grand Total` row
   (row 1176, `=SUM(J20:J1174)`) that must survive — clearing to the last non-empty column-B cell would wipe it
-- **Capacity is 1,155 payroll rows** (rows 20–1174). If a run produces more, it raises `FlexInputError` naming
-  the footer row rather than overwriting the total. May 2026 used 1,154 — one row under the ceiling
-- Helper columns P/Q/R (`=$B20`, `=$D20`, `=VLOOKUP(H20,'wt_notes (ref)'!…)`) are extended via openpyxl's
-  `Translator` only for rows the template does not already pre-fill; existing cells are never touched
-- The saved template is ~12 MB and carries ~950k validation formulas (incl. 93k array formulas out to column
-  XFD in rows 1077–1173). A run takes ~30s, almost all of it the openpyxl round-trip. Verified that formulas,
-  array formulas, all 5 sheets and the 9 data validations survive into the generated file
+- **No row ceiling.** The saved template pre-fills per-row formulas for rows 20–1173 (1,154 rows — May 2026 used
+  exactly that). A bigger month gets rows inserted above the totals (`_prepare_payroll_area` →
+  `sheet_rows.insert_rows_below`), as payroll's own P17 note asks: the S check-sum / spacer rows / `Grand Total`
+  move down with their row properties, and their SUMs, every data validation / conditional format reaching the
+  last data row, other-sheet references and defined names follow. Nov 2026 needed 1,214 and used to fail with
+  "template needs more rows" (the UI has no template slot, so that guidance could not be followed)
+- The insert point is the end of the Grand Total's own `SUM(J20:J…)` range (minus check-sum rows such as S1174),
+  so a blank template with formulas on row 20 only fills its empty rows first. After inserting, the Grand Total
+  must still cover every payroll row, else `FlexInputError` — never a silently short total (a template whose
+  data runs past its check-sum row, e.g. an old 1,156-row output, is refused)
+- New rows copy the per-row columns (M remark array formula, P/Q/R, S–AF validation helpers) from the **last
+  pre-filled row** (`copy_row_cell`) — M is blank in rows 20–1033, so copying from row 20 would drop it.
+  Pre-filled rows are never touched except R, rebuilt every row for the wage-type lookup range
+- The saved template is ~3.4 MB, 5 sheets, 32 columns (A–AF) on `SG1xPaymtTemplate`, max row 1197. openpyxl drops
+  its x14 data-validation extensions on load (the 9 standard validations survive)
 
 ### Input File Expectations (STM)
 - **Claims export**: `Staff ID`, `Employee Name`, `Reference No.`, `Entity`, `Claim Type`, `Payment Amt`, `Status`, `Incurred Date`
@@ -361,6 +371,15 @@ payroll-user formula columns (M/P) intact.
 - **Rows are held out by source-row index**, not by Claim Reference — a claim with a blank reference must still be held
 - **Blank Cost Centre in the listing counts as missing**, not as present
 - **Leaver amounts that match no claim in their category** attempt the cross-category rescue first, then block that leaver's remaining claims from payroll (a wrong-category entry would otherwise be paid twice)
+- **Hand-typed dates are parsed per cell** with `flex_services.dates.parse_date_cell`: only unambiguous text is
+  read (`dd/mm/yyyy`, `yyyy-mm-dd`/`yyyy/mm/dd`, month names; years 1900–2100). Anything else — `14/11/20256`
+  (Nov 2026), two-digit years — is an `INVALID DATE` warning naming file + row, never a guess and never
+  `pd.to_datetime` on the raw column, which aborted the whole run with a 500. A date never changes payroll
+  inclusion: the leaver stays Inactive (termination date falls back to the listing's Last Day of Service), and an
+  unreadable email date on a final-pay claim is shown as typed, because a blank there reads as "not yet paid"
+- Whitespace-only cells count as blank everywhere (`is_blank_cell`), including the LEAVER MISSING LAST DAY check
+- `rhb/sources.py:_date` and `ceva/sources.py:_parse_date` predate `flex_services/dates.py` and still guess
+  month-first for non-`dd/mm/yyyy` text; migrating them changes those adapters' behaviour, so it is a separate change
 
 ## Common Issues
 
