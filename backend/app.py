@@ -47,6 +47,7 @@ from gp_panel_services import (
 
 # Renewal Comparison imports
 from renewal_services import process_renewal_comparison
+from renewal_services.adj_listing import adj_listing_blueprint
 
 # Flex Report imports
 import flex_services
@@ -118,11 +119,13 @@ load_dotenv()
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
 app.register_blueprint(hospital_blueprint)
+app.register_blueprint(adj_listing_blueprint)
 
 
 # Configuration
 UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'uploads')
 PROCESSED_FOLDER = os.getenv('PROCESSED_FOLDER', 'processed')
+app.config['PROCESSED_FOLDER'] = PROCESSED_FOLDER
 hospital_root = os.getenv('HOME', '/home') if os.getenv('WEBSITE_SITE_NAME') else PROCESSED_FOLDER
 app.config['HOSPITAL_OUTPUT_DIR'] = os.getenv(
     'HOSPITAL_OUTPUT_DIR', os.path.join(hospital_root, 'hospital_bills')

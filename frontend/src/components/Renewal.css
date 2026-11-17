@@ -1,0 +1,142 @@
+.renewal-text { color: var(--foreground); }
+.renewal-muted { color: var(--muted-foreground); }
+.renewal-label {
+  color: var(--foreground);
+  display: block;
+  font-size: .875rem;
+  font-weight: 600;
+  margin-bottom: .5rem;
+}
+
+/* Template picker */
+.renewal-picker {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: .75rem;
+  color: var(--foreground);
+  padding: 1rem 1.15rem;
+  text-align: left;
+  transition: border-color .15s ease, background-color .15s ease;
+  width: 100%;
+}
+.renewal-picker:hover { border-color: var(--accent); }
+.renewal-picker.is-selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.renewal-picker:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+.renewal-picker-title { font-weight: 700; }
+.renewal-picker-io {
+  color: var(--accent);
+  font-size: .75rem;
+  font-weight: 600;
+  margin-top: .5rem;
+}
+
+/* Upload box */
+.renewal-drop {
+  border: 2px dashed var(--border);
+  border-radius: .5rem;
+  cursor: pointer;
+  padding: 1.5rem;
+  text-align: center;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.renewal-drop:hover, .renewal-drop.is-dragging { background: var(--accent-soft); border-color: var(--accent); }
+.renewal-drop.has-file { background: var(--success-soft); border-color: var(--success); }
+.renewal-drop.is-disabled { cursor: not-allowed; opacity: .5; }
+.renewal-drop:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+.renewal-drop-icon { color: var(--muted-foreground); }
+.renewal-drop-ok { color: var(--success); }
+.renewal-file-name {
+  color: var(--success);
+  font-size: .875rem;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Form controls */
+.renewal-input {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: .375rem;
+  color: var(--foreground);
+  font-size: .875rem;
+  padding: .45rem .7rem;
+  width: 100%;
+}
+.renewal-input:focus { border-color: var(--accent); outline: 2px solid var(--focus-ring); outline-offset: 0; }
+.renewal-input:disabled { opacity: .6; }
+
+/* Panels, tables, alerts */
+.renewal-panel {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: .5rem;
+}
+.renewal-disclosure {
+  align-items: center;
+  background: var(--accent-soft);
+  border-radius: .5rem;
+  color: var(--accent);
+  display: flex;
+  font-size: .875rem;
+  font-weight: 600;
+  justify-content: space-between;
+  padding: .75rem 1rem;
+  width: 100%;
+}
+.renewal-disclosure:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+.renewal-table { border-collapse: collapse; font-size: .82rem; width: 100%; }
+.renewal-table th {
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-align: left;
+  text-transform: uppercase;
+}
+.renewal-table th, .renewal-table td { border: 1px solid var(--border); padding: .45rem .6rem; }
+.renewal-table td { color: var(--foreground); }
+.renewal-table .num { font-variant-numeric: tabular-nums; text-align: right; }
+.renewal-code {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: .25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .78rem;
+  padding: 0 .3rem;
+}
+.renewal-stat {
+  background: var(--muted);
+  border-radius: .5rem;
+  padding: .75rem;
+  text-align: center;
+}
+.renewal-stat strong { color: var(--foreground); display: block; font-size: 1.5rem; }
+.renewal-stat span { color: var(--muted-foreground); font-size: .75rem; }
+.renewal-pos { color: var(--success); }
+.renewal-neg { color: var(--error); }
+.renewal-badge {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--foreground);
+  font-size: .72rem;
+  font-weight: 600;
+  padding: .1rem .55rem;
+}
+.renewal-badge.named { background: var(--warning-soft); border-color: var(--warning); color: var(--warning); }
+
+.renewal-alert { border: 1px solid; border-radius: .5rem; font-size: .875rem; padding: .75rem 1rem; }
+.renewal-alert.error { background: var(--error-soft); border-color: var(--error); color: var(--error); }
+.renewal-alert.warning { background: var(--warning-soft); border-color: var(--warning); color: var(--warning); }
+.renewal-alert.info { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .renewal-picker, .renewal-drop { transition: none; }
+}

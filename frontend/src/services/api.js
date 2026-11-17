@@ -382,16 +382,39 @@ class ApiService {
     }
   }
 
-  async downloadRenewalReport(filename) {
+  async processRenewalAdjListing(file1, file2, { proRataDays, clientLabel, limits }) {
+    const formData = new FormData();
+    formData.append('file_1', file1);
+    formData.append('file_2', file2);
+    formData.append('pro_rata_days', proRataDays);
+    formData.append('client_label', clientLabel || '');
+    formData.append('limits', JSON.stringify(limits || {}));
+
     try {
-      const response = await this.api.get(`/api/renewal/download/${filename}`, {
+      const response = await this.api.post('/api/renewal/adj-listing/generate', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 300000,
+      });
+      return { success: true, data: response.data };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Adj listing generation failed',
+        details: error.response?.data?.details || error.message,
+      };
+    }
+  }
+
+  async downloadRenewalReport(filename, saveAs) {
+    try {
+      const response = await this.api.get(`/api/renewal/download/${encodeURIComponent(filename)}`, {
         responseType: 'blob',
       });
 
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', filename);
+      link.setAttribute('download', saveAs || filename);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

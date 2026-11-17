@@ -4,7 +4,7 @@ import ProcessingStatus from './components/ProcessingStatus';
 import ClinicMatcher from './components/ClinicMatcher';
 import MediacorpProcessor from './components/MediacorpProcessor';
 import GPPanelComparison from './components/GPPanelComparison';
-import RenewalComparison from './components/RenewalComparison';
+import RenewalTab from './components/RenewalTab';
 import FlexReport from './components/FlexReport';
 import HospitalVision from './components/HospitalVision';
 import apiService from './services/api';
@@ -444,8 +444,8 @@ function App() {
             </>
           ) : activeTab === 'renewal' ? (
             <>
-              {/* Renewal Comparison Component */}
-              <RenewalComparison />
+              {/* Renewal Comparison: template picker (Adjustment Breakdown / Combined Adj Listing) */}
+              <RenewalTab />
             </>
           ) : activeTab === 'flex' ? (
             <>

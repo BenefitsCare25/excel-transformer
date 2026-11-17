@@ -34,7 +34,8 @@ EL/
 │   ├── gp_panel_services/     # GP Panel comparison
 │   │   └── panel_processor.py
 │   ├── renewal_services/      # Renewal comparison
-│   │   └── renewal_processor.py
+│   │   ├── renewal_processor.py   # "Adjustment Breakdown" template (per-product sheets)
+│   │   └── adj_listing/           # "Combined Adj Listing" template (reader, rules, processor, writer, notes, routes)
 │   └── flex_services/         # Flex Report (per-company adapters)
 │       ├── registry.py        # Company catalog: active adapters + pending slots
 │       ├── run_store.py       # Ephemeral run folders, manifest, zip, 30-min reaper
@@ -286,6 +287,41 @@ Key format examples: `NRIC|S1234567A`, `EMAIL|john@example.com`, `NAME|JOHN TAN|
 
 Formula: `New = Current − Common`, `Left = Previous − Common`
 
+## Renewal Comparison — Combined Adj Listing (second template)
+
+The Renewal tab opens with a template picker (`RenewalTab.js`): **Adjustment Breakdown** (the original
+per-product tool) or **Combined Adj Listing** (`RenewalAdjListing.js`). Both stay mounted, so switching keeps
+results. Backend: `renewal_services/adj_listing/`, endpoint `POST /api/renewal/adj-listing/generate`, download via
+the existing `/api/renewal/download/<file>` (stored as `Renewal_Adj_<ts>_<id>.xlsx`, saved as `display_filename`).
+
+**Inputs**: two `Employee Listing YYYY` sheets in either layout, mixed freely — the classic two-row listing (merged
+banners `GROUP TERM LIFE (GTL)`, `Type of Administration` left of each product) or the flat one-row listing
+(`GTL EE Eligible Sum Insured`, `GTL Premium`, `GHS Plan/Basis of Cover`). Staff match by NRIC → EMP ID → name+DOB.
+Premium formulas with no saved result raise a `ValueError` (they read as blank and would drop premiums silently).
+
+**Output** (verified against the MCST 1216 2024-2025 manual Adj: GTL $101.08, GDD $58.56, GHS/GMM $0):
+- `<Client> Adj`: all previous-year rows (last year's premium) then all current-year rows (green, this year's
+  premium). Headcount rows: `=(curr-prev)/365*days` (default 183); medical adds `*1.09`. SUBTOTAL row + GST row
+- `Adj Invoice Summary`: per-entity totals beside a blank DN/CN cell, then per-employee `SUMIFS` on the Adj
+  sheet's last column, `Match Key` (one id per person across both years). Never SUMIFS on NRIC / EMP ID / name:
+  duplicate rows or shared names would be counted twice
+- Text from listings is written with `writer.put()` so a value starting with `=` stays text, not a formula
+- `Notes`: files, renewal dates, limits used and their source, every Named/over-limit decision, warnings
+
+**Basis rule (agreed with the business, 17 Nov 2026)**:
+- A listing's Administration Basis column always wins ('Named Basis' → Named; 'HC', 'Head-count' → Headcount).
+  Other text falls through to the rule below with a warning. A shared basis column applies to every product to
+  its right that has none of its own (same as `renewal_processor`)
+- Matching fallbacks (EMP ID, name+DOB) never pair rows whose NRICs are both present and different
+- Medical with a premium → Headcount. Life with a premium within FCL and age limit → Headcount
+- Life over the FCL or age limit (`YEARFRAC(DOB, renewal, 1) + 1 > limit`) → Named, **except** staff Named the
+  previous year (already underwritten) → Headcount. This reproduces the insurer's DN/CN (Ang/Marmoor)
+- Limits: on-screen entry → the file's own header (`NEL: $800,000 or age 71`) → the other file's header
+- A previous listing with no basis column has no earlier year to check, so its over-limit staff are Named and a
+  warning names them — add a `<P> Administration Basis` column to that listing if any were billed as Headcount
+- Current-year entity names are relabelled to the previous year's name when matched staff agree
+  (`CBRE Pte Ltd (MCST 1216)` → `MCST1216`) so the invoice summary groups both years
+
 ## Flex Report — Key Design Notes
 
 ### Plugin Architecture (one module per client company)
@@ -407,7 +443,8 @@ payroll-user formula columns (M/P) intact.
 | `/api/gp-panel/compare` | POST | GP Panel comparison |
 | `/api/gp-panel/download/<filename>` | GET | Download GP Panel result |
 | `/api/renewal/compare` | POST | Renewal comparison |
-| `/api/renewal/download/<filename>` | GET | Download renewal result |
+| `/api/renewal/download/<filename>` | GET | Download renewal result (both templates) |
+| `/api/renewal/adj-listing/generate` | POST | Combined Adj Listing (two listings + `pro_rata_days`, `client_label`, `limits` JSON) |
 | `/api/flex/health` | GET | Flex Report health + adapter load errors |
 | `/api/flex/companies` | GET | Company catalog with upload slot specs |
 | `/api/flex/run/<company_id>` | POST | Run one company's monthly generation |
