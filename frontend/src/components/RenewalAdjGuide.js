@@ -55,7 +55,7 @@ const RenewalAdjGuide = () => (
           <span className="font-semibold">&lt;Client&gt; Adj</span>: every previous-year row, then every current-year
           row (green), both at last year&apos;s premium: a continuing employee keeps their own, a joiner takes last
           year&apos;s premium for the same cover. Continuing staff net to zero even when the renewal changes the rates.
-          Headcount rows adjust by <Code>(current − previous) / 365 × days</Code>; medical adds 9% GST.
+          Headcount rows adjust by <Code>(current − previous) / 2</Code> (the pro-rata divisor); medical adds 9% GST.
         </li>
         <li>
           <span className="font-semibold">Adj Invoice Summary</span>: totals per entity next to a blank Debit/Credit

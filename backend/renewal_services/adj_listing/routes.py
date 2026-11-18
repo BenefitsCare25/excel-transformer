@@ -73,11 +73,11 @@ def generate_adj_listing():
     if error:
         return error
     try:
-        days = int(request.form.get('pro_rata_days', 183))
+        divisor = int(request.form.get('pro_rata_divisor', 2))
     except ValueError:
-        return _bad_request('Invalid pro-rata days', 'Pro-rata days must be a whole number.')
-    if not 1 <= days <= 366:
-        return _bad_request('Invalid pro-rata days', 'Pro-rata days must be between 1 and 366.')
+        return _bad_request('Invalid pro-rata divisor', 'Pro-rata divisor must be a whole number.')
+    if not 1 <= divisor <= 12:
+        return _bad_request('Invalid pro-rata divisor', 'Pro-rata divisor must be between 1 and 12.')
     client_label = (request.form.get('client_label') or '').strip()[:40]
     try:
         limits = _parse_limits(request.form.get('limits', ''))
@@ -91,7 +91,7 @@ def generate_adj_listing():
                 paths.append(path)
             result = process_adj_listing(
                 paths[0], paths[1], files[0].filename, files[1].filename, output_path,
-                pro_rata_days=days, client_label=client_label, limits=limits,
+                pro_rata_divisor=divisor, client_label=client_label, limits=limits,
             )
     except ValueError as exc:
         logger.warning("Adj listing validation error: %s", exc)

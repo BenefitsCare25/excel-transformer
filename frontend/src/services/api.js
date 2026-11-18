@@ -382,11 +382,11 @@ class ApiService {
     }
   }
 
-  async processRenewalAdjListing(file1, file2, { proRataDays, clientLabel, limits }) {
+  async processRenewalAdjListing(file1, file2, { proRataDivisor, clientLabel, limits }) {
     const formData = new FormData();
     formData.append('file_1', file1);
     formData.append('file_2', file2);
-    formData.append('pro_rata_days', proRataDays);
+    formData.append('pro_rata_divisor', proRataDivisor);
     formData.append('client_label', clientLabel || '');
     formData.append('limits', JSON.stringify(limits || {}));
 

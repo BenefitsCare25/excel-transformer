@@ -59,8 +59,8 @@ const ProductTable = ({ result }) => {
       </table>
       <p className="text-xs renewal-muted mt-2">
         Premium columns sum Headcount rows only. Current-year staff are priced at {result.previous.label} premiums, so
-        continuing staff net to zero. Adjustment = (current − previous) / 365 × {result.pro_rata_days} days; medical
-        products include 9% GST.
+        continuing staff net to zero. Adjustment = (current − previous) / {result.pro_rata_divisor}; medical products
+        include 9% GST.
       </p>
     </div>
   );

@@ -9,7 +9,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter, quote_sheetname
 
-from .processor import GST_RATE, YEAR_DAYS, AdjReport, OutputRow
+from .processor import GST_RATE, AdjReport, OutputRow
 from .reader import LIFE_PRODUCTS
 from .rules import HEADCOUNT
 
@@ -121,7 +121,7 @@ def _employee_value(key: str, out: OutputRow, r: int, letters: Dict[str, str]):
     return None if value == '' else value
 
 
-def _product_value(col: Column, out: OutputRow, r: int, letters: Dict[str, str], days: int):
+def _product_value(col: Column, out: OutputRow, r: int, letters: Dict[str, str], divisor: int):
     code, name = col.key.split('.', 1)
     values = out.row.products.get(code, {})
     decision = out.decisions.get(code)
@@ -132,7 +132,7 @@ def _product_value(col: Column, out: OutputRow, r: int, letters: Dict[str, str],
         return out.priced.get(code) if (name == 'curr_premium') == out.current else None
     if name == 'adj':
         prev, curr = letters[f"{code}.prev_premium"], letters[f"{code}.curr_premium"]
-        return f"=({curr}{r}-{prev}{r})/{YEAR_DAYS}*{days}" if headcount else None
+        return f"=({curr}{r}-{prev}{r})/{divisor}" if headcount else None
     if name == 'adj_gst':
         return f"={letters[f'{code}.adj']}{r}*{1 + GST_RATE:g}" if headcount else None
     if name == 'last_accepted_si':
@@ -189,7 +189,7 @@ def write_adj_sheet(ws, report: AdjReport) -> Dict[str, str]:
             if col.key == MATCH_KEY:
                 value = report.groups[out.group].key
             elif col.product:
-                value = _product_value(col, out, r, letters, report.days)
+                value = _product_value(col, out, r, letters, report.divisor)
             else:
                 value = _employee_value(col.key, out, r, letters)
             cell = put(ws, r, c, value, formula=is_formula)

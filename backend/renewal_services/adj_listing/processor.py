@@ -2,7 +2,7 @@
 
 Every employee in the previous listing gets a row carrying last year's premium, every employee
 in the current listing gets a row priced at last year's premium too (see pricing.py), and each
-Headcount row adjusts by (current - previous) / 365 * pro-rata days. Continuing staff net to
+Headcount row adjusts by (current - previous) / pro-rata divisor (2 = half a year). Continuing staff net to
 zero per employee in the invoice summary even when the renewal changed the rates; joiners and
 leavers do not.
 """
@@ -22,7 +22,6 @@ from .rules import (
 
 logger = logging.getLogger(__name__)
 
-YEAR_DAYS = 365
 GST_RATE = 0.09
 
 
@@ -57,7 +56,7 @@ class AdjReport:
     rows: List[OutputRow]
     groups: List[EmployeeGroup]
     limits: Dict[str, Dict[str, dict]]
-    days: int
+    divisor: int
     client: str
     entity_map: Dict[str, str]
     warnings: List[str] = field(default_factory=list)
@@ -174,7 +173,7 @@ def _client_label(entered: str, groups: List[EmployeeGroup]) -> str:
     return entities.most_common(1)[0][0][:40] if entities else 'Renewal'
 
 
-def build_report(prev: Listing, curr: Listing, days: int, client_label: str,
+def build_report(prev: Listing, curr: Listing, divisor: int, client_label: str,
                  entered_limits: Dict[str, Dict]) -> AdjReport:
     matches = match_rows(prev.rows, curr.rows)
     entity_map = entity_mapping(prev.rows, curr.rows, matches)
@@ -197,12 +196,11 @@ def build_report(prev: Listing, curr: Listing, days: int, client_label: str,
     warnings = (prev.warnings + curr.warnings + _limit_warnings(prev, curr, limits)
                 + _history_warnings(prev, prev_rows) + _unrecognised_basis_warnings(prev, curr, rows)
                 + pricing_warnings)
-    return AdjReport(prev, curr, codes, show_admin, rows, groups, limits, days,
+    return AdjReport(prev, curr, codes, show_admin, rows, groups, limits, divisor,
                      _client_label(client_label, groups), entity_map, warnings)
 
 
 def _product_summary(report: AdjReport) -> List[dict]:
-    factor = report.days / YEAR_DAYS
     summaries = []
     for code in report.products:
         stats = {'prev_hc': 0, 'curr_hc': 0, 'prev_named': 0, 'curr_named': 0,
@@ -217,7 +215,7 @@ def _product_summary(report: AdjReport) -> List[dict]:
                 stats[f'{year}_premium'] += row.priced.get(code) or 0.0
             elif decision.basis == NAMED:
                 stats[f'{year}_named'] += 1
-        adj = (stats['curr_premium'] - stats['prev_premium']) * factor
+        adj = (stats['curr_premium'] - stats['prev_premium']) / report.divisor
         life = code in LIFE_PRODUCTS
         summaries.append({
             'name': code, 'type': 'Life' if life else 'Medical', **stats,
@@ -257,7 +255,7 @@ def summarise(report: AdjReport) -> dict:
     prev_groups = {r.group for r in report.rows if not r.current}
     curr_groups = {r.group for r in report.rows if r.current}
     return {
-        'client': report.client, 'scope': report.scope, 'pro_rata_days': report.days,
+        'client': report.client, 'scope': report.scope, 'pro_rata_divisor': report.divisor,
         'previous': _listing_info(report.prev), 'current': _listing_info(report.curr),
         'employee_summary': {
             'prev_total': len(prev_groups), 'curr_total': len(curr_groups),
@@ -273,7 +271,7 @@ def summarise(report: AdjReport) -> dict:
 
 
 def process_adj_listing(file1_path: str, file2_path: str, file1_name: str, file2_name: str,
-                        output_path: str, pro_rata_days: int = 183, client_label: str = '',
+                        output_path: str, pro_rata_divisor: int = 2, client_label: str = '',
                         limits: Optional[Dict[str, Dict]] = None) -> dict:
     """Entry point used by the API route. Raises ValueError for user-fixable input problems."""
     from .writer import write_report
@@ -282,7 +280,7 @@ def process_adj_listing(file1_path: str, file2_path: str, file1_name: str, file2
     if first.year == second.year:
         raise ValueError(f"Both files are policy year {first.year}. Upload one previous-year and one current-year listing.")
     prev, curr = (first, second) if first.year < second.year else (second, first)
-    report = build_report(prev, curr, pro_rata_days, client_label, limits or {})
+    report = build_report(prev, curr, pro_rata_divisor, client_label, limits or {})
     write_report(report, output_path)
     result = summarise(report)
     result['display_filename'] = f"{report.client} - {prev.label} Adj ({report.scope}).xlsx"

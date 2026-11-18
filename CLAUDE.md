@@ -299,14 +299,16 @@ banners `GROUP TERM LIFE (GTL)`, `Type of Administration` left of each product) 
 (`GTL EE Eligible Sum Insured`, `GTL Premium`, `GHS Plan/Basis of Cover`). Staff match by NRIC → EMP ID → name+DOB.
 Premium formulas with no saved result raise a `ValueError` (they read as blank and would drop premiums silently).
 
-**Output** (verified against the MCST 1216 2024-2025 manual Adj: GTL $101.08, GDD $58.56, GHS/GMM $0):
+**Output** (verified against the MCST 1216 2024-2025 manual Adj: GTL $101.08, GDD $58.56, GHS/GMM $0 with that
+file's `/365*183`; with `/2` the same inputs give $100.80 and $58.40):
 - `<Client> Adj`: all previous-year rows then all current-year rows (green), **both at last year's premium**
-  (`pricing.py`). Headcount rows: `=(curr-prev)/365*days` (default 183); medical adds `*1.09`. SUBTOTAL row + GST row
+  (`pricing.py`). Headcount rows: `=(curr-prev)/2` (`pro_rata_divisor`, default 2 = changes assumed mid-year, same
+  as the Adjustment Breakdown template; was `/365*183`); medical adds `*1.09`. SUBTOTAL row + GST row
 - The Adj is the previous policy year's headcount movement, so the renewal's new rates never enter it: a
   continuing employee's current row carries their own premium from last year and nets to zero; a joiner takes
   the most common last-year premium for the same cover (life: sum insured, medical: plan / plan type / family).
   A life SI change is rescaled at the employee's own last-year rate; a cover with no last-year premium keeps this
-  year's and raises a warning. MCST 1216 2025-26 (rates 100.8→352 GTL) billed $3,481 before this, −$1,332.59 after
+  year's and raises a warning. MCST 1216 2025-26 (rates 100.8→352 GTL) billed $3,481 before this; −$1,328.95 now
 - `Adj Invoice Summary`: per-entity totals beside a blank DN/CN cell, then per-employee `SUMIFS` on the Adj
   sheet's last column, `Match Key` (one id per person across both years). Never SUMIFS on NRIC / EMP ID / name:
   duplicate rows or shared names would be counted twice
@@ -449,7 +451,7 @@ payroll-user formula columns (M/P) intact.
 | `/api/gp-panel/download/<filename>` | GET | Download GP Panel result |
 | `/api/renewal/compare` | POST | Renewal comparison |
 | `/api/renewal/download/<filename>` | GET | Download renewal result (both templates) |
-| `/api/renewal/adj-listing/generate` | POST | Combined Adj Listing (two listings + `pro_rata_days`, `client_label`, `limits` JSON) |
+| `/api/renewal/adj-listing/generate` | POST | Combined Adj Listing (two listings + `pro_rata_divisor`, `client_label`, `limits` JSON) |
 | `/api/flex/health` | GET | Flex Report health + adapter load errors |
 | `/api/flex/companies` | GET | Company catalog with upload slot specs |
 | `/api/flex/run/<company_id>` | POST | Run one company's monthly generation |

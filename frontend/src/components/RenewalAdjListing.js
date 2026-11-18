@@ -6,7 +6,7 @@ import RenewalAdjResult from './RenewalAdjResult';
 import './Renewal.css';
 
 const LIFE_PRODUCTS = ['GTL', 'GDD', 'GPA', 'GDI'];
-const DEFAULT_DAYS = '183';
+const DEFAULT_DIVISOR = '2';
 const emptyLimits = () => Object.fromEntries(LIFE_PRODUCTS.map((code) => [code, { fcl: '', age: '' }]));
 
 /** '800,000' / '$800,000' -> 800000; blank -> null; anything else -> NaN. */
@@ -23,11 +23,11 @@ const limitsPayload = (limits) => Object.fromEntries(
     .filter(([, entry]) => Object.keys(entry).length > 0),
 );
 
-const validationError = (file1, file2, days, limits) => {
+const validationError = (file1, file2, divisor, limits) => {
   if (!file1 || !file2) return 'Upload both renewal listings.';
-  const dayCount = parseNumber(days);
-  if (!Number.isInteger(dayCount) || dayCount < 1 || dayCount > 366) {
-    return 'Pro-rata days must be a whole number from 1 to 366.';
+  const divisorValue = parseNumber(divisor);
+  if (!Number.isInteger(divisorValue) || divisorValue < 1 || divisorValue > 12) {
+    return 'Pro-rata divisor must be a whole number from 1 to 12.';
   }
   for (const [code, { fcl, age }] of Object.entries(limits)) {
     const fclValue = parseNumber(fcl);
@@ -101,7 +101,7 @@ const AdjIntro = () => {
   );
 };
 
-const AdjSettings = ({ clientLabel, setClientLabel, proRataDays, setProRataDays, disabled }) => (
+const AdjSettings = ({ clientLabel, setClientLabel, proRataDivisor, setProRataDivisor, disabled }) => (
   <div className="space-y-4">
     <div>
       <label className="renewal-label" htmlFor="adj-client">Client label (optional)</label>
@@ -110,10 +110,10 @@ const AdjSettings = ({ clientLabel, setClientLabel, proRataDays, setProRataDays,
       <p className="text-xs renewal-muted mt-1">Names the Adj sheet and the file. Defaults to the main entity.</p>
     </div>
     <div>
-      <label className="renewal-label" htmlFor="adj-days">Pro-rata days (out of 365)</label>
-      <input id="adj-days" type="text" inputMode="numeric" className="renewal-input w-32"
-        value={proRataDays} disabled={disabled} onChange={(e) => setProRataDays(e.target.value)} />
-      <p className="text-xs renewal-muted mt-1">183 = mid-year average. Each row adjusts by (current − previous) / 365 × days.</p>
+      <label className="renewal-label" htmlFor="adj-divisor">Pro-rata divisor</label>
+      <input id="adj-divisor" type="text" inputMode="numeric" className="renewal-input w-32"
+        value={proRataDivisor} disabled={disabled} onChange={(e) => setProRataDivisor(e.target.value)} />
+      <p className="text-xs renewal-muted mt-1">2 = changes assumed mid-year. Each row adjusts by (current − previous) / divisor.</p>
     </div>
   </div>
 );
@@ -121,7 +121,7 @@ const AdjSettings = ({ clientLabel, setClientLabel, proRataDays, setProRataDays,
 const RenewalAdjListing = () => {
   const [files, setFiles] = useState({ first: null, second: null });
   const [clientLabel, setClientLabel] = useState('');
-  const [proRataDays, setProRataDays] = useState(DEFAULT_DAYS);
+  const [proRataDivisor, setProRataDivisor] = useState(DEFAULT_DIVISOR);
   const [limits, setLimits] = useState(emptyLimits);
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState(null);
@@ -139,7 +139,7 @@ const RenewalAdjListing = () => {
   const updateLimit = (code, field, value) => setLimits((prev) => ({ ...prev, [code]: { ...prev[code], [field]: value } }));
 
   const handleGenerate = async () => {
-    const problem = validationError(files.first, files.second, proRataDays, limits);
+    const problem = validationError(files.first, files.second, proRataDivisor, limits);
     if (problem) {
       setError(problem);
       return;
@@ -149,7 +149,7 @@ const RenewalAdjListing = () => {
     setResult(null);
     try {
       const response = await apiService.processRenewalAdjListing(files.first, files.second, {
-        proRataDays: parseNumber(proRataDays), clientLabel: clientLabel.trim(), limits: limitsPayload(limits),
+        proRataDivisor: parseNumber(proRataDivisor), clientLabel: clientLabel.trim(), limits: limitsPayload(limits),
       });
       if (response.success) setResult(response.data);
       else setError(response.details ? `${response.error}: ${response.details}` : response.error);
@@ -168,7 +168,7 @@ const RenewalAdjListing = () => {
   const handleReset = () => {
     setFiles({ first: null, second: null });
     setClientLabel('');
-    setProRataDays(DEFAULT_DAYS);
+    setProRataDivisor(DEFAULT_DIVISOR);
     setLimits(emptyLimits());
     setResult(null);
     setError(null);
@@ -185,8 +185,8 @@ const RenewalAdjListing = () => {
             file={files.second} onDrop={handleSecondDrop} isProcessing={isProcessing} />
         </div>
         <div className="grid gap-6 md:grid-cols-2">
-          <AdjSettings clientLabel={clientLabel} setClientLabel={setClientLabel} proRataDays={proRataDays}
-            setProRataDays={setProRataDays} disabled={isProcessing} />
+          <AdjSettings clientLabel={clientLabel} setClientLabel={setClientLabel} proRataDivisor={proRataDivisor}
+            setProRataDivisor={setProRataDivisor} disabled={isProcessing} />
           <LimitsTable limits={limits} onChange={updateLimit} disabled={isProcessing} />
         </div>
         {error && <div className="renewal-alert error" role="alert">{error}</div>}

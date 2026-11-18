@@ -8,7 +8,8 @@ from .processor import AdjReport, basis_review
 from .writer import put
 
 RULES = (
-    "Adjustment per Headcount row = (current-year premium - previous-year premium) / 365 x pro-rata days.",
+    "Adjustment per Headcount row = (current-year premium - previous-year premium) / pro-rata divisor "
+    "(2 = changes assumed mid-year).",
     "Current-year rows use the previous year's premium (the employee's own, else the same cover's), so continuing "
     "staff net to zero when the renewal changes the rates.",
     "An Administration Basis column in a listing always wins.",
@@ -53,7 +54,7 @@ def write_notes_sheet(ws, report: AdjReport) -> None:
     ]
     row = _table(ws, row, ('Listing', 'File', 'Sheet', 'Policy period', 'Renewal date', 'Employees'), listings)
     ws.cell(row=row, column=1, value='Pro-rata')
-    ws.cell(row=row, column=2, value=f"{report.days} / 365 days")
+    ws.cell(row=row, column=2, value=f"Divide by {report.divisor}")
     ws.cell(row=row + 1, column=1, value='Generated')
     ws.cell(row=row + 1, column=2, value=datetime.now().strftime('%d/%m/%Y %H:%M'))
     row = _section(ws, row + 3, 'Basis rules')
