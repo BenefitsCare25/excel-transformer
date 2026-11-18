@@ -35,7 +35,7 @@ const ProductTable = ({ result }) => {
             <th scope="col" className="num">{result.current.label} Headcount</th>
             <th scope="col" className="num">Named (prev / curr)</th>
             <th scope="col" className="num">{result.previous.label} premium</th>
-            <th scope="col" className="num">{result.current.label} premium</th>
+            <th scope="col" className="num">{result.current.label} premium at {result.previous.label} rate</th>
             <th scope="col" className="num">Adjustment payable</th>
           </tr>
         </thead>
@@ -58,8 +58,9 @@ const ProductTable = ({ result }) => {
         </tbody>
       </table>
       <p className="text-xs renewal-muted mt-2">
-        Premium columns sum Headcount rows only. Adjustment = (current − previous) / 365 × {result.pro_rata_days} days;
-        medical products include 9% GST.
+        Premium columns sum Headcount rows only. Current-year staff are priced at {result.previous.label} premiums, so
+        continuing staff net to zero. Adjustment = (current − previous) / 365 × {result.pro_rata_days} days; medical
+        products include 9% GST.
       </p>
     </div>
   );

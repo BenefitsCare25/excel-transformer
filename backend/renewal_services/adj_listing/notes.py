@@ -9,6 +9,8 @@ from .writer import put
 
 RULES = (
     "Adjustment per Headcount row = (current-year premium - previous-year premium) / 365 x pro-rata days.",
+    "Current-year rows use the previous year's premium (the employee's own, else the same cover's), so continuing "
+    "staff net to zero when the renewal changes the rates.",
     "An Administration Basis column in a listing always wins.",
     "Without one: medical products with a premium are Headcount.",
     "Life products with a premium within the FCL and age limit are Headcount; over either limit they are Named "

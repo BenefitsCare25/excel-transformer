@@ -300,8 +300,13 @@ banners `GROUP TERM LIFE (GTL)`, `Type of Administration` left of each product) 
 Premium formulas with no saved result raise a `ValueError` (they read as blank and would drop premiums silently).
 
 **Output** (verified against the MCST 1216 2024-2025 manual Adj: GTL $101.08, GDD $58.56, GHS/GMM $0):
-- `<Client> Adj`: all previous-year rows (last year's premium) then all current-year rows (green, this year's
-  premium). Headcount rows: `=(curr-prev)/365*days` (default 183); medical adds `*1.09`. SUBTOTAL row + GST row
+- `<Client> Adj`: all previous-year rows then all current-year rows (green), **both at last year's premium**
+  (`pricing.py`). Headcount rows: `=(curr-prev)/365*days` (default 183); medical adds `*1.09`. SUBTOTAL row + GST row
+- The Adj is the previous policy year's headcount movement, so the renewal's new rates never enter it: a
+  continuing employee's current row carries their own premium from last year and nets to zero; a joiner takes
+  the most common last-year premium for the same cover (life: sum insured, medical: plan / plan type / family).
+  A life SI change is rescaled at the employee's own last-year rate; a cover with no last-year premium keeps this
+  year's and raises a warning. MCST 1216 2025-26 (rates 100.8→352 GTL) billed $3,481 before this, −$1,332.59 after
 - `Adj Invoice Summary`: per-entity totals beside a blank DN/CN cell, then per-employee `SUMIFS` on the Adj
   sheet's last column, `Match Key` (one id per person across both years). Never SUMIFS on NRIC / EMP ID / name:
   duplicate rows or shared names would be counted twice

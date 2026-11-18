@@ -85,9 +85,9 @@ const AdjIntro = () => {
       <div>
         <h2 className="text-xl font-semibold renewal-text mb-1">Combined Adj Listing</h2>
         <p className="text-sm renewal-muted">
-          Puts both policy years in one Adj sheet: last year&apos;s premium on the previous-year rows, this
-          year&apos;s on the current-year rows, and a pro-rated adjustment on each Headcount row. Also builds
-          an invoice summary per entity and per employee.
+          Puts both policy years in one Adj sheet, both priced at last year&apos;s premium so continuing staff
+          net to zero, with a pro-rated adjustment on each Headcount row. Also builds an invoice summary per
+          entity and per employee.
         </p>
       </div>
       <div>

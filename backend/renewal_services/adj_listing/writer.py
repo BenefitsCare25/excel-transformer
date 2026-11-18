@@ -27,6 +27,7 @@ INVOICE_SHEET = 'Adj Invoice Summary'
 THIN = Side(style='thin')
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
+CURR_PREMIUM = '{curr} {p} Premium (at {prev} rate)'
 EMPLOYEE_COLUMNS = (
     ('renewal', 'Renewal', 11, None), ('emp_id', 'EMP ID', 11, '@'), ('entity', 'Entity', 22, None),
     ('name', 'Employee Name', 34, None), ('nric', 'Identification No.', 15, '@'),
@@ -45,13 +46,13 @@ LIFE_FIELDS = (
     ('last_accepted_si', '{p} EE Last Accepted Sum Insured', 14, WHOLE),
     ('uw_decision', '{p} UW Decision', 20, None), ('loading_rate', '{p} Health Loading Rate', 12, '0.0000'),
     ('loading_premium', '{p} Health Loading Premium', 14, MONEY),
-    ('prev_premium', '{prev} {p} Premium', 14, MONEY), ('curr_premium', '{curr} {p} Premium', 14, MONEY),
+    ('prev_premium', '{prev} {p} Premium', 14, MONEY), ('curr_premium', CURR_PREMIUM, 16, MONEY),
     ('adj', '{p} Adj Premium', 14, MONEY),
 )
 MEDICAL_FIELDS = (
     ('basis', '{p} Plan/Basis of Cover', 28, None), ('plan_type', '{p} Plan Type', 12, None),
     ('family', '{p} Family Grouping', 10, None),
-    ('prev_premium', '{prev} {p} Premium', 14, MONEY), ('curr_premium', '{curr} {p} Premium', 14, MONEY),
+    ('prev_premium', '{prev} {p} Premium', 14, MONEY), ('curr_premium', CURR_PREMIUM, 16, MONEY),
     ('adj', '{p} Premium Adj', 14, MONEY), ('adj_gst', '{p} Adj Premium with GST', 14, MONEY),
 )
 ADJ_FIELDS = ('adj', 'adj_gst')
@@ -128,7 +129,7 @@ def _product_value(col: Column, out: OutputRow, r: int, letters: Dict[str, str],
     if name == 'admin':
         return decision.basis or None if decision else None
     if name in ('prev_premium', 'curr_premium'):
-        return values.get('premium') if (name == 'curr_premium') == out.current else None
+        return out.priced.get(code) if (name == 'curr_premium') == out.current else None
     if name == 'adj':
         prev, curr = letters[f"{code}.prev_premium"], letters[f"{code}.curr_premium"]
         return f"=({curr}{r}-{prev}{r})/{YEAR_DAYS}*{days}" if headcount else None

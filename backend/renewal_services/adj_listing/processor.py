@@ -1,9 +1,10 @@
 """Combined Adj Listing: previous- and current-year renewal listings -> one adjustment workbook.
 
 Every employee in the previous listing gets a row carrying last year's premium, every employee
-in the current listing gets a row carrying this year's premium, and each Headcount row adjusts
-by (current - previous) / 365 * pro-rata days. Continuing staff net out per employee in the
-invoice summary; joiners and leavers do not.
+in the current listing gets a row priced at last year's premium too (see pricing.py), and each
+Headcount row adjusts by (current - previous) / 365 * pro-rata days. Continuing staff net to
+zero per employee in the invoice summary even when the renewal changed the rates; joiners and
+leavers do not.
 """
 
 import logging
@@ -13,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+from .pricing import price_rows
 from .reader import LIFE_PRODUCTS, PRODUCT_ORDER, Listing, ListingRow, read_listing
 from .rules import (
     HEADCOUNT, NAMED, BasisDecision, age_next_birthday, decide_basis, entity_mapping, match_rows,
@@ -34,6 +36,7 @@ class OutputRow:
     age: Optional[float]
     decisions: Dict[str, BasisDecision]
     group: int = -1
+    priced: Dict[str, Optional[float]] = field(default_factory=dict)  # premium the Adj formula uses
 
 
 @dataclass
@@ -186,12 +189,14 @@ def build_report(prev: Listing, curr: Listing, days: int, client_label: str,
     prev_rows = _decide_rows(prev, False, limits, {}, {})
     prior = {j: prev_rows[i].decisions for j, i in matches.items()}
     curr_rows = _decide_rows(curr, True, limits, entity_map, prior)
+    pricing_warnings = price_rows(prev_rows, curr_rows, matches, prev.label)
     groups = _build_groups(prev_rows, curr_rows, matches)
     rows = prev_rows + curr_rows
     show_admin = {c for c in codes if c not in LIFE_PRODUCTS
                   and any(r.decisions.get(c) and r.decisions[c].basis == NAMED for r in rows)}
     warnings = (prev.warnings + curr.warnings + _limit_warnings(prev, curr, limits)
-                + _history_warnings(prev, prev_rows) + _unrecognised_basis_warnings(prev, curr, rows))
+                + _history_warnings(prev, prev_rows) + _unrecognised_basis_warnings(prev, curr, rows)
+                + pricing_warnings)
     return AdjReport(prev, curr, codes, show_admin, rows, groups, limits, days,
                      _client_label(client_label, groups), entity_map, warnings)
 
@@ -209,7 +214,7 @@ def _product_summary(report: AdjReport) -> List[dict]:
             year = 'curr' if row.current else 'prev'
             if decision.basis == HEADCOUNT:
                 stats[f'{year}_hc'] += 1
-                stats[f'{year}_premium'] += row.row.products.get(code, {}).get('premium') or 0.0
+                stats[f'{year}_premium'] += row.priced.get(code) or 0.0
             elif decision.basis == NAMED:
                 stats[f'{year}_named'] += 1
         adj = (stats['curr_premium'] - stats['prev_premium']) * factor

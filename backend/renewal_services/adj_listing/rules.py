@@ -22,6 +22,12 @@ HEADCOUNT = 'Headcount'
 NAMED = 'Named'
 _NAMED_RE = re.compile(r'\bnamed\b')
 _HEADCOUNT_RE = re.compile(r'head\s*-?\s*count|\bhc\b')
+_SUM_INSURED_FIELDS = ('eligible_si', 'present_si', 'last_accepted_si')
+
+
+def sum_insured(values: Dict) -> Optional[float]:
+    """Sum insured of one life product: eligible, else present, else last accepted."""
+    return next((values[k] for k in _SUM_INSURED_FIELDS if values.get(k) is not None), None)
 
 
 @dataclass
@@ -94,12 +100,11 @@ def _rule_basis(values: Dict, life: bool, age: Optional[float],
         return BasisDecision('', 'No premium - not covered')
     if not life:
         return BasisDecision(HEADCOUNT, 'Premium present')
-    sum_insured = next((values.get(k) for k in ('eligible_si', 'present_si', 'last_accepted_si')
-                        if values.get(k) is not None), None)
+    insured = sum_insured(values)
     over = []
     fcl, age_limit = limits.get('fcl'), limits.get('age')
-    if fcl is not None and sum_insured is not None and sum_insured > fcl:
-        over.append(f"sum insured {sum_insured:,.0f} > FCL {fcl:,.0f}")
+    if fcl is not None and insured is not None and insured > fcl:
+        over.append(f"sum insured {insured:,.0f} > FCL {fcl:,.0f}")
     if age_limit is not None and age is not None and age > age_limit:
         over.append(f"age {age:.2f} > limit {age_limit:g}")
     if not over:
